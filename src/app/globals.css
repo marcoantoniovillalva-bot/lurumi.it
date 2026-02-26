@@ -1,0 +1,105 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    /* Lurumi Pastel Theme Tokens */
+    --lu-bg: #FFFFFF;
+    --lu-surface: #FFFFFF;
+    --lu-surface-soft: #FAFAFC;
+    --lu-border: #EEF0F4;
+    --lu-border-soft: #F4EEFF;
+
+    --lu-primary: #7B5CF6;
+    --lu-primary-light: #F1E9FF;
+    --lu-primary-glow: rgba(123, 92, 246, 0.15);
+
+    --lu-accent-blue: #B9E5F9;
+    --lu-accent-purple: #D9B9F9;
+
+    --lu-text: #1C1C1E;
+    --lu-text-muted: #9AA2B1;
+    --lu-text-light: #B2A9C9;
+
+    --color-background: var(--lu-bg);
+    --color-foreground: var(--lu-text);
+  }
+
+  body {
+    background-color: var(--lu-bg) !important;
+    color: var(--lu-text) !important;
+    font-family: var(--font-inter), system-ui, sans-serif;
+    min-height: 100vh;
+    color-scheme: light !important;
+  }
+}
+
+@layer components {
+  .lu-gradient-header {
+    background: linear-gradient(90deg, #B9E5F9, #D9B9F9, #B9E5F9);
+    background-size: 300% 300%;
+    animation: gradientMove 12s ease-in-out infinite;
+  }
+
+  .lu-card {
+    background: white;
+    border: 1px solid var(--lu-border);
+    border-radius: 20px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .lu-card:active {
+    transform: scale(0.98);
+  }
+
+  .lu-btn-primary {
+    background: var(--lu-primary);
+    color: white;
+    font-weight: 700;
+    border-radius: 16px;
+    box-shadow: 0 8px 20px var(--lu-primary-glow);
+  }
+}
+
+@keyframes gradientMove {
+  0% {
+    background-position: 0% 50%;
+  }
+
+  50% {
+    background-position: 100% 50%;
+  }
+
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+/* Utils for PWA experience */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Responsive: su schermi grandi la main ha padding bottom ridotto */
+@media (min-width: 1024px) {
+  main {
+    padding-bottom: 2rem !important;
+  }
+  .lu-tabbar {
+    /* Su desktop la tabbar rimane visibile ma si restringe al centro */
+    border-radius: 999px;
+    bottom: 1rem;
+    left: 50%;
+    transform: translateX(-50%);
+    width: auto;
+    min-width: 320px;
+    padding-left: 1.5rem;
+    padding-right: 1.5rem;
+    border: 1px solid rgba(255,255,255,0.5);
+  }
+}

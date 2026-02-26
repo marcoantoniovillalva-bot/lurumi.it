@@ -1,0 +1,115 @@
+import { create } from 'zustand'
+import { persist, createJSONStorage } from 'zustand/middleware'
+
+export interface RoundCounter {
+    id: string
+    name: string
+    value: number
+}
+
+export interface ProjectImage {
+    id: string
+    url?: string
+    blob?: Blob
+    dataURL?: string
+    thumbDataURL?: string
+}
+
+export interface Project {
+    id: string
+    title: string
+    type: 'pdf' | 'images'
+    kind: 'pdf' | 'image'
+    createdAt: number
+    size: number
+    blob?: Blob
+    url?: string
+    thumbDataURL?: string
+    counter: number
+    timer: number
+    secs: RoundCounter[]
+    notesHtml: string
+    images: ProjectImage[]
+}
+
+export interface Tutorial {
+    id: string
+    title: string
+    url: string
+    videoId: string
+    playlistId: string
+    thumbUrl: string
+    createdAt: number
+    counter: number
+    timer: number
+    secs: RoundCounter[]
+    notesHtml: string
+}
+
+interface ProjectState {
+    projects: Project[]
+    tutorials: Tutorial[]
+
+    // Project Actions
+    addProject: (project: Project) => void
+    updateProject: (id: string, updates: Partial<Project>) => void
+    deleteProject: (id: string) => void
+
+    // Tutorial Actions
+    addTutorial: (tutorial: Tutorial) => void
+    updateTutorial: (id: string, updates: Partial<Tutorial>) => void
+    deleteTutorial: (id: string) => void
+
+    // Utility
+    getProject: (id: string) => Project | undefined
+    getTutorial: (id: string) => Tutorial | undefined
+}
+
+export const useProjectStore = create<ProjectState>()(
+    persist(
+        (set, get) => ({
+            projects: [],
+            tutorials: [],
+
+            addProject: (project) => set((state) => ({
+                projects: [project, ...state.projects]
+            })),
+
+            updateProject: (id, updates) => set((state) => ({
+                projects: state.projects.map((p) => p.id === id ? { ...p, ...updates } : p)
+            })),
+
+            deleteProject: (id) => set((state) => ({
+                projects: state.projects.filter((p) => p.id !== id)
+            })),
+
+            addTutorial: (tutorial) => set((state) => ({
+                tutorials: [tutorial, ...state.tutorials]
+            })),
+
+            updateTutorial: (id, updates) => set((state) => ({
+                tutorials: state.tutorials.map((t) => t.id === id ? { ...t, ...updates } : t)
+            })),
+
+            deleteTutorial: (id) => set((state) => ({
+                tutorials: state.tutorials.filter((t) => t.id !== id)
+            })),
+
+            getProject: (id) => get().projects.find((p) => p.id === id),
+            getTutorial: (id) => get().tutorials.find((t) => t.id === id),
+        }),
+        {
+            name: 'lurumi-project-storage',
+            storage: createJSONStorage(() => localStorage),
+            // Strip image dataURLs — they go in IndexedDB, not localStorage (5MB limit)
+            partialize: (state) => ({
+                projects: state.projects.map(p => ({
+                    ...p,
+                    images: (p.images ?? []).map(img => ({ id: img.id })),
+                    blob: undefined,
+                })),
+                tutorials: state.tutorials,
+            }),
+        }
+    )
+)

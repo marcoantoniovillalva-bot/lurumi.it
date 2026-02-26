@@ -1,0 +1,30 @@
+{
+    "name": "Lurumi",
+    "short_name": "Lurumi",
+    "description": "La tua compagna AI per l'uncinetto, amigurumi e maglia.",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#ffffff",
+    "theme_color": "#B9E5F9",
+    "orientation": "portrait",
+    "icons": [
+        {
+            "src": "/images/logo/isotipo.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "any"
+        },
+        {
+            "src": "/images/logo/isotipo.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "any"
+        },
+        {
+            "src": "/images/logo/isotipo.png",
+            "sizes": "1024x1024",
+            "type": "image/png",
+            "purpose": "maskable"
+        }
+    ]
+}
