@@ -15,12 +15,16 @@ export function useUserProfile() {
 
   useEffect(() => {
     if (!user) { setProfile(null); setLoading(false); return }
+    let isMounted = true
     const supabase = createClient()
     supabase.from('profiles').select('tier, stripe_customer_id').eq('id', user.id).single()
-      .then(({ data }) => {
+      .then(({ data, error }) => {
+        if (!isMounted) return
+        if (error) console.warn('[useUserProfile] fetch failed:', error.message)
         setProfile(data as UserProfile ?? { tier: 'free', stripe_customer_id: null })
         setLoading(false)
       })
+    return () => { isMounted = false }
   }, [user?.id])
 
   return { profile, loading }

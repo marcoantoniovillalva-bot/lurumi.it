@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Search, ListFilter, Plus, X, Youtube, MoreVertical, Pencil, Trash2, Share2, Check, ExternalLink } from "lucide-react";
 import { useProjectStore, Tutorial } from "@/features/projects/store/useProjectStore";
 import Link from "next/link";
@@ -23,6 +23,44 @@ export default function TutorialsPage() {
     const [menuId, setMenuId] = useState<string | null>(null);
     const [renamingId, setRenamingId] = useState<string | null>(null);
     const [renameValue, setRenameValue] = useState('');
+
+    // Realtime: sincronizza tutorial list da altri dispositivi/tab
+    useEffect(() => {
+        if (!user) return;
+        const channel = supabase
+            .channel(`tutorials-list-${user.id}`)
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'tutorials', filter: `user_id=eq.${user.id}` }, (payload) => {
+                if (!payload.new?.id) return;
+                const t = payload.new as Record<string, any>;
+                const exists = useProjectStore.getState().tutorials.some(x => x.id === t.id);
+                if (!exists) {
+                    addTutorial({
+                        id: t.id,
+                        title: t.title,
+                        url: t.url ?? '',
+                        videoId: t.video_id ?? '',
+                        playlistId: t.playlist_id ?? '',
+                        thumbUrl: t.thumb_url ?? '',
+                        createdAt: t.created_at ? new Date(t.created_at).getTime() : Date.now(),
+                        counter: t.counter ?? 0,
+                        timer: t.timer_seconds ?? 0,
+                        secs: t.secs ?? [],
+                        notesHtml: t.notes_html ?? '',
+                    });
+                }
+            })
+            .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'tutorials', filter: `user_id=eq.${user.id}` }, (payload) => {
+                if (!payload.new?.id) return;
+                const t = payload.new as Record<string, any>;
+                updateTutorial(t.id, { title: t.title, counter: t.counter ?? 0, timer: t.timer_seconds ?? 0, secs: t.secs ?? [], notesHtml: t.notes_html ?? '' });
+            })
+            .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'tutorials' }, (payload) => {
+                if (!payload.old?.id) return;
+                deleteTutorial(payload.old.id);
+            })
+            .subscribe();
+        return () => { supabase.removeChannel(channel); };
+    }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const parseYouTube = (url: string) => {
         try {
@@ -91,7 +129,7 @@ export default function TutorialsPage() {
 
         // Sync delete to Supabase in background
         if (user) {
-            supabase.from('tutorials').delete().eq('id', id).then(({ error }) => {
+            supabase.from('tutorials').delete().eq('id', id).eq('user_id', user.id).then(({ error }) => {
                 if (error) console.warn('Tutorial delete failed:', error.message);
             });
         }
@@ -110,7 +148,7 @@ export default function TutorialsPage() {
         setRenamingId(null);
 
         if (user) {
-            supabase.from('tutorials').update({ title: newTitle }).eq('id', id).then(({ error }) => {
+            supabase.from('tutorials').update({ title: newTitle }).eq('id', id).eq('user_id', user.id).then(({ error }) => {
                 if (error) console.warn('Tutorial rename sync failed:', error.message);
             });
         }

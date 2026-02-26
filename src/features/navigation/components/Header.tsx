@@ -7,6 +7,7 @@ import Image from "next/image";
 import { useAuth } from "@/hooks/useAuth";
 import { useUserProfile } from "@/hooks/useUserProfile";
 import { createClient } from "@/lib/supabase/client";
+import { useProjectStore } from "@/features/projects/store/useProjectStore";
 import { useCookieConsent } from "@/hooks/useCookieConsent";
 import { CookiePreferencesModal } from "@/components/CookiePreferencesModal";
 
@@ -25,7 +26,11 @@ export const Header = () => {
 
     const handleLogout = async () => {
         await supabase.auth.signOut();
+        // Pulisce lo store locale — i dati sono al sicuro su Supabase
+        useProjectStore.setState({ projects: [], tutorials: [] });
+        try { localStorage.removeItem('lurumi-project-storage'); } catch {}
         setShowUserMenu(false);
+        window.location.href = '/';
     };
 
     return (

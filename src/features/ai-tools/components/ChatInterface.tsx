@@ -75,49 +75,57 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         setHistoryLoading(true)
         const supabase = createClient()
 
-        // Carica messaggi e titoli in parallelo
-        const [{ data }, { data: titlesData }] = await Promise.all([
-            supabase
-                .from('chat_messages')
-                .select('session_id, created_at, message, sender')
-                .eq('user_id', user.id)
-                .eq('tool_type', title)
-                .order('created_at', { ascending: false }),
-            supabase
-                .from('chat_sessions')
-                .select('id, title')
-                .eq('user_id', user.id),
-        ])
-        setHistoryLoading(false)
-        if (!data) return
+        try {
+            // Carica messaggi e titoli in parallelo
+            const [{ data }, { data: titlesData }] = await Promise.all([
+                supabase
+                    .from('chat_messages')
+                    .select('session_id, created_at, message, sender')
+                    .eq('user_id', user.id)
+                    .eq('tool_type', title)
+                    .order('created_at', { ascending: false }),
+                supabase
+                    .from('chat_sessions')
+                    .select('id, title')
+                    .eq('user_id', user.id)
+                    .eq('tool_type', title),
+            ])
+            setHistoryLoading(false)
+            if (!data) return
 
-        // Mappa titoli personalizzati
-        const titlesMap: Record<string, string> = {}
-        titlesData?.forEach(s => { titlesMap[s.id] = s.title })
-        setSessionTitles(titlesMap)
+            // Mappa titoli personalizzati
+            const titlesMap: Record<string, string> = {}
+            titlesData?.forEach(s => { titlesMap[s.id] = s.title })
+            setSessionTitles(titlesMap)
 
-        // Raggruppa per session_id
-        const map: Record<string, { firstMsg: string; created_at: string; count: number }> = {}
-        data.forEach(m => {
-            if (!map[m.session_id]) {
-                map[m.session_id] = { firstMsg: m.message || '', created_at: m.created_at, count: 0 }
-            }
-            map[m.session_id].count++
-        })
-        setHistorySessions(
-            Object.entries(map)
-                .map(([id, d]) => ({ id, ...d }))
-                .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-                .slice(0, 20)
-        )
+            // Raggruppa per session_id
+            const map: Record<string, { firstMsg: string; created_at: string; count: number }> = {}
+            data.forEach(m => {
+                if (!map[m.session_id]) {
+                    map[m.session_id] = { firstMsg: m.message || '', created_at: m.created_at, count: 0 }
+                }
+                map[m.session_id].count++
+            })
+            setHistorySessions(
+                Object.entries(map)
+                    .map(([id, d]) => ({ id, ...d }))
+                    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                    .slice(0, 20)
+            )
+        } catch (err) {
+            console.error('[loadHistory] failed:', err)
+            setHistoryLoading(false)
+        }
     }
 
     const loadConversation = async (sid: string) => {
+        if (!user) return
         const supabase = createClient()
         const { data } = await supabase
             .from('chat_messages')
             .select('*')
             .eq('session_id', sid)
+            .eq('user_id', user.id)
             .order('created_at')
         if (data) {
             setMessages(data.map(m => ({

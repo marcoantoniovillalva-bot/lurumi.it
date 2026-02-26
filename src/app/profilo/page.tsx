@@ -15,15 +15,15 @@ export default function ProfiloPage() {
     const { profile } = useUserProfile();
     const router = useRouter();
     const searchParams = useSearchParams();
-    const supabase = createClient();
-
     const canvaStatus = searchParams.get('canva'); // 'success' | 'error' | null
     const [canvaConnected, setCanvaConnected] = useState(false);
 
     useEffect(() => {
         if (!user) return;
-        supabase.from('profiles').select('canva_token').eq('id', user.id).single().then(({ data }) => {
-            setCanvaConnected(!!(data as any)?.canva_token);
+        const supabase = createClient();
+        supabase.from('profiles').select('canva_token').eq('id', user.id).single().then(({ data, error }) => {
+            if (error) console.warn('[Profilo] canva_token fetch failed:', error.message);
+            setCanvaConnected(!!(data as { canva_token?: string })?.canva_token);
         });
     }, [user?.id]);
 

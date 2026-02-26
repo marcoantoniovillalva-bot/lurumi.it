@@ -30,8 +30,9 @@ export const ImageGenerator: React.FC = () => {
     useEffect(() => {
         if (!user) return
         const supabase = createClient()
-        supabase.from('profiles').select('canva_token').eq('id', user.id).single().then(({ data }) => {
-            setCanvaConnected(!!(data as any)?.canva_token)
+        supabase.from('profiles').select('canva_token').eq('id', user.id).single().then(({ data, error }) => {
+            if (error) console.warn('[ImageGenerator] canva_token fetch failed:', error.message)
+            setCanvaConnected(!!(data as { canva_token?: string })?.canva_token)
         })
     }, [user?.id])
 

@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { useProjectStore, Project, RoundCounter as RoundCounterType, ProjectImage } from "@/features/projects/store/useProjectStore";
 import { luDB } from "@/lib/db";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { RoundCounter } from "@/features/projects/components/RoundCounter";
 import { FullscreenViewer } from "@/components/FullscreenViewer";
@@ -17,6 +17,7 @@ import { useAuth } from "@/hooks/useAuth";
 
 export default function ProjectDetail() {
     const { id } = useParams();
+    const router = useRouter();
     const { projects, updateProject } = useProjectStore();
     const { user } = useAuth();
     const project = projects.find(p => p.id === id);
@@ -50,48 +51,95 @@ export default function ProjectDetail() {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const elapsedRef = useRef(0);
+    const blobUrlsRef = useRef<string[]>([]);
+    const isTimerRunningRef = useRef(false);
+    const isEditingNotesRef = useRef(false);
+    const hasLoadedRef = useRef(false);
+    const wasTimerRunningRef = useRef(false);
 
+    // Init timer + notes dallo store, reset hint al cambio progetto
     useEffect(() => {
         if (!project) return;
         setElapsedTime(project.timer || 0);
         elapsedRef.current = project.timer || 0;
         setNotes(project.notesHtml || "");
-
-        const loadContent = async () => {
-            try {
-                if (project.type === 'pdf') {
-                    const dbRecord = await luDB.getFile(id as string);
-                    if (dbRecord?.blob) {
-                        const pdfjsLib = await import('pdfjs-dist/build/pdf.mjs');
-                        pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
-                        const doc = await pdfjsLib.getDocument({ data: await dbRecord.blob.arrayBuffer() }).promise;
-                        setPdfDoc(doc);
-                        setTotalPages(doc.numPages);
-                    }
-                } else {
-                    // Load all images from IndexedDB by their stored IDs
-                    const imgs = project.images ?? [];
-                    const urls: string[] = [];
-                    for (const img of imgs) {
-                        const record = await luDB.getFile(img.id);
-                        if (record?.blob) {
-                            urls.push(URL.createObjectURL(record.blob));
-                        } else if (img.dataURL) {
-                            urls.push(img.dataURL); // fallback for legacy data
-                        }
-                    }
-                    setImageUrls(urls);
-                    setTotalPages(urls.length);
-                }
-            } catch (err) {
-                console.error("Failed to load project content", err);
-            }
-        };
-        loadContent();
-
+        setHintVisible(true);
         const t = setTimeout(() => setHintVisible(false), 4000);
         return () => clearTimeout(t);
-    }, [id, project?.type]);
+    }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // PDF loading — con fallback da Supabase Storage se non in IndexedDB
+    useEffect(() => {
+        if (!project || project.type !== 'pdf') return;
+        const loadPdf = async () => {
+            try {
+                let blob: Blob | null = null;
+                const dbRecord = await luDB.getFile(id as string);
+                if (dbRecord?.blob) {
+                    blob = dbRecord.blob;
+                } else if (user) {
+                    // Secondo dispositivo: scarica da Supabase Storage
+                    const supabase = createClient();
+                    const { data } = await supabase.storage.from('project-files').download(`${user.id}/${id}/main`);
+                    if (data) {
+                        blob = data;
+                        luDB.saveFile({ id: id as string, blob }).catch(() => {});
+                    }
+                }
+                if (blob) {
+                    const pdfjsLib = await import('pdfjs-dist/build/pdf.mjs');
+                    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+                    const doc = await pdfjsLib.getDocument({ data: await blob.arrayBuffer() }).promise;
+                    setPdfDoc(doc);
+                    setTotalPages(doc.numPages);
+                }
+            } catch (err) {
+                console.error("Failed to load PDF", err);
+            }
+        };
+        loadPdf();
+    }, [id, user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Immagini — con fallback da Supabase Storage; si riattiva quando arrivano nuove immagini via Realtime
+    useEffect(() => {
+        if (!project || project.type !== 'images') return;
+        const loadImages = async () => {
+            try {
+                const imgs = project.images ?? [];
+                const urls: string[] = [];
+                const supabase = user ? createClient() : null;
+                for (const img of imgs) {
+                    const record = await luDB.getFile(img.id);
+                    if (record?.blob) {
+                        urls.push(URL.createObjectURL(record.blob));
+                    } else if (supabase && user) {
+                        // Deriva il path: l'immagine iniziale sta in /main, le altre in /{imgId}
+                        const storagePath = img.id === (id as string)
+                            ? `${user.id}/${id}/main`
+                            : `${user.id}/${id}/${img.id}`;
+                        const { data: blob } = await supabase.storage.from('project-files').download(storagePath);
+                        if (blob) {
+                            await luDB.saveFile({ id: img.id, blob });
+                            urls.push(URL.createObjectURL(blob));
+                        }
+                    } else if ((img as any).dataURL) {
+                        urls.push((img as any).dataURL); // legacy fallback
+                    }
+                }
+                blobUrlsRef.current.forEach(u => URL.revokeObjectURL(u));
+                blobUrlsRef.current = urls.filter(u => u.startsWith('blob:'));
+                setImageUrls(urls);
+                setTotalPages(urls.length);
+            } catch (err) {
+                console.error("Failed to load images", err);
+            }
+        };
+        loadImages();
+        return () => {
+            blobUrlsRef.current.forEach(u => URL.revokeObjectURL(u));
+            blobUrlsRef.current = [];
+        };
+    }, [id, project?.images?.length, user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
         if (!pdfDoc || !canvasRef.current || project?.type !== 'pdf') return;
@@ -107,10 +155,61 @@ export default function ProjectDetail() {
         renderPage();
     }, [pdfDoc, currentPage, project?.type]);
 
-    // Timer — sync to store + Supabase every 5s
+    // Keep refs in sync for Realtime callback (avoids stale closures)
+    useEffect(() => { isTimerRunningRef.current = isTimerRunning; }, [isTimerRunning]);
+    useEffect(() => { isEditingNotesRef.current = isEditingNotes; }, [isEditingNotes]);
+
+    // Realtime: sincronizza counter, secs, timer e note da altri dispositivi/tab
+    useEffect(() => {
+        if (!user || !id) return;
+        const supabase = createClient();
+        const channel = supabase
+            .channel(`project-counter-${id}`)
+            .on('postgres_changes', {
+                event: 'UPDATE',
+                schema: 'public',
+                table: 'projects',
+                filter: `id=eq.${id}`,
+            }, (payload) => {
+                if (!payload.new) return;
+                const remote = payload.new as Record<string, any>;
+                const updates: Partial<Project> = {
+                    counter: remote.counter ?? 0,
+                    secs: remote.secs ?? [],
+                    images: (remote.images ?? []).map((img: any) =>
+                        typeof img === 'string' ? { id: img } : { id: img.id ?? '' }
+                    ),
+                };
+                if (!isTimerRunningRef.current) {
+                    updates.timer = remote.timer_seconds ?? 0;
+                    elapsedRef.current = remote.timer_seconds ?? 0;
+                    setElapsedTime(remote.timer_seconds ?? 0);
+                }
+                if (!isEditingNotesRef.current) {
+                    updates.notesHtml = remote.notes_html ?? '';
+                    setNotes(remote.notes_html ?? '');
+                }
+                updateProject(id as string, updates);
+            })
+            .subscribe();
+        return () => { supabase.removeChannel(channel); };
+    }, [id, user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Autosave note con debounce 2s
+    useEffect(() => {
+        if (!project || notes === (project.notesHtml || '')) return;
+        const t = setTimeout(() => {
+            updateProject(project.id, { notesHtml: notes });
+            syncProject({ notes_html: notes });
+        }, 2000);
+        return () => clearTimeout(t);
+    }, [notes]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Timer — sync to store + Supabase every 5s; salva il valore finale all'arresto
     useEffect(() => {
         let interval: NodeJS.Timeout;
         if (isTimerRunning) {
+            wasTimerRunningRef.current = true;
             interval = setInterval(() => {
                 elapsedRef.current += 1;
                 setElapsedTime(elapsedRef.current);
@@ -119,11 +218,27 @@ export default function ProjectDetail() {
                     syncProject({ timer_seconds: elapsedRef.current });
                 }
             }, 1000);
+        } else if (wasTimerRunningRef.current) {
+            // Timer appena fermato — salva il valore finale (evita di perdere gli ultimi secondi)
+            wasTimerRunningRef.current = false;
+            updateProject(id as string, { timer: elapsedRef.current });
+            syncProject({ timer_seconds: elapsedRef.current });
         }
         return () => clearInterval(interval);
     }, [isTimerRunning, id, updateProject]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    if (!project) return <div className="p-10 text-center font-bold">Progetto non trovato</div>;
+    // Redirect se il progetto viene eliminato su un altro dispositivo mentre siamo qui
+    useEffect(() => {
+        if (hasLoadedRef.current && !project) {
+            router.replace('/');
+        }
+    }, [project]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    if (project) hasLoadedRef.current = true;
+    if (!project) {
+        if (hasLoadedRef.current) return null; // redirect in corso
+        return <div className="p-10 text-center font-bold">Progetto non trovato</div>;
+    }
 
     const formatTime = (seconds: number) => {
         const h = Math.floor(seconds / 3600);
@@ -143,6 +258,20 @@ export default function ProjectDetail() {
         updateProject(project.id, { images: updatedImages });
         setImageUrls(prev => [...prev, objectUrl]);
         setTotalPages(updatedImages.length);
+
+        // Carica su Supabase Storage e sincronizza lista immagini nel DB
+        if (user) {
+            const supabase = createClient();
+            const storagePath = `${user.id}/${project.id}/${imgId}`;
+            supabase.storage.from('project-files').upload(storagePath, file, { upsert: true })
+                .then(({ error: storageErr }) => {
+                    if (storageErr) { console.warn('Image upload failed:', storageErr.message); return; }
+                    supabase.from('projects').update({
+                        images: updatedImages.map(img => ({ id: img.id })),
+                    }).eq('id', project.id).eq('user_id', user.id)
+                        .then(({ error }) => { if (error) console.warn('Images DB sync failed:', error.message); });
+                });
+        }
     };
 
     const handleDeleteCurrentImage = async () => {

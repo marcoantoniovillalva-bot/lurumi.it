@@ -12,10 +12,15 @@ export function useAuth() {
         const supabase = createClient()
 
         // Get initial user
-        supabase.auth.getUser().then(({ data: { user } }) => {
-            setUser(user)
-            setLoading(false)
-        })
+        supabase.auth.getUser()
+            .then(({ data: { user } }) => {
+                setUser(user)
+                setLoading(false)
+            })
+            .catch((err) => {
+                console.error('[useAuth] getUser failed:', err)
+                setLoading(false)
+            })
 
         // Listen for auth changes
         const { data: { subscription } } = supabase.auth.onAuthStateChange(

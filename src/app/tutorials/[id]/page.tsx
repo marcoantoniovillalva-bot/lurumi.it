@@ -14,7 +14,7 @@ import {
     Save
 } from "lucide-react";
 import { useProjectStore, Tutorial, RoundCounter as RoundCounterType } from "@/features/projects/store/useProjectStore";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { RoundCounter } from "@/features/projects/components/RoundCounter";
 import { createClient } from "@/lib/supabase/client";
@@ -22,9 +22,11 @@ import { useAuth } from "@/hooks/useAuth";
 
 export default function TutorialDetail() {
     const { id } = useParams();
+    const router = useRouter();
     const { tutorials, updateTutorial } = useProjectStore();
     const tutorial = tutorials.find(t => t.id === id);
     const { user } = useAuth();
+    const hasLoadedRef = useRef(false);
 
     const syncTutorial = (fields: Record<string, unknown>) => {
         if (!user || !id) return;
@@ -45,6 +47,9 @@ export default function TutorialDetail() {
     const [showNewCounterModal, setShowNewCounterModal] = useState(false);
     const [newCounterName, setNewCounterName] = useState("");
     const elapsedRef = useRef(0);
+    const isTimerRunningRef = useRef(false);
+    const isEditingNotesRef = useRef(false);
+    const wasTimerRunningRef = useRef(false);
 
     useEffect(() => {
         if (!tutorial) return;
@@ -53,9 +58,58 @@ export default function TutorialDetail() {
         setNotes(tutorial.notesHtml || "");
     }, [tutorial?.id]);
 
+    // Keep refs in sync for Realtime callback (avoids stale closures)
+    useEffect(() => { isTimerRunningRef.current = isTimerRunning; }, [isTimerRunning]);
+    useEffect(() => { isEditingNotesRef.current = isEditingNotes; }, [isEditingNotes]);
+
+    // Realtime: sincronizza counter, secs, timer e note da altri dispositivi/tab
+    useEffect(() => {
+        if (!user || !id) return;
+        const supabase = createClient();
+        const channel = supabase
+            .channel(`tutorial-counter-${id}`)
+            .on('postgres_changes', {
+                event: 'UPDATE',
+                schema: 'public',
+                table: 'tutorials',
+                filter: `id=eq.${id}`,
+            }, (payload) => {
+                if (!payload.new) return;
+                const remote = payload.new as Record<string, any>;
+                const updates: Partial<Tutorial> = {
+                    counter: remote.counter ?? 0,
+                    secs: remote.secs ?? [],
+                };
+                if (!isTimerRunningRef.current) {
+                    updates.timer = remote.timer_seconds ?? 0;
+                    elapsedRef.current = remote.timer_seconds ?? 0;
+                    setElapsedTime(remote.timer_seconds ?? 0);
+                }
+                if (!isEditingNotesRef.current) {
+                    updates.notesHtml = remote.notes_html ?? '';
+                    setNotes(remote.notes_html ?? '');
+                }
+                updateTutorial(id as string, updates);
+            })
+            .subscribe();
+        return () => { supabase.removeChannel(channel); };
+    }, [id, user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Autosave note con debounce 2s
+    useEffect(() => {
+        if (!tutorial || notes === (tutorial.notesHtml || '')) return;
+        const t = setTimeout(() => {
+            updateTutorial(tutorial.id, { notesHtml: notes });
+            syncTutorial({ notes_html: notes });
+        }, 2000);
+        return () => clearTimeout(t);
+    }, [notes]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Timer — sync to store + Supabase every 5s; salva il valore finale all'arresto
     useEffect(() => {
         let interval: NodeJS.Timeout;
         if (isTimerRunning) {
+            wasTimerRunningRef.current = true;
             interval = setInterval(() => {
                 elapsedRef.current += 1;
                 setElapsedTime(elapsedRef.current);
@@ -64,11 +118,27 @@ export default function TutorialDetail() {
                     syncTutorial({ timer_seconds: elapsedRef.current });
                 }
             }, 1000);
+        } else if (wasTimerRunningRef.current) {
+            // Timer appena fermato — salva il valore finale
+            wasTimerRunningRef.current = false;
+            updateTutorial(id as string, { timer: elapsedRef.current });
+            syncTutorial({ timer_seconds: elapsedRef.current });
         }
         return () => clearInterval(interval);
     }, [isTimerRunning, id, updateTutorial]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    if (!tutorial) return <div className="p-10 text-center">Tutorial non trovato</div>;
+    // Redirect se il tutorial viene eliminato su un altro dispositivo mentre siamo qui
+    useEffect(() => {
+        if (hasLoadedRef.current && !tutorial) {
+            router.replace('/tutorials');
+        }
+    }, [tutorial]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    if (tutorial) hasLoadedRef.current = true;
+    if (!tutorial) {
+        if (hasLoadedRef.current) return null; // redirect in corso
+        return <div className="p-10 text-center">Tutorial non trovato</div>;
+    }
 
     const formatTime = (seconds: number) => {
         const h = Math.floor(seconds / 3600);
@@ -84,7 +154,12 @@ export default function TutorialDetail() {
         setIsEditingNotes(false);
     };
 
-    const embedUrl = `https://www.youtube.com/embed/${tutorial.videoId}?rel=0&modestbranding=1&playsinline=1`;
+    // Per playlist senza videoId specifico, usa l'URL embed della playlist
+    const embedUrl = tutorial.videoId
+        ? `https://www.youtube.com/embed/${tutorial.videoId}?rel=0&modestbranding=1&playsinline=1`
+        : tutorial.playlistId
+            ? `https://www.youtube.com/embed/videoseries?list=${tutorial.playlistId}&rel=0&modestbranding=1&playsinline=1`
+            : '';
 
     return (
         <div className="max-w-2xl mx-auto px-4 pt-6 pb-20">
@@ -115,7 +190,18 @@ export default function TutorialDetail() {
                             <RotateCcw size={13} strokeWidth={3} />
                         </button>
                     </div>
-                    <button className="w-10 h-10 flex items-center justify-center bg-white border border-[#EEF0F4] rounded-xl text-[#7B5CF6] shadow-sm">
+                    <button
+                        onClick={() => {
+                            if (navigator.share) {
+                                navigator.share({ title: tutorial.title, url: tutorial.url }).catch(() => {});
+                            } else {
+                                navigator.clipboard.writeText(tutorial.url);
+                                alert('Link copiato!');
+                            }
+                        }}
+                        className="w-10 h-10 flex items-center justify-center bg-white border border-[#EEF0F4] rounded-xl text-[#7B5CF6] shadow-sm active:scale-95 transition-transform"
+                        title="Condividi tutorial"
+                    >
                         <Share2 size={20} />
                     </button>
                 </div>
@@ -131,12 +217,18 @@ export default function TutorialDetail() {
 
             {/* YouTube Player */}
             <div className="bg-black rounded-3xl overflow-hidden aspect-video shadow-lg mb-8">
-                <iframe
-                    src={embedUrl}
-                    className="w-full h-full border-0"
-                    allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                    allowFullScreen
-                ></iframe>
+                {embedUrl ? (
+                    <iframe
+                        src={embedUrl}
+                        className="w-full h-full border-0"
+                        allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                        allowFullScreen
+                    />
+                ) : (
+                    <div className="w-full h-full flex items-center justify-center text-white/60 text-sm font-bold">
+                        Video non disponibile
+                    </div>
+                )}
             </div>
 
             {/* Main Counter — più compatto su mobile */}

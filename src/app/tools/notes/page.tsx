@@ -32,13 +32,34 @@ export default function NotesPage() {
         const loadNotes = async () => {
             if (user) {
                 const supabase = createClient();
-                const { data } = await supabase.from('notes').select('*').eq('user_id', user.id).order('updated_at', { ascending: false });
+                const { data, error } = await supabase.from('notes').select('*').eq('user_id', user.id).order('updated_at', { ascending: false });
+                if (error) console.warn('[Notes] load failed:', error.message);
                 if (data && data.length > 0) {
                     setNotes(data.map(n => ({ id: n.id, title: n.title, content: n.content, updatedAt: new Date(n.updated_at).getTime() })));
                     setLoaded(true);
                     return;
                 }
+                // Nessuna nota su Supabase: migra da localStorage se esistono
+                try {
+                    const saved = localStorage.getItem(STORAGE_KEY);
+                    if (saved) {
+                        const localNotes: Note[] = JSON.parse(saved);
+                        if (localNotes.length > 0) {
+                            setNotes(localNotes);
+                            // Upload su Supabase
+                            for (const note of localNotes) {
+                                supabase.from('notes').upsert({
+                                    id: note.id, user_id: user.id, title: note.title,
+                                    content: note.content, updated_at: new Date(note.updatedAt).toISOString()
+                                }).then(({ error: e }) => { if (e) console.warn('[Notes] migrate upsert failed:', e.message); });
+                            }
+                        }
+                    }
+                } catch {}
+                setLoaded(true);
+                return;
             }
+            // Non loggato: usa solo localStorage
             try {
                 const saved = localStorage.getItem(STORAGE_KEY);
                 if (saved) setNotes(JSON.parse(saved));

@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useRef, useState } from "react";
-import { Search, ListFilter, Plus, MoreVertical, Pencil, Trash2, Share2, Check, X, ChevronDown } from "lucide-react";
+import React, { useRef, useState, useEffect } from "react";
+import { Search, ListFilter, Plus, MoreVertical, Pencil, Trash2, Share2, Check, X } from "lucide-react";
 import { useProjectStore, Project } from "@/features/projects/store/useProjectStore";
 import { luDB } from "@/lib/db";
 import Link from "next/link";
@@ -14,6 +14,43 @@ export default function Home() {
   const { user } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const supabase = createClient();
+
+  // Realtime: sincronizza lista progetti da altri dispositivi/tab
+  useEffect(() => {
+    if (!user) return;
+    const supabase = createClient();
+    const channel = supabase
+      .channel(`projects-list-${user.id}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'projects', filter: `user_id=eq.${user.id}` }, (payload) => {
+        if (!payload.new?.id) return;
+        const p = payload.new as Record<string, any>;
+        const exists = useProjectStore.getState().projects.some(x => x.id === p.id);
+        if (!exists) {
+          addProject({
+            id: p.id, title: p.title,
+            type: (p.type ?? 'pdf') as 'pdf' | 'images',
+            kind: (p.type === 'pdf' ? 'pdf' : 'image') as 'pdf' | 'image',
+            createdAt: p.created_at ? new Date(p.created_at).getTime() : Date.now(),
+            size: p.size ?? 0, counter: p.counter ?? 0, timer: p.timer_seconds ?? 0,
+            secs: p.secs ?? [], notesHtml: p.notes_html ?? '',
+            thumbDataURL: p.thumb_url ?? undefined,
+            url: p.file_url ?? undefined,
+            images: (p.images ?? []).map((img: any) => ({ id: typeof img === 'string' ? img : (img.id ?? '') })),
+          });
+        }
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'projects', filter: `user_id=eq.${user.id}` }, (payload) => {
+        if (!payload.new?.id) return;
+        const p = payload.new as Record<string, any>;
+        updateProject(p.id, { title: p.title, counter: p.counter ?? 0, timer: p.timer_seconds ?? 0, secs: p.secs ?? [], notesHtml: p.notes_html ?? '' });
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'projects' }, (payload) => {
+        if (!payload.old?.id) return;
+        deleteProject(payload.old.id);
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Pending file waiting for name
   const [pendingFile, setPendingFile] = useState<File | null>(null);
@@ -133,7 +170,7 @@ export default function Home() {
     // Sync delete to Supabase in background
     if (user) {
       supabase.storage.from('project-files').remove([`${user.id}/${id}/main`]).catch(() => {});
-      supabase.from('projects').delete().eq('id', id).then(({ error }) => {
+      supabase.from('projects').delete().eq('id', id).eq('user_id', user.id).then(({ error }) => {
         if (error) console.warn('Project delete failed:', error.message);
       });
     }
@@ -152,7 +189,7 @@ export default function Home() {
     setRenamingId(null);
 
     if (user) {
-      supabase.from('projects').update({ title: newTitle }).eq('id', id).then(({ error }) => {
+      supabase.from('projects').update({ title: newTitle }).eq('id', id).eq('user_id', user.id).then(({ error }) => {
         if (error) console.warn('Project rename sync failed:', error.message);
       });
     }

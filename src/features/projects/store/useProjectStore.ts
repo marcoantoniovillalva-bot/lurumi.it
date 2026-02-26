@@ -65,6 +65,37 @@ interface ProjectState {
     getTutorial: (id: string) => Tutorial | undefined
 }
 
+// Safe localStorage wrapper — gestisce QuotaExceededError senza crashare
+const safeLocalStorage = {
+    getItem: (name: string): string | null => {
+        try { return localStorage.getItem(name) } catch { return null }
+    },
+    setItem: (name: string, value: string): void => {
+        try {
+            localStorage.setItem(name, value)
+        } catch (err: any) {
+            // QuotaExceededError (codice 22 su tutti i browser, 1014 su Firefox)
+            if (err?.name === 'QuotaExceededError' || err?.code === 22 || err?.code === 1014) {
+                console.warn('[Store] localStorage quota superata — riprovo senza thumbnail...')
+                try {
+                    const parsed = JSON.parse(value)
+                    if (parsed?.state?.projects) {
+                        parsed.state.projects = parsed.state.projects.map((p: any) => ({
+                            ...p, thumbDataURL: undefined,
+                        }))
+                    }
+                    localStorage.setItem(name, JSON.stringify(parsed))
+                } catch {
+                    console.error('[Store] localStorage write fallito anche dopo aver rimosso le thumbnail')
+                }
+            }
+        }
+    },
+    removeItem: (name: string): void => {
+        try { localStorage.removeItem(name) } catch {}
+    },
+}
+
 export const useProjectStore = create<ProjectState>()(
     persist(
         (set, get) => ({
@@ -100,7 +131,7 @@ export const useProjectStore = create<ProjectState>()(
         }),
         {
             name: 'lurumi-project-storage',
-            storage: createJSONStorage(() => localStorage),
+            storage: createJSONStorage(() => safeLocalStorage),
             // Strip image dataURLs — they go in IndexedDB, not localStorage (5MB limit)
             partialize: (state) => ({
                 projects: state.projects.map(p => ({

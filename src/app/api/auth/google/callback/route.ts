@@ -69,7 +69,16 @@ export async function GET(request: NextRequest) {
         return clearStateAndRedirect(failUrl)
     }
 
-    // ── Step 3: Redirect all'app — i cookie di sessione sono già impostati ──
+    // ── Step 3: Crea profilo se è il primo accesso ──
+    const { data: { user: authedUser } } = await supabase.auth.getUser()
+    if (authedUser) {
+        await supabase.from('profiles').upsert(
+            { id: authedUser.id, tier: 'free' },
+            { onConflict: 'id', ignoreDuplicates: true }
+        )
+    }
+
+    // ── Step 4: Redirect all'app — i cookie di sessione sono già impostati ──
     const response = NextResponse.redirect(appUrl)
     response.cookies.delete('g_oauth_state')
     return response

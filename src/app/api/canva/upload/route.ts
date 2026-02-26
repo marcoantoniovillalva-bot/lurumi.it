@@ -35,6 +35,9 @@ export async function POST(request: NextRequest) {
 
     if (!uploadRes.ok) {
         const err = await uploadRes.text()
+        if (uploadRes.status === 401) {
+            return NextResponse.json({ error: 'Token Canva scaduto. Ricollega il tuo account Canva dal profilo.' }, { status: 401 })
+        }
         return NextResponse.json({ error: `Upload Canva fallito: ${err}` }, { status: 500 })
     }
 
