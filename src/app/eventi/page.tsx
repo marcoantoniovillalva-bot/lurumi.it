@@ -634,19 +634,10 @@ export default function EventiPage() {
 
         if (!data) { setLoading(false); return; }
 
-        const counts = await Promise.all(data.map(async ev => {
-            const { count } = await supabase
-                .from('event_bookings')
-                .select('*', { count: 'exact', head: true })
-                .eq('event_id', ev.id)
-                .eq('status', 'confirmed');
-            return { id: ev.id, count: count ?? 0 };
-        }));
-
-        setEvents(data.map(ev => ({
-            ...ev,
-            booking_count: counts.find(c => c.id === ev.id)?.count ?? 0,
-        })));
+        // booking_count è mantenuto da un trigger Postgres su event_bookings:
+        // quando cambia, aggiorna events.booking_count → il Realtime su events
+        // notifica tutti i client connessi senza problemi di RLS
+        setEvents(data as LEvent[]);
         setLoading(false);
     }, []);
 

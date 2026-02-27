@@ -253,6 +253,40 @@ EXCEPTION WHEN OTHERS THEN
   NULL; -- già inclusa (es. pubblicazione FOR ALL TABLES)
 END $$;
 
+-- ── Colonna booking_count su events (aggiornata da trigger) ─────────────────
+-- Permette il Realtime dei posti per tutti gli utenti senza bypassare RLS su event_bookings
+ALTER TABLE events ADD COLUMN IF NOT EXISTS booking_count INT DEFAULT 0;
+
+-- Ricalcola i conteggi esistenti
+UPDATE events SET booking_count = (
+  SELECT COUNT(*) FROM event_bookings
+  WHERE event_bookings.event_id = events.id AND status = 'confirmed'
+);
+
+-- Funzione trigger per mantenere aggiornato booking_count
+CREATE OR REPLACE FUNCTION sync_event_booking_count()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF TG_OP = 'INSERT' AND NEW.status = 'confirmed' THEN
+    UPDATE events SET booking_count = booking_count + 1 WHERE id = NEW.event_id;
+  ELSIF TG_OP = 'UPDATE' THEN
+    IF OLD.status = 'confirmed' AND NEW.status != 'confirmed' THEN
+      UPDATE events SET booking_count = GREATEST(0, booking_count - 1) WHERE id = OLD.event_id;
+    ELSIF OLD.status != 'confirmed' AND NEW.status = 'confirmed' THEN
+      UPDATE events SET booking_count = booking_count + 1 WHERE id = NEW.event_id;
+    END IF;
+  ELSIF TG_OP = 'DELETE' AND OLD.status = 'confirmed' THEN
+    UPDATE events SET booking_count = GREATEST(0, booking_count - 1) WHERE id = OLD.event_id;
+  END IF;
+  RETURN COALESCE(NEW, OLD);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS trg_event_booking_count ON event_bookings;
+CREATE TRIGGER trg_event_booking_count
+  AFTER INSERT OR UPDATE OR DELETE ON event_bookings
+  FOR EACH ROW EXECUTE FUNCTION sync_event_booking_count();
+
 -- Abilita Realtime su events e event_bookings (sync posti, stato evento)
 DO $$ BEGIN
   ALTER PUBLICATION supabase_realtime ADD TABLE events;
