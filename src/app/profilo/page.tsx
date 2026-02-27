@@ -3,7 +3,8 @@
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Palette, CheckCircle } from "lucide-react";
+import { Palette, CheckCircle, CalendarDays, Sparkles } from "lucide-react";
+import { AiCreditsBar } from "@/components/AiCreditsBar";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useUserProfile } from "@/hooks/useUserProfile";
@@ -12,7 +13,7 @@ import { useSearchParams } from "next/navigation";
 
 export default function ProfiloPage() {
     const { user, loading } = useAuth();
-    const { profile } = useUserProfile();
+    const { profile, aiCredits } = useUserProfile();
     const router = useRouter();
     const searchParams = useSearchParams();
     const canvaStatus = searchParams.get('canva'); // 'success' | 'error' | null
@@ -112,6 +113,55 @@ export default function ProfiloPage() {
                     )}
                 </div>
             </div>
+
+            {/* ── Credito eventi ── */}
+            {profile !== null && (
+                <div className="bg-white rounded-[28px] border border-[#EEF0F4] p-6 shadow-sm mb-6">
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <div className="flex items-center gap-2 mb-1">
+                                <CalendarDays size={18} className="text-[#7B5CF6]" />
+                                <h2 className="text-lg font-black text-[#1C1C1E]">Credito eventi</h2>
+                            </div>
+                            <p className="text-[#9AA2B1] text-xs font-medium">
+                                Usabile per prenotare corsi ed eventi
+                            </p>
+                        </div>
+                        <span className="text-2xl font-black text-[#7B5CF6]">
+                            €{(profile?.event_credit ?? 0).toFixed(2)}
+                        </span>
+                    </div>
+                </div>
+            )}
+
+            {/* ── Crediti AI ── */}
+            {aiCredits && (
+                <div className="bg-white rounded-[28px] border border-[#EEF0F4] p-6 shadow-sm mb-6">
+                    <div className="flex items-center gap-2 mb-4">
+                        <Sparkles size={18} className="text-[#7B5CF6]" />
+                        <h2 className="text-lg font-black text-[#1C1C1E]">Crediti AI</h2>
+                    </div>
+                    <AiCreditsBar credits={aiCredits} />
+                    <div className="mt-4 grid grid-cols-2 gap-2">
+                        {[
+                            { label: 'Chat crochet', cost: '2 cr.' },
+                            { label: 'Analisi schema', cost: '5 cr.' },
+                            { label: 'Immagine veloce', cost: '8 cr.' },
+                            { label: 'Immagine HD', cost: '20 cr.' },
+                        ].map(item => (
+                            <div key={item.label} className="flex items-center justify-between bg-[#FAFAFC] rounded-xl px-3 py-2">
+                                <span className="text-xs font-medium text-[#9AA2B1]">{item.label}</span>
+                                <span className="text-xs font-black text-[#7B5CF6]">{item.cost}</span>
+                            </div>
+                        ))}
+                    </div>
+                    {profile?.tier === 'free' && (
+                        <a href="/pricing" className="mt-4 flex items-center justify-center gap-2 w-full py-3 bg-[#7B5CF6] text-white rounded-2xl font-bold text-sm">
+                            Passa a Premium — 300 crediti/mese
+                        </a>
+                    )}
+                </div>
+            )}
 
             {/* Social */}
             <div className="pt-6 border-t border-[#EEF0F4]">

@@ -1,15 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server'
+import OpenAI from 'openai'
 import Replicate from 'replicate'
 import { createClient } from '@/lib/supabase/server'
+import { checkAndDeductCredits } from '@/lib/ai-credits'
+import { checkRateLimit } from '@/lib/rate-limit'
+import { isAiEnabled, autoDisableIfOverBudget } from '@/lib/ai-status'
+
+function getOpenAIClient() {
+    if (!process.env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY non configurato')
+    return new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+}
 
 function getReplicateClient() {
-    if (!process.env.REPLICATE_API_TOKEN) {
-        throw new Error('REPLICATE_API_TOKEN non configurato nel file .env.local')
-    }
+    if (!process.env.REPLICATE_API_TOKEN) throw new Error('REPLICATE_API_TOKEN non configurato')
     return new Replicate({ auth: process.env.REPLICATE_API_TOKEN })
 }
 
-async function extractImageUrl(output: unknown): Promise<string> {
+async function extractReplicateUrl(output: unknown): Promise<string> {
     if (Array.isArray(output) && output.length > 0) {
         const item = output[0]
         if (typeof item === 'string') return item
@@ -23,37 +30,106 @@ async function extractImageUrl(output: unknown): Promise<string> {
         const str = String(item)
         if (str.startsWith('http') || str.startsWith('data:')) return str
     }
-    if (typeof output === 'string' && (output.startsWith('http') || output.startsWith('data:'))) {
-        return output
-    }
-    if (output && typeof (output as any).url === 'function') {
-        return (output as any).url().toString()
-    }
-    if (output && typeof (output as any).blob === 'function') {
-        const blob = await (output as any).blob()
-        const buffer = Buffer.from(await blob.arrayBuffer())
-        return `data:${blob.type};base64,${buffer.toString('base64')}`
-    }
+    if (typeof output === 'string' && (output.startsWith('http') || output.startsWith('data:'))) return output
+    if (output && typeof (output as any).url === 'function') return (output as any).url().toString()
     throw new Error('Formato output non riconosciuto. Riprova.')
 }
 
+// DALL-E 3 accetta solo 1024x1024, 1792x1024, 1024x1792
+// Mappiamo i ratio usati dall'UI al più vicino supportato
+function toDalleSize(aspectRatio: string): '1024x1024' | '1792x1024' | '1024x1792' {
+    if (aspectRatio === '16:9' || aspectRatio === '3:2') return '1792x1024'  // orizzontale
+    if (aspectRatio === '9:16' || aspectRatio === '2:3') return '1024x1792'  // verticale
+    return '1024x1024'  // quadrato (1:1)
+}
+
+const MAX_PROMPT_LENGTH = 1000
+const MAX_REF_IMAGE_SIZE = 10 * 1024 * 1024 // 10 MB in caratteri base64
+
 export async function POST(req: NextRequest) {
     try {
-        const { prompt, aspectRatio, referenceImageBase64 } = await req.json()
+        const { prompt, aspectRatio, referenceImageBase64, hd } = await req.json()
 
         if (!prompt?.trim()) {
             return NextResponse.json({ success: false, error: 'Prompt mancante.' }, { status: 400 })
         }
+        if (typeof prompt === 'string' && prompt.length > MAX_PROMPT_LENGTH) {
+            return NextResponse.json(
+                { success: false, error: `Il prompt non può superare ${MAX_PROMPT_LENGTH} caratteri.` },
+                { status: 400 }
+            )
+        }
+        if (referenceImageBase64 !== undefined && referenceImageBase64 !== null) {
+            if (typeof referenceImageBase64 !== 'string' || referenceImageBase64.length > MAX_REF_IMAGE_SIZE) {
+                return NextResponse.json({ success: false, error: 'Immagine di riferimento non valida o troppo grande.' }, { status: 400 })
+            }
+        }
 
-        const replicate = getReplicateClient()
+        // Auth obbligatoria
+        const supabase = await createClient()
+        const { data: { user } } = await supabase.auth.getUser()
 
-        let output: unknown
-        if (referenceImageBase64) {
-            output = await replicate.run(
+        if (!user) {
+            return NextResponse.json(
+                { success: false, error: 'Devi accedere per usare i servizi AI.' },
+                { status: 401 }
+            )
+        }
+
+        // Check AI abilitata
+        if (!await isAiEnabled()) {
+            return NextResponse.json(
+                { success: false, error: 'Il servizio AI è temporaneamente sospeso. Riprova più tardi.' },
+                { status: 503 }
+            )
+        }
+
+        // Rate limiting — prevenzione burst abuse
+        const action = hd ? 'image_hd' : 'image_fast'
+        const rateResult = checkRateLimit(user.id, action)
+        if (!rateResult.ok) {
+            return NextResponse.json(
+                { success: false, error: `Troppe richieste. Riprova tra ${rateResult.retryAfterSec} secondi.` },
+                { status: 429, headers: { 'Retry-After': String(rateResult.retryAfterSec) } }
+            )
+        }
+
+        // Verifica e scala crediti
+        const creditResult = await checkAndDeductCredits(user.id, action)
+        if (!creditResult.ok) {
+            return NextResponse.json(
+                { success: false, error: creditResult.error, creditsExhausted: true },
+                { status: 402 }
+            )
+        }
+
+        let imageUrl: string
+        let provider: string
+        let costUsd: number
+
+        if (hd) {
+            // DALL-E 3 HD
+            const openai = getOpenAIClient()
+            const enrichedPrompt = `High quality crochet and amigurumi art: ${prompt}. Handcrafted look, detailed yarn texture, studio lighting, soft background.`
+            const response = await openai.images.generate({
+                model: 'dall-e-3',
+                prompt: enrichedPrompt,
+                n: 1,
+                size: toDalleSize(aspectRatio),
+                quality: 'hd',
+                response_format: 'url',
+            })
+            imageUrl = response.data?.[0]?.url ?? ''
+            provider = 'openai-dalle3'
+            costUsd = 0.08
+        } else if (referenceImageBase64) {
+            // flux-dev con immagine di riferimento (Replicate)
+            const replicate = getReplicateClient()
+            const output = await replicate.run(
                 'black-forest-labs/flux-dev' as any,
                 {
                     input: {
-                        prompt,
+                        prompt: `Beautiful high-quality crochet/knitting: ${prompt}. Studio lighting, professional craft photography.`,
                         image: referenceImageBase64,
                         prompt_strength: 0.8,
                         aspect_ratio: aspectRatio,
@@ -62,8 +138,13 @@ export async function POST(req: NextRequest) {
                     }
                 }
             )
+            imageUrl = await extractReplicateUrl(output)
+            provider = 'replicate-flux-dev'
+            costUsd = 0.025
         } else {
-            output = await replicate.run(
+            // flux-schnell fast (Replicate)
+            const replicate = getReplicateClient()
+            const output = await replicate.run(
                 'black-forest-labs/flux-schnell',
                 {
                     input: {
@@ -74,28 +155,31 @@ export async function POST(req: NextRequest) {
                     }
                 }
             )
+            imageUrl = await extractReplicateUrl(output)
+            provider = 'replicate-flux-schnell'
+            costUsd = 0.003
         }
 
-        const imageUrl = await extractImageUrl(output)
-
-        // Log to Supabase if user is authenticated
-        try {
-            const supabase = await createClient()
-            const { data: { user } } = await supabase.auth.getUser()
-            if (user) {
+        // Log + auto-disable check — non bloccanti
+        void (async () => {
+            try {
                 await supabase.from('ai_generations').insert({
                     user_id: user.id,
                     tool_type: 'designer',
-                    provider: 'replicate',
-                    cost_usd: 0.003,
-                    output_data: { prompt, imageUrl, aspectRatio }
+                    provider,
+                    cost_usd: costUsd,
+                    output_data: { prompt, imageUrl, aspectRatio, hd: !!hd },
                 })
-            }
-        } catch { /* log failure is non-blocking */ }
+            } catch {}
+            autoDisableIfOverBudget().catch(() => {})
+        })()
 
         return NextResponse.json({ success: true, imageUrl })
     } catch (error: any) {
         console.error('Generate image error:', error)
-        return NextResponse.json({ success: false, error: error.message || 'Errore durante la generazione. Riprova.' }, { status: 500 })
+        return NextResponse.json(
+            { success: false, error: error.message || 'Errore durante la generazione. Riprova.' },
+            { status: 500 }
+        )
     }
 }

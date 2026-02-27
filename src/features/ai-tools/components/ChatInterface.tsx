@@ -6,6 +6,8 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/hooks/useAuth'
+import { useUserProfile } from '@/hooks/useUserProfile'
+import { AiCreditsBar } from '@/components/AiCreditsBar'
 
 interface Message {
     id: string
@@ -26,6 +28,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     suggestions = []
 }) => {
     const { user } = useAuth()
+    const { aiCredits } = useUserProfile()
     const sessionId = useRef(Date.now().toString())
     const [messages, setMessages] = useState<Message[]>([])
     const [input, setInput] = useState('')
@@ -201,9 +204,18 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                     ]).then(({ error }) => { if (error) console.warn('Chat save failed:', error.message) })
                 }
             } else {
+                const isAuth = res.status === 401
+                const isRateLimited = res.status === 429
+                const errorText = isAuth
+                    ? 'Per usare l\'AI devi prima accedere. Vai su /login per registrarti o fare il login.'
+                    : isRateLimited
+                        ? result.error || 'Troppe richieste. Aspetta qualche secondo prima di riprovare.'
+                        : result.creditsExhausted
+                            ? `Crediti AI esauriti. ${result.error}`
+                            : `Spiacente, si è verificato un errore: ${result.error || 'Riprova più tardi.'}`
                 setMessages(prev => [...prev, {
                     id: (Date.now() + 1).toString(),
-                    text: `Spiacente, si è verificato un errore: ${result.error || 'Riprova più tardi.'}`,
+                    text: errorText,
                     sender: 'ai'
                 }])
             }
@@ -220,21 +232,31 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
     return (
         <div className="relative flex flex-col h-[calc(100dvh-var(--header-h,64px)-env(safe-area-inset-bottom,0px))] max-w-2xl mx-auto bg-[#FAFAFC]" style={{ '--header-h': '64px' } as React.CSSProperties}>
-            <div className="px-4 pt-4 border-b border-[#EEF0F4] pb-4 bg-white flex items-center justify-between">
-                <Link href="/tools" className="text-[#9AA2B1] hover:text-[#7B5CF6] transition-colors">
-                    <ArrowLeft size={22} />
-                </Link>
-                <h2 className="text-lg font-bold text-[#1C1C1E]">{title}</h2>
-                {user ? (
-                    <button
-                        onClick={() => { setShowHistory(true); loadHistory(); }}
-                        className="w-8 h-8 flex items-center justify-center text-[#9AA2B1] hover:text-[#7B5CF6] transition-colors"
-                        title="Storico conversazioni"
-                    >
-                        <History size={20} />
-                    </button>
-                ) : (
-                    <div className="w-8" />
+            <div className="border-b border-[#EEF0F4] bg-white">
+                <div className="px-4 pt-4 pb-3 flex items-center justify-between">
+                    <Link href="/tools" className="text-[#9AA2B1] hover:text-[#7B5CF6] transition-colors">
+                        <ArrowLeft size={22} />
+                    </Link>
+                    <h2 className="text-lg font-bold text-[#1C1C1E]">{title}</h2>
+                    {user ? (
+                        <button
+                            onClick={() => { setShowHistory(true); loadHistory(); }}
+                            className="w-8 h-8 flex items-center justify-center text-[#9AA2B1] hover:text-[#7B5CF6] transition-colors"
+                            title="Storico conversazioni"
+                        >
+                            <History size={20} />
+                        </button>
+                    ) : (
+                        <div className="w-8" />
+                    )}
+                </div>
+                {user && (
+                    <div className="px-4 pb-3">
+                        {aiCredits
+                            ? <AiCreditsBar credits={aiCredits} compact />
+                            : <div className="h-4 w-20 bg-[#F4F4F8] rounded-full animate-pulse" />
+                        }
+                    </div>
                 )}
             </div>
 
@@ -435,6 +457,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                         <button
                             onClick={handleSend}
                             disabled={(!input.trim() && !selectedImage) || loading}
+                            title={user ? (selectedImage ? '5 crediti AI' : '2 crediti AI') : 'Accedi per usare l\'AI'}
                             className={`absolute right-1 top-1 w-9 h-9 flex items-center justify-center rounded-full transition-all ${(input.trim() || selectedImage) && !loading ? 'bg-[#7B5CF6] text-white shadow-lg active:scale-90' : 'bg-transparent text-[#9AA2B1]'}`}
                         >
                             <Send size={18} />

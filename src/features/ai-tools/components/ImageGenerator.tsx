@@ -1,10 +1,12 @@
 'use client'
 
 import React, { useState, useRef, useEffect } from 'react'
-import { ArrowLeft, Dice5, Sparkles, Upload, X, Download, Share2, Palette } from 'lucide-react'
+import { ArrowLeft, Dice5, Sparkles, Upload, X, Download, Share2, Palette, Zap, Crown } from 'lucide-react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/hooks/useAuth'
+import { useUserProfile } from '@/hooks/useUserProfile'
+import { AiCreditsBar } from '@/components/AiCreditsBar'
 
 const SUGGESTIONS = [
     'Un coniglietto amigurumi con orecchie lunghe e fiocco rosa',
@@ -16,6 +18,7 @@ const SUGGESTIONS = [
 
 export const ImageGenerator: React.FC = () => {
     const { user } = useAuth()
+    const { aiCredits } = useUserProfile()
     const [aspectRatio, setAspectRatio] = useState('1:1')
     const [prompt, setPrompt] = useState('')
     const [referenceImage, setReferenceImage] = useState<string | null>(null)
@@ -23,6 +26,7 @@ export const ImageGenerator: React.FC = () => {
     const [generatedImage, setGeneratedImage] = useState<string | null>(null)
     const [error, setError] = useState<string | null>(null)
     const [showSuggestions, setShowSuggestions] = useState(false)
+    const [hdMode, setHdMode] = useState(false)
     const refImageInput = useRef<HTMLInputElement>(null)
     const [canvaConnected, setCanvaConnected] = useState(false)
     const [exportingCanva, setExportingCanva] = useState(false)
@@ -75,13 +79,24 @@ export const ImageGenerator: React.FC = () => {
             const res = await fetch('/api/generate-image', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ prompt, aspectRatio, referenceImageBase64: referenceImage ?? undefined }),
+                body: JSON.stringify({
+                    prompt,
+                    aspectRatio,
+                    referenceImageBase64: referenceImage ?? undefined,
+                    hd: hdMode,
+                }),
             })
             const result = await res.json()
             if (result.success && result.imageUrl) {
                 setGeneratedImage(result.imageUrl)
             } else {
-                setError(result.error || 'Errore durante la generazione')
+                setError(
+                    res.status === 429
+                        ? result.error || 'Troppe richieste. Aspetta qualche secondo prima di riprovare.'
+                        : result.creditsExhausted
+                            ? `Crediti AI esauriti. ${result.error}`
+                            : result.error || 'Errore durante la generazione'
+                )
             }
         } catch (err: any) {
             setError(err.message || 'Errore di connessione')
@@ -143,6 +158,10 @@ export const ImageGenerator: React.FC = () => {
                     <h1 className="text-3xl font-black mb-1">Designer AI</h1>
                     <p className="text-[#9AA2B1] text-sm">Genera immagini di ispirazione per il tuo uncinetto</p>
                 </header>
+
+                {user && aiCredits && (
+                    <AiCreditsBar credits={aiCredits} />
+                )}
 
                 {error && (
                     <div className="bg-red-50 border border-red-100 p-4 rounded-2xl text-red-600 text-sm font-bold animate-in fade-in">
@@ -265,6 +284,35 @@ export const ImageGenerator: React.FC = () => {
                     </div>
                 </div>
 
+                {/* Qualità immagine */}
+                <section className="space-y-3">
+                    <h3 className="text-[15px] font-bold text-[#1C1C1E] flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 rounded-full bg-[#7B5CF6]" />
+                        Qualità
+                    </h3>
+                    <div className="flex gap-2">
+                        <button
+                            onClick={() => setHdMode(false)}
+                            className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl border-2 text-sm font-bold transition-all ${!hdMode ? 'border-[#7B5CF6] bg-[#F4EEFF] text-[#7B5CF6]' : 'border-[#EEF0F4] bg-white text-[#9AA2B1]'}`}
+                        >
+                            <Zap size={15} />
+                            Veloce <span className="text-[11px] opacity-70">8 crediti</span>
+                        </button>
+                        <button
+                            onClick={() => setHdMode(true)}
+                            className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl border-2 text-sm font-bold transition-all ${hdMode ? 'border-[#7B5CF6] bg-[#F4EEFF] text-[#7B5CF6]' : 'border-[#EEF0F4] bg-white text-[#9AA2B1]'}`}
+                        >
+                            <Crown size={15} />
+                            HD <span className="text-[11px] opacity-70">20 crediti</span>
+                        </button>
+                    </div>
+                    {hdMode && (
+                        <p className="text-[11px] text-[#9AA2B1] font-medium px-1">
+                            Modalità HD usa DALL-E 3 — qualità superiore, dettagli del filato più realistici.
+                        </p>
+                    )}
+                </section>
+
                 {/* Formato immagine */}
                 <section className="space-y-3">
                     <h3 className="text-[15px] font-bold text-[#1C1C1E] flex items-center gap-2">
@@ -293,9 +341,9 @@ export const ImageGenerator: React.FC = () => {
                     className={`w-full max-w-xl mx-auto py-4 rounded-2xl font-black text-[17px] shadow-2xl active:scale-95 transition-all text-white flex items-center justify-center gap-2 pointer-events-auto ${generating ? 'bg-[#D9B9F9] cursor-not-allowed' : 'bg-[#7B5CF6] shadow-[0_12px_24px_rgba(123,92,246,0.35)]'}`}
                 >
                     {generating ? (
-                        <><div className="animate-spin rounded-full h-5 w-5 border-2 border-white/30 border-t-white" />Generazione in corso...</>
+                        <><div className="animate-spin rounded-full h-5 w-5 border-2 border-white/30 border-t-white" />{hdMode ? 'Generazione HD in corso...' : 'Generazione in corso...'}</>
                     ) : (
-                        <><Sparkles size={20} />Genera Ispirazione</>
+                        <><Sparkles size={20} />Genera {hdMode ? 'HD' : 'Ispirazione'}<span className="text-[13px] opacity-75 ml-1">({hdMode ? 20 : 8} crediti)</span></>
                     )}
                 </button>
             </div>

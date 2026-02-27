@@ -4,14 +4,13 @@ import Stripe from 'stripe'
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 
-export async function createCheckoutSession(priceId: string) {
-    if (!process.env.STRIPE_SECRET_KEY) {
-        throw new Error('STRIPE_SECRET_KEY non configurato nel file .env.local')
-    }
+function initStripe() {
+    if (!process.env.STRIPE_SECRET_KEY) throw new Error('STRIPE_SECRET_KEY non configurato')
+    return new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2025-01-27.acacia' as any })
+}
 
-    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
-        apiVersion: '2025-01-27.acacia' as any,
-    })
+export async function createCheckoutSession(priceId: string) {
+    const stripe = initStripe()
 
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
@@ -46,11 +45,37 @@ export async function createCheckoutSession(priceId: string) {
         customer: customerId,
         line_items: [{ price: priceId, quantity: 1 }],
         mode: 'subscription',
-        success_url: `${appUrl}/dashboard?success=true`,
+        success_url: `${appUrl}/pricing?success=true&session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${appUrl}/pricing?canceled=true`,
     })
 
     if (session.url) {
         redirect(session.url)
     }
+}
+
+export async function createBillingPortalSession() {
+    const stripe = initStripe()
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) redirect('/login')
+
+    const { data: profile } = await supabase
+        .from('profiles')
+        .select('stripe_customer_id')
+        .eq('id', user.id)
+        .single()
+
+    if (!profile?.stripe_customer_id) {
+        throw new Error('Nessun abbonamento Stripe trovato')
+    }
+
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3010'
+
+    const portalSession = await stripe.billingPortal.sessions.create({
+        customer: profile.stripe_customer_id,
+        return_url: `${appUrl}/pricing?portal_return=true`,
+    })
+
+    redirect(portalSession.url)
 }

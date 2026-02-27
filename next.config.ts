@@ -13,6 +13,12 @@ const nextConfig: NextConfig = {
       bodySizeLimit: '10mb',
     },
   },
+  webpack: (config) => {
+    // pdfjs-dist v5 prova a caricare 'canvas' lato server — lo alias a false nel browser
+    config.resolve.alias.canvas = false;
+    config.resolve.alias.encoding = false;
+    return config;
+  },
 };
 
 module.exports = withPWA(nextConfig);

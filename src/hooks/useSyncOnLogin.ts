@@ -89,8 +89,7 @@ export function useSyncOnLogin(user: User | null) {
                             title: p.title,
                             type: p.type,
                             file_url: fileUrl,
-                            // Non salvare data: URLs in Supabase (troppo grandi)
-                            thumb_url: p.thumbDataURL?.startsWith('data:') ? null : (p.thumbDataURL ?? null),
+                            thumb_url: p.thumbDataURL ?? null,
                             size: p.size,
                             counter: p.counter,
                             timer_seconds: p.timer,

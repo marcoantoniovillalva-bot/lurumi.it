@@ -14,6 +14,7 @@ import { RoundCounter } from "@/features/projects/components/RoundCounter";
 import { FullscreenViewer } from "@/components/FullscreenViewer";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { loadPdfjs } from "@/lib/pdfjs";
 
 export default function ProjectDetail() {
     const { id } = useParams();
@@ -49,6 +50,7 @@ export default function ProjectDetail() {
     const [imageUrls, setImageUrls] = useState<string[]>([]);
 
     const canvasRef = useRef<HTMLCanvasElement>(null);
+    const renderTaskRef = useRef<any>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const elapsedRef = useRef(0);
     const blobUrlsRef = useRef<string[]>([]);
@@ -56,6 +58,7 @@ export default function ProjectDetail() {
     const isEditingNotesRef = useRef(false);
     const hasLoadedRef = useRef(false);
     const wasTimerRunningRef = useRef(false);
+    const lastTapRef = useRef(0);
 
     // Init timer + notes dallo store, reset hint al cambio progetto
     useEffect(() => {
@@ -87,8 +90,7 @@ export default function ProjectDetail() {
                     }
                 }
                 if (blob) {
-                    const pdfjsLib = await import('pdfjs-dist/build/pdf.mjs');
-                    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+                    const pdfjsLib = await loadPdfjs();
                     const doc = await pdfjsLib.getDocument({ data: await blob.arrayBuffer() }).promise;
                     setPdfDoc(doc);
                     setTotalPages(doc.numPages);
@@ -142,18 +144,39 @@ export default function ProjectDetail() {
     }, [id, project?.images?.length, user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
-        if (!pdfDoc || !canvasRef.current || project?.type !== 'pdf') return;
+        if (!pdfDoc || !canvasRef.current || project?.type !== 'pdf' || fullscreen) return;
         const renderPage = async () => {
-            const page = await pdfDoc.getPage(currentPage);
-            const viewport = page.getViewport({ scale: 1.3 });
-            const canvas = canvasRef.current!;
-            const context = canvas.getContext('2d');
-            canvas.height = viewport.height;
-            canvas.width = viewport.width;
-            await page.render({ canvasContext: context!, viewport }).promise;
+            // Cancella render in corso prima di iniziarne uno nuovo
+            if (renderTaskRef.current) {
+                try { renderTaskRef.current.cancel(); } catch {}
+                renderTaskRef.current = null;
+            }
+            try {
+                const page = await pdfDoc.getPage(currentPage);
+                const canvas = canvasRef.current;
+                if (!canvas) return;
+                const viewport = page.getViewport({ scale: 1.3 });
+                const context = canvas.getContext('2d');
+                canvas.height = viewport.height;
+                canvas.width = viewport.width;
+                const task = page.render({ canvasContext: context!, viewport });
+                renderTaskRef.current = task;
+                await task.promise;
+                renderTaskRef.current = null;
+            } catch (e: any) {
+                if (e?.name !== 'RenderingCancelledException') {
+                    console.error('Failed to render PDF page', e);
+                }
+            }
         };
         renderPage();
-    }, [pdfDoc, currentPage, project?.type]);
+        return () => {
+            if (renderTaskRef.current) {
+                try { renderTaskRef.current.cancel(); } catch {}
+                renderTaskRef.current = null;
+            }
+        };
+    }, [pdfDoc, currentPage, project?.type, fullscreen]);
 
     // Keep refs in sync for Realtime callback (avoids stale closures)
     useEffect(() => { isTimerRunningRef.current = isTimerRunning; }, [isTimerRunning]);
@@ -464,10 +487,18 @@ export default function ProjectDetail() {
                     </div>
                 </div>
 
-                {/* Content — double click to fullscreen */}
+                {/* Content — double click / double tap to fullscreen */}
                 <div
                     className="overflow-auto bg-[#FAFAFC] flex justify-center relative cursor-pointer"
                     onDoubleClick={() => setFullscreen(true)}
+                    onTouchEnd={(e) => {
+                        const now = Date.now();
+                        if (now - lastTapRef.current < 300) {
+                            e.preventDefault();
+                            setFullscreen(true);
+                        }
+                        lastTapRef.current = now;
+                    }}
                 >
                     {project.type === 'pdf' ? (
                         <canvas ref={canvasRef} className="max-w-full h-auto shadow-sm" />
@@ -492,7 +523,8 @@ export default function ProjectDetail() {
                     {/* Hint */}
                     {hintVisible && (imageUrls.length > 0 || pdfDoc) && (
                         <div className="absolute bottom-3 left-1/2 -translate-x-1/2 bg-black/50 text-white text-xs font-bold px-3 py-1.5 rounded-full pointer-events-none animate-in fade-in">
-                            Doppio click per schermo intero
+                            <span className="md:hidden">Doppio tap per schermo intero</span>
+                            <span className="hidden md:inline">Doppio click per schermo intero</span>
                         </div>
                     )}
                 </div>

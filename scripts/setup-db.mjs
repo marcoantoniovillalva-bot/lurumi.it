@@ -138,6 +138,204 @@ CREATE TABLE IF NOT EXISTS bug_reports (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- ── Admin + Events ───────────────────────────────────────────
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE;
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS event_credit NUMERIC(10,2) DEFAULT 0;
+
+CREATE TABLE IF NOT EXISTS events (
+  id            UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  title         TEXT NOT NULL,
+  description   TEXT,
+  image_url     TEXT,
+  image_urls    TEXT[] DEFAULT '{}',
+  cost          NUMERIC(10,2) NOT NULL DEFAULT 0,
+  event_date    TIMESTAMPTZ NOT NULL,
+  access_link   TEXT,
+  max_participants INT,
+  is_active     BOOLEAN DEFAULT TRUE,
+  created_at    TIMESTAMPTZ DEFAULT now()
+);
+
+-- Migrazione per aggiungere image_urls se la tabella esisteva già
+ALTER TABLE events ADD COLUMN IF NOT EXISTS image_urls TEXT[] DEFAULT '{}';
+
+CREATE TABLE IF NOT EXISTS event_bookings (
+  id               UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  event_id         UUID REFERENCES events(id) ON DELETE CASCADE NOT NULL,
+  user_id          UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+  user_email       TEXT,
+  amount_paid      NUMERIC(10,2) NOT NULL DEFAULT 0,
+  credit_used      NUMERIC(10,2) NOT NULL DEFAULT 0,
+  status           TEXT DEFAULT 'confirmed' CHECK (status IN ('confirmed','cancelled','pending')),
+  stripe_session_id TEXT,
+  created_at       TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(event_id, user_id)
+);
+
+-- Durata evento
+ALTER TABLE events ADD COLUMN IF NOT EXISTS duration_minutes INT;
+
+-- Interessi utenti per eventi sold-out
+CREATE TABLE IF NOT EXISTS event_interests (
+  id            UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  event_id      UUID REFERENCES events(id) ON DELETE CASCADE NOT NULL,
+  user_id       UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  user_email    TEXT,
+  preferred_date TEXT,
+  message       TEXT,
+  created_at    TIMESTAMPTZ DEFAULT now()
+);
+
+ALTER TABLE event_interests ENABLE ROW LEVEL SECURITY;
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='event_interests' AND policyname='interests_user_insert') THEN
+    CREATE POLICY "interests_user_insert" ON event_interests FOR INSERT WITH CHECK (auth.uid() = user_id OR user_id IS NULL); END IF; END $$;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='event_interests' AND policyname='interests_user_read') THEN
+    CREATE POLICY "interests_user_read" ON event_interests FOR SELECT USING (auth.uid() = user_id); END IF; END $$;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='event_interests' AND policyname='interests_admin_all') THEN
+    CREATE POLICY "interests_admin_all" ON event_interests FOR ALL USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND is_admin = true)); END IF; END $$;
+
+-- Messaggi privati admin↔utente relativi a un interesse evento
+CREATE TABLE IF NOT EXISTS interest_messages (
+  id          UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  interest_id UUID REFERENCES event_interests(id) ON DELETE CASCADE NOT NULL,
+  sender_id   UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+  sender_role TEXT NOT NULL CHECK (sender_role IN ('admin', 'user')),
+  content     TEXT NOT NULL,
+  created_at  TIMESTAMPTZ DEFAULT now()
+);
+
+ALTER TABLE interest_messages ENABLE ROW LEVEL SECURITY;
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='interest_messages' AND policyname='imsg_read') THEN
+    CREATE POLICY "imsg_read" ON interest_messages FOR SELECT USING (
+      EXISTS (SELECT 1 FROM event_interests WHERE id = interest_messages.interest_id AND user_id = auth.uid())
+      OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND is_admin = true)
+    );
+  END IF;
+END $$;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='interest_messages' AND policyname='imsg_user_insert') THEN
+    CREATE POLICY "imsg_user_insert" ON interest_messages FOR INSERT WITH CHECK (
+      sender_id = auth.uid()
+      AND (
+        (sender_role = 'user' AND EXISTS (
+          SELECT 1 FROM event_interests WHERE id = interest_messages.interest_id AND user_id = auth.uid()
+        ))
+        OR
+        (sender_role = 'admin' AND EXISTS (
+          SELECT 1 FROM profiles WHERE id = auth.uid() AND is_admin = true
+        ))
+      )
+    );
+  END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS user_sessions (
+  id               UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id          UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+  started_at       TIMESTAMPTZ DEFAULT now(),
+  ended_at         TIMESTAMPTZ,
+  duration_seconds INT
+);
+
+CREATE INDEX IF NOT EXISTS user_sessions_user_started ON user_sessions(user_id, started_at DESC);
+
+-- Abilita Realtime per interest_messages (cross-device sync)
+-- Gestisce sia pubblicazioni FOR ALL TABLES sia quelle per tabelle specifiche
+DO $$ BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE interest_messages;
+EXCEPTION WHEN OTHERS THEN
+  NULL; -- già inclusa (es. pubblicazione FOR ALL TABLES)
+END $$;
+
+-- Abilita Realtime su events e event_bookings (sync posti, stato evento)
+DO $$ BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE events;
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+DO $$ BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE event_bookings;
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+CREATE INDEX IF NOT EXISTS event_bookings_event_id ON event_bookings(event_id);
+
+-- ── AI Credits System ────────────────────────────────────────
+-- Crediti AI mensili: free=50, premium=300
+-- ai_credits_used si azzera automaticamente ogni 30 giorni
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS ai_credits_used INT DEFAULT 0;
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS ai_credits_reset_at TIMESTAMPTZ DEFAULT NOW();
+
+-- Abilita Realtime su profiles per sync crediti multi-device
+DO $$ BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE profiles;
+EXCEPTION WHEN OTHERS THEN
+  NULL;
+END $$;
+
+-- Web Push subscriptions
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id         UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id    UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+  endpoint   TEXT NOT NULL,
+  p256dh     TEXT NOT NULL,
+  auth       TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(user_id, endpoint)
+);
+
+ALTER TABLE push_subscriptions ENABLE ROW LEVEL SECURITY;
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='push_subscriptions' AND policyname='push_sub_user_own') THEN
+    CREATE POLICY "push_sub_user_own" ON push_subscriptions FOR ALL USING (auth.uid() = user_id);
+  END IF;
+END $$;
+
+ALTER TABLE events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE event_bookings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_sessions ENABLE ROW LEVEL SECURITY;
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='events' AND policyname='events_public_read') THEN
+    CREATE POLICY "events_public_read" ON events FOR SELECT USING (true); END IF; END $$;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='events' AND policyname='events_admin_insert') THEN
+    CREATE POLICY "events_admin_insert" ON events FOR INSERT WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND is_admin = true)); END IF; END $$;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='events' AND policyname='events_admin_update') THEN
+    CREATE POLICY "events_admin_update" ON events FOR UPDATE USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND is_admin = true)); END IF; END $$;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='events' AND policyname='events_admin_delete') THEN
+    CREATE POLICY "events_admin_delete" ON events FOR DELETE USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND is_admin = true)); END IF; END $$;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='event_bookings' AND policyname='bookings_user_own_read') THEN
+    CREATE POLICY "bookings_user_own_read" ON event_bookings FOR SELECT USING (auth.uid() = user_id); END IF; END $$;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='event_bookings' AND policyname='bookings_user_insert') THEN
+    CREATE POLICY "bookings_user_insert" ON event_bookings FOR INSERT WITH CHECK (auth.uid() = user_id); END IF; END $$;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='event_bookings' AND policyname='bookings_user_update') THEN
+    CREATE POLICY "bookings_user_update" ON event_bookings FOR UPDATE USING (auth.uid() = user_id); END IF; END $$;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='event_bookings' AND policyname='bookings_admin_all') THEN
+    CREATE POLICY "bookings_admin_all" ON event_bookings FOR ALL USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND is_admin = true)); END IF; END $$;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='user_sessions' AND policyname='sessions_user_insert') THEN
+    CREATE POLICY "sessions_user_insert" ON user_sessions FOR INSERT WITH CHECK (auth.uid() = user_id); END IF; END $$;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='user_sessions' AND policyname='sessions_user_read') THEN
+    CREATE POLICY "sessions_user_read" ON user_sessions FOR SELECT USING (auth.uid() = user_id); END IF; END $$;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='user_sessions' AND policyname='sessions_user_update') THEN
+    CREATE POLICY "sessions_user_update" ON user_sessions FOR UPDATE USING (auth.uid() = user_id); END IF; END $$;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='user_sessions' AND policyname='sessions_admin_read') THEN
+    CREATE POLICY "sessions_admin_read" ON user_sessions FOR SELECT USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND is_admin = true)); END IF; END $$;
+
 -- Row Level Security
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ai_generations ENABLE ROW LEVEL SECURITY;
@@ -202,6 +400,29 @@ DO $$ BEGIN
     CREATE POLICY "users_insert_bug_reports" ON bug_reports FOR INSERT WITH CHECK (auth.uid() = user_id OR user_id IS NULL);
   END IF;
 END $$;
+
+-- Impostazioni admin (key/value store — accessibile solo da service role)
+CREATE TABLE IF NOT EXISTS admin_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL DEFAULT '',
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+INSERT INTO admin_settings (key, value) VALUES
+  ('monthly_budget_usd', '50'),
+  ('auto_disable_ai',    'false'),
+  ('ai_disabled',        'false')
+ON CONFLICT (key) DO NOTHING;
+ALTER TABLE admin_settings ENABLE ROW LEVEL SECURITY;
+
+-- Depositi/ricariche AI (traccia quando l'admin ricarica OpenAI o Replicate)
+CREATE TABLE IF NOT EXISTS ai_deposits (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  amount_usd DECIMAL(10,4) NOT NULL,
+  provider   TEXT NOT NULL DEFAULT 'all',
+  note       TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE ai_deposits ENABLE ROW LEVEL SECURITY;
 `
 
 async function run() {
@@ -217,7 +438,8 @@ async function run() {
     const res = await client.query(`
       SELECT table_name FROM information_schema.tables
       WHERE table_schema = 'public'
-      AND table_name IN ('profiles','ai_generations','chat_messages','chat_sessions','notes','tutorials','projects','backups','bug_reports')
+      AND table_name IN ('profiles','ai_generations','chat_messages','chat_sessions','notes','tutorials','projects','backups','bug_reports','events','event_bookings','event_interests','interest_messages','user_sessions','push_subscriptions','admin_settings','ai_deposits')
+
       ORDER BY table_name;
     `)
     console.log('\n📋 Tabelle presenti nel database:')

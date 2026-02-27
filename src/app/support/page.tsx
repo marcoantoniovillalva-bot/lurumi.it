@@ -5,6 +5,7 @@ import { ArrowLeft, MessageCircle, Mail, ExternalLink, Archive, RotateCcw, Bug, 
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { submitBugReport } from "@/app/actions/bugReport";
 import { useProjectStore } from "@/features/projects/store/useProjectStore";
 
 interface BackupRow {
@@ -77,12 +78,12 @@ export default function SupportPage() {
         if (!bugDescription.trim()) return;
         setBugSending(true);
         try {
-            await supabase.from("bug_reports").insert({
-                user_id: user?.id ?? null,
-                description: bugDescription,
-                steps: bugSteps || null,
-                user_agent: navigator.userAgent,
-            });
+            await submitBugReport(
+                user?.id ?? null,
+                bugDescription,
+                bugSteps || null,
+                navigator.userAgent,
+            );
             setBugSent(true);
             setBugDescription("");
             setBugSteps("");

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { User, LogIn, LogOut, Cookie, UserCircle } from "lucide-react";
+import { User, UserRound, LogOut, Cookie, UserCircle, Shield } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
 import { useAuth } from "@/hooks/useAuth";
@@ -59,7 +59,8 @@ export const Header = () => {
                         user ? (
                             <button
                                 onClick={() => setShowUserMenu(!showUserMenu)}
-                                className="w-10 h-10 rounded-full border-2 border-white/50 overflow-hidden shadow-sm active:scale-95 transition-transform"
+                                className={`w-10 h-10 rounded-full border-2 overflow-hidden shadow-sm active:scale-95 transition-transform ${profile?.tier === 'premium' ? 'border-[#7B5CF6] shadow-[0_0_0_2px_rgba(123,92,246,0.25)]' : 'border-white/50'}`}
+                                title={profile?.tier === 'premium' ? '✦ Premium' : undefined}
                             >
                                 {user.user_metadata.avatar_url ? (
                                     <img src={user.user_metadata.avatar_url} alt="Profile" className="w-full h-full object-cover" />
@@ -72,9 +73,10 @@ export const Header = () => {
                         ) : (
                             <button
                                 onClick={handleLogin}
-                                className="w-10 h-10 flex items-center justify-center bg-white/40 backdrop-blur-md rounded-xl text-[#1C1C1E] active:scale-90 transition-transform"
+                                className="w-10 h-10 rounded-full border-2 border-dashed border-[#7B5CF6] bg-[#F4EEFF] flex items-center justify-center text-[#7B5CF6] active:scale-95 transition-transform shadow-sm"
+                                title="Accedi"
                             >
-                                <LogIn size={20} />
+                                <UserRound size={20} />
                             </button>
                         )
                     )}
@@ -91,6 +93,16 @@ export const Header = () => {
                                         {profile?.tier === 'premium' ? '✦ Premium' : 'Free'}
                                     </span>
                                 </div>
+                                {profile?.is_admin && (
+                                    <Link
+                                        href="/admin"
+                                        onClick={() => setShowUserMenu(false)}
+                                        className="w-full flex items-center gap-3 px-3 py-2.5 text-[#7B5CF6] font-bold text-sm hover:bg-[#F4EEFF] rounded-xl transition-colors"
+                                    >
+                                        <Shield size={18} className="text-[#7B5CF6]" />
+                                        Admin
+                                    </Link>
+                                )}
                                 <Link
                                     href="/profilo"
                                     onClick={() => setShowUserMenu(false)}

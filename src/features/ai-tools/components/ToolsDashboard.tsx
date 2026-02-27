@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Palette, MessageSquare, BookOpen, Timer, StickyNote, ChevronRight } from "lucide-react";
+import { Palette, MessageSquare, BookOpen, Timer, StickyNote, ChevronRight, CalendarDays } from "lucide-react";
 import Link from "next/link";
 
 const toolGrid = [
@@ -10,6 +10,7 @@ const toolGrid = [
     { title: "Libri", desc: "Libri e Riviste", icon: BookOpen, color: "#FFF3E0", text: "#E65100", href: "/tools/books" },
     { title: "Timer", desc: "Cronometri e Giri", icon: Timer, color: "#FFEBEE", text: "#C62828", href: "/tools/timer" },
     { title: "Note", desc: "Agenda creativa", icon: StickyNote, color: "#E0F7FA", text: "#00838F", href: "/tools/notes" },
+    { title: "Corsi", desc: "Corsi e Workshop", icon: CalendarDays, color: "#EDE7F6", text: "#6A1B9A", href: "/eventi" },
 ];
 
 export const ToolsDashboard: React.FC = () => {

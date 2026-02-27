@@ -8,6 +8,7 @@ import Link from "next/link";
 import { SocialBar } from "@/components/SocialBar";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { loadPdfjs } from "@/lib/pdfjs";
 
 export default function Home() {
   const { projects, addProject, deleteProject, updateProject } = useProjectStore();
@@ -42,7 +43,17 @@ export default function Home() {
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'projects', filter: `user_id=eq.${user.id}` }, (payload) => {
         if (!payload.new?.id) return;
         const p = payload.new as Record<string, any>;
-        updateProject(p.id, { title: p.title, counter: p.counter ?? 0, timer: p.timer_seconds ?? 0, secs: p.secs ?? [], notesHtml: p.notes_html ?? '' });
+        updateProject(p.id, {
+          title: p.title,
+          counter: p.counter ?? 0,
+          timer: p.timer_seconds ?? 0,
+          secs: p.secs ?? [],
+          notesHtml: p.notes_html ?? '',
+          // Sincronizza anche url e thumbnail — fondamentali per PDF su secondo dispositivo
+          url: p.file_url ?? undefined,
+          thumbDataURL: p.thumb_url ?? undefined,
+          images: (p.images ?? []).map((img: any) => ({ id: typeof img === 'string' ? img : (img.id ?? '') })),
+        });
       })
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'projects' }, (payload) => {
         if (!payload.old?.id) return;
@@ -86,6 +97,27 @@ export default function Home() {
       img.src = url;
     });
 
+  // Genera thumbnail dalla prima pagina di un PDF (120px max)
+  const generatePdfThumbnail = async (file: File): Promise<string> => {
+    try {
+      const pdfjsLib = await loadPdfjs();
+      const arrayBuffer = await file.arrayBuffer();
+      const doc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      const page = await doc.getPage(1);
+      const maxDim = 120;
+      const viewport = page.getViewport({ scale: 1 });
+      const scale = Math.min(maxDim / viewport.width, maxDim / viewport.height);
+      const scaled = page.getViewport({ scale });
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(scaled.width);
+      canvas.height = Math.round(scaled.height);
+      await page.render({ canvasContext: canvas.getContext('2d')!, viewport: scaled }).promise;
+      return canvas.toDataURL('image/jpeg', 0.7);
+    } catch {
+      return '';
+    }
+  };
+
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -97,6 +129,7 @@ export default function Home() {
 
     let thumb = '';
     if (isImage) thumb = await generateThumbnail(file);
+    else if (isPdf) thumb = await generatePdfThumbnail(file);
 
     setPendingFile(file);
     setPendingName(file.name.replace(/\.[^/.]+$/, ''));
