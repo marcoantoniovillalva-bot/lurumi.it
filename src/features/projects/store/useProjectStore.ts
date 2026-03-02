@@ -5,6 +5,7 @@ export interface RoundCounter {
     id: string
     name: string
     value: number
+    imageId?: string
 }
 
 export interface ProjectImage {

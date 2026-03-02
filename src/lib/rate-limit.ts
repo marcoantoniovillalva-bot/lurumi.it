@@ -19,10 +19,12 @@ interface Window {
 }
 
 const LIMITS: Record<string, { requests: number; windowMs: number }> = {
-    chat:        { requests: 15, windowMs: 60_000 },
-    vision:      { requests:  5, windowMs: 60_000 },
-    image_fast:  { requests:  4, windowMs: 60_000 },
-    image_hd:    { requests:  2, windowMs: 60_000 },
+    chat:          { requests: 15, windowMs: 60_000 },
+    vision:        { requests:  5, windowMs: 60_000 },
+    image_fast:    { requests:  4, windowMs: 60_000 },
+    image_hd:      { requests:  2, windowMs: 60_000 },
+    bg_removal:    { requests:  3, windowMs: 60_000 },
+    bg_generation: { requests:  4, windowMs: 60_000 },
 }
 
 // Mappa chiave → finestra corrente

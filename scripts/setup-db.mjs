@@ -460,6 +460,93 @@ CREATE TABLE IF NOT EXISTS ai_deposits (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 ALTER TABLE ai_deposits ENABLE ROW LEVEL SECURITY;
+
+-- ── Sistema di supporto ticket ────────────────────────────────
+-- Aggiunge status e email del mittente alle segnalazioni bug
+ALTER TABLE bug_reports ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'open';
+ALTER TABLE bug_reports ADD COLUMN IF NOT EXISTS user_email TEXT;
+
+-- Permetti agli utenti di leggere le proprie segnalazioni (necessario per il thread)
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='bug_reports' AND policyname='bug_reports_user_select') THEN
+    CREATE POLICY "bug_reports_user_select" ON bug_reports
+      FOR SELECT USING (
+        user_id = auth.uid()
+        OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND is_admin = true)
+      );
+  END IF;
+END $$;
+
+-- Messaggi di supporto (conversazione bidirezionale utente ↔ admin)
+CREATE TABLE IF NOT EXISTS support_messages (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  bug_report_id  UUID REFERENCES bug_reports(id) ON DELETE CASCADE NOT NULL,
+  sender_type    TEXT CHECK (sender_type IN ('user', 'admin')) NOT NULL,
+  sender_id      UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  content        TEXT NOT NULL,
+  created_at     TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE support_messages ENABLE ROW LEVEL SECURITY;
+
+-- Utente legge i messaggi delle proprie segnalazioni; admin legge tutti
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='support_messages' AND policyname='support_messages_select') THEN
+    CREATE POLICY "support_messages_select" ON support_messages
+      FOR SELECT USING (
+        bug_report_id IN (SELECT id FROM bug_reports WHERE user_id = auth.uid())
+        OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND is_admin = true)
+      );
+  END IF;
+END $$;
+
+-- Abilita Realtime su support_messages e bug_reports per notifiche in tempo reale
+DO $$ BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE support_messages;
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+DO $$ BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE bug_reports;
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+-- ── Libreria: libri e schemi caricati dall'admin ───────────────
+CREATE TABLE IF NOT EXISTS library_items (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title        TEXT NOT NULL,
+  description  TEXT DEFAULT '',
+  item_type    TEXT NOT NULL DEFAULT 'schema' CHECK (item_type IN ('schema', 'book')),
+  tier         TEXT NOT NULL DEFAULT 'free' CHECK (tier IN ('free', 'premium')),
+  language     TEXT,
+  cover_urls   TEXT[] DEFAULT '{}',
+  content_type TEXT NOT NULL DEFAULT 'pdf' CHECK (content_type IN ('pdf', 'sections')),
+  pdf_url      TEXT,
+  sections     JSONB DEFAULT '[]',
+  is_published BOOLEAN DEFAULT true,
+  created_at   TIMESTAMPTZ DEFAULT NOW(),
+  updated_at   TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE library_items ENABLE ROW LEVEL SECURITY;
+
+-- Utenti autenticati leggono solo gli elementi pubblicati
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='library_items' AND policyname='library_items_user_read') THEN
+    CREATE POLICY "library_items_user_read" ON library_items
+      FOR SELECT USING (is_published = true AND auth.uid() IS NOT NULL);
+  END IF;
+END $$;
+
+-- Admin può fare tutto (incluso vedere non pubblicati)
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='library_items' AND policyname='library_items_admin_all') THEN
+    CREATE POLICY "library_items_admin_all" ON library_items
+      FOR ALL USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND is_admin = true));
+  END IF;
+END $$;
+
+-- Abilita Realtime su library_items (aggiornamenti in tempo reale agli utenti)
+DO $$ BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE library_items;
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
 `
 
 async function run() {
@@ -475,13 +562,16 @@ async function run() {
     const res = await client.query(`
       SELECT table_name FROM information_schema.tables
       WHERE table_schema = 'public'
-      AND table_name IN ('profiles','ai_generations','chat_messages','chat_sessions','notes','tutorials','projects','backups','bug_reports','events','event_bookings','event_interests','interest_messages','user_sessions','push_subscriptions','admin_settings','ai_deposits')
+      AND table_name IN ('profiles','ai_generations','chat_messages','chat_sessions','notes','tutorials','projects','backups','bug_reports','events','event_bookings','event_interests','interest_messages','user_sessions','push_subscriptions','admin_settings','ai_deposits','library_items')
 
       ORDER BY table_name;
     `)
     console.log('\n📋 Tabelle presenti nel database:')
     res.rows.forEach(r => console.log(`   ✓ ${r.table_name}`))
     console.log('\n🎉 Setup completato!')
+    console.log('\n📦 Bucket Storage da creare manualmente in Supabase Dashboard (se non esistono):')
+    console.log('   ✓ event-covers     (Public)')
+    console.log('   ✓ library-content  (Public) — per copertine, PDF e immagini sezioni libreria')
   } catch (err) {
     console.error('\n❌ Errore:', err.message)
   } finally {

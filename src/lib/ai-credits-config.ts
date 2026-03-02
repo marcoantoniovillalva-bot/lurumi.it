@@ -10,6 +10,8 @@ export const CREDIT_COSTS = {
     vision: 5,
     image_fast: 8,
     image_hd: 20,
+    bg_removal: 10,
+    bg_generation: 15,
 } as const
 
 export type AiAction = keyof typeof CREDIT_COSTS

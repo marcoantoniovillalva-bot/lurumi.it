@@ -3,8 +3,7 @@
 import React, { useState, useEffect, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Palette, CheckCircle, CalendarDays, Sparkles, Smile } from "lucide-react";
-import { AiCreditsBar } from "@/components/AiCreditsBar";
+import { Palette, CheckCircle } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useUserProfile, broadcastProfileRefresh } from "@/hooks/useUserProfile";
@@ -20,7 +19,7 @@ import { updateCharacterTheme } from "@/app/actions/updateCharacterTheme";
 
 export default function ProfiloPage() {
     const { user, loading } = useAuth();
-    const { profile, aiCredits } = useUserProfile();
+    const { profile } = useUserProfile();
     const { character, getUrl } = useCharacterTheme();
     const router = useRouter();
     const searchParams = useSearchParams();
@@ -28,6 +27,7 @@ export default function ProfiloPage() {
     const [canvaConnected, setCanvaConnected] = useState(false);
     const [isPending, startTransition] = useTransition();
     const [themeSaved, setThemeSaved] = useState(false);
+    const [showAvatarModal, setShowAvatarModal] = useState(false);
 
     useEffect(() => {
         if (!user) return;
@@ -43,6 +43,8 @@ export default function ProfiloPage() {
     }, [user, loading, router]);
 
     const handleSelectCharacter = (name: CharacterName) => {
+        localStorage.setItem('lurumi_character_theme', name);
+        if (user?.id) localStorage.setItem(`lurumi_char_${user.id}`, name);
         startTransition(async () => {
             await updateCharacterTheme(name);
             broadcastProfileRefresh();
@@ -52,11 +54,8 @@ export default function ProfiloPage() {
     };
 
     const sections = [
-        { href: "/", label: "Progetti", emoji: "🧶", desc: "I tuoi lavori attivi" },
-        { href: "/tools", label: "Strumenti AI", emoji: "✨", desc: "Chat, designer e altro" },
-        { href: "/tutorials", label: "Tutorial", emoji: "▶️", desc: "Video e guide" },
         { href: "/guide", label: "Guide", emoji: "📖", desc: "Come usare l'app" },
-        { href: "/pricing", label: "Piano", emoji: "💎", desc: "Abbonamento attivo" },
+        { href: "/pricing", label: "Piano e Crediti", emoji: "💎", desc: "Abbonamento, AI e corsi" },
         { href: "/support", label: "Supporto", emoji: "💬", desc: "Hai bisogno di aiuto?" },
     ];
 
@@ -74,6 +73,7 @@ export default function ProfiloPage() {
                     alt="Il tuo personaggio"
                     className="w-20 h-20 object-contain animate-character-bounce flex-shrink-0"
                     onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
+                    suppressHydrationWarning
                 />
                 <div>
                     <h1 className="text-3xl font-black text-[#1C1C1E] mb-1">
@@ -92,6 +92,24 @@ export default function ProfiloPage() {
 
             {/* Quick nav */}
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-10">
+                {/* Card Avatar */}
+                <button
+                    onClick={() => setShowAvatarModal(true)}
+                    className="lu-card p-5 flex flex-col gap-3 hover:shadow-md transition-shadow text-left"
+                >
+                    <img
+                        src={getUrl('welcome')}
+                        alt="Avatar"
+                        className="w-9 h-9 object-contain"
+                        onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
+                        suppressHydrationWarning
+                    />
+                    <div>
+                        <p className="font-black text-[#1C1C1E] text-[15px]">Avatar</p>
+                        <p className="text-[#9AA2B1] text-xs font-medium mt-0.5">Il tuo personaggio</p>
+                    </div>
+                </button>
+
                 {sections.map((item) => (
                     <Link
                         key={item.href}
@@ -107,51 +125,68 @@ export default function ProfiloPage() {
                 ))}
             </div>
 
-            {/* ── Tema personaggio ── */}
-            <div className="bg-white rounded-[28px] border border-[#EEF0F4] p-6 shadow-sm mb-6">
-                <div className="flex items-center gap-2 mb-1">
-                    <Smile size={18} className="text-[#7B5CF6]" />
-                    <h2 className="text-lg font-black text-[#1C1C1E]">Il tuo personaggio</h2>
-                    {themeSaved && (
-                        <span className="ml-auto text-[11px] font-black text-green-600 bg-green-50 px-2 py-0.5 rounded-full">
-                            ✓ Salvato
-                        </span>
-                    )}
-                </div>
-                <p className="text-[#9AA2B1] text-xs font-medium mb-4">
-                    Scegli chi ti accompagna nell'app — si aggiorna ovunque in tempo reale
-                </p>
-                <div className="grid grid-cols-4 gap-3">
-                    {CHARACTERS.map(({ name, label }) => {
-                        const isSelected = character === name;
-                        return (
-                            <button
-                                key={name}
-                                onClick={() => handleSelectCharacter(name)}
-                                disabled={isPending}
-                                className={`flex flex-col items-center gap-1.5 p-2 rounded-2xl border-2 transition-all active:scale-95 ${
-                                    isSelected
-                                        ? 'border-[#7B5CF6] bg-[#F4EEFF]'
-                                        : 'border-[#EEF0F4] bg-[#FAFAFC] hover:border-[#D9B9F9]'
-                                }`}
-                            >
-                                <img
-                                    src={getCharacterUrl(name, 'welcome')}
-                                    alt={label}
-                                    className={`w-14 h-14 object-contain transition-transform ${isSelected ? 'animate-character-bounce' : ''}`}
-                                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.opacity = '0.3' }}
-                                />
-                                <span className={`text-[11px] font-black ${isSelected ? 'text-[#7B5CF6]' : 'text-[#9AA2B1]'}`}>
-                                    {label}
+            {/* ── Modal selezione avatar ── */}
+            {showAvatarModal && (
+                <div
+                    className="fixed inset-0 z-[10000] flex items-end justify-center bg-black/40"
+                    onClick={() => setShowAvatarModal(false)}
+                >
+                    <div
+                        className="w-full max-w-2xl bg-white rounded-t-[32px] p-6 pb-[calc(2.5rem+env(safe-area-inset-bottom))] shadow-2xl animate-in slide-in-from-bottom duration-300"
+                        onClick={e => e.stopPropagation()}
+                    >
+                        <div className="w-12 h-1.5 bg-[#EEF0F4] rounded-full mx-auto mb-5" />
+                        <div className="flex items-center gap-2 mb-1">
+                            <img
+                                src={getUrl('welcome')}
+                                alt="Avatar"
+                                className="w-8 h-8 object-contain"
+                                onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
+                                suppressHydrationWarning
+                            />
+                            <h2 className="text-xl font-black text-[#1C1C1E]">Il tuo personaggio</h2>
+                            {themeSaved && (
+                                <span className="ml-auto text-[11px] font-black text-green-600 bg-green-50 px-2 py-0.5 rounded-full">
+                                    ✓ Salvato
                                 </span>
-                                {isSelected && (
-                                    <div className="w-1.5 h-1.5 rounded-full bg-[#7B5CF6]" />
-                                )}
-                            </button>
-                        );
-                    })}
+                            )}
+                        </div>
+                        <p className="text-[#9AA2B1] text-xs font-medium mb-5">
+                            Scegli chi ti accompagna nell'app — si aggiorna ovunque in tempo reale
+                        </p>
+                        <div className="grid grid-cols-4 gap-3">
+                            {CHARACTERS.map(({ name, label }) => {
+                                const isSelected = character === name;
+                                return (
+                                    <button
+                                        key={name}
+                                        onClick={() => handleSelectCharacter(name)}
+                                        disabled={isPending}
+                                        className={`flex flex-col items-center gap-1.5 p-2 rounded-2xl border-2 transition-all active:scale-95 ${
+                                            isSelected
+                                                ? 'border-[#7B5CF6] bg-[#F4EEFF]'
+                                                : 'border-[#EEF0F4] bg-[#FAFAFC] hover:border-[#D9B9F9]'
+                                        }`}
+                                    >
+                                        <img
+                                            src={getCharacterUrl(name, 'welcome')}
+                                            alt={label}
+                                            className={`w-14 h-14 object-contain transition-transform ${isSelected ? 'animate-character-bounce' : ''}`}
+                                            onError={(e) => { (e.currentTarget as HTMLImageElement).style.opacity = '0.3' }}
+                                        />
+                                        <span className={`text-[11px] font-black ${isSelected ? 'text-[#7B5CF6]' : 'text-[#9AA2B1]'}`}>
+                                            {label}
+                                        </span>
+                                        {isSelected && (
+                                            <div className="w-1.5 h-1.5 rounded-full bg-[#7B5CF6]" />
+                                        )}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
                 </div>
-            </div>
+            )}
 
             {/* ── Canva Integration ── */}
             <div className="bg-white rounded-[28px] border border-[#EEF0F4] p-6 shadow-sm mb-6">
@@ -186,55 +221,6 @@ export default function ProfiloPage() {
                     )}
                 </div>
             </div>
-
-            {/* ── Credito eventi ── */}
-            {profile !== null && (
-                <div className="bg-white rounded-[28px] border border-[#EEF0F4] p-6 shadow-sm mb-6">
-                    <div className="flex items-center justify-between">
-                        <div>
-                            <div className="flex items-center gap-2 mb-1">
-                                <CalendarDays size={18} className="text-[#7B5CF6]" />
-                                <h2 className="text-lg font-black text-[#1C1C1E]">Credito eventi</h2>
-                            </div>
-                            <p className="text-[#9AA2B1] text-xs font-medium">
-                                Usabile per prenotare corsi ed eventi
-                            </p>
-                        </div>
-                        <span className="text-2xl font-black text-[#7B5CF6]">
-                            €{(profile?.event_credit ?? 0).toFixed(2)}
-                        </span>
-                    </div>
-                </div>
-            )}
-
-            {/* ── Crediti AI ── */}
-            {aiCredits && (
-                <div className="bg-white rounded-[28px] border border-[#EEF0F4] p-6 shadow-sm mb-6">
-                    <div className="flex items-center gap-2 mb-4">
-                        <Sparkles size={18} className="text-[#7B5CF6]" />
-                        <h2 className="text-lg font-black text-[#1C1C1E]">Crediti AI</h2>
-                    </div>
-                    <AiCreditsBar credits={aiCredits} />
-                    <div className="mt-4 grid grid-cols-2 gap-2">
-                        {[
-                            { label: 'Chat crochet', cost: '2 cr.' },
-                            { label: 'Analisi schema', cost: '5 cr.' },
-                            { label: 'Immagine veloce', cost: '8 cr.' },
-                            { label: 'Immagine HD', cost: '20 cr.' },
-                        ].map(item => (
-                            <div key={item.label} className="flex items-center justify-between bg-[#FAFAFC] rounded-xl px-3 py-2">
-                                <span className="text-xs font-medium text-[#9AA2B1]">{item.label}</span>
-                                <span className="text-xs font-black text-[#7B5CF6]">{item.cost}</span>
-                            </div>
-                        ))}
-                    </div>
-                    {profile?.tier === 'free' && (
-                        <a href="/pricing" className="mt-4 flex items-center justify-center gap-2 w-full py-3 bg-[#7B5CF6] text-white rounded-2xl font-bold text-sm">
-                            Passa a Premium — 300 crediti/mese
-                        </a>
-                    )}
-                </div>
-            )}
 
             {/* Social */}
             <div className="pt-6 border-t border-[#EEF0F4]">

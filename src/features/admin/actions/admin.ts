@@ -403,3 +403,85 @@ export async function addAiDeposit(amount_usd: number, provider: string, note: s
         .upsert({ key: 'ai_disabled', value: 'false', updated_at: new Date().toISOString() })
     invalidateAiStatusCache()
 }
+
+// ── Sistema di supporto ticket ────────────────────────────────────────────────
+
+export interface BugReport {
+    id: string
+    user_id: string | null
+    user_email: string | null
+    description: string
+    steps: string | null
+    status: string
+    created_at: string
+}
+
+export interface SupportMessage {
+    id: string
+    bug_report_id: string
+    sender_type: 'user' | 'admin'
+    sender_id: string | null
+    content: string
+    created_at: string
+}
+
+/** Restituisce tutte le segnalazioni bug (admin) */
+export async function getAllBugReports(): Promise<BugReport[]> {
+    const { db } = await assertAdmin()
+    const { data } = await db
+        .from('bug_reports')
+        .select('id, user_id, user_email, description, steps, status, created_at')
+        .order('status', { ascending: true })   // 'closed' dopo 'open'
+        .order('created_at', { ascending: false })
+    return (data ?? []) as BugReport[]
+}
+
+/** Restituisce i messaggi di una segnalazione (admin) */
+export async function getAdminSupportMessages(bugReportId: string): Promise<SupportMessage[]> {
+    const { db } = await assertAdmin()
+    const { data } = await db
+        .from('support_messages')
+        .select('*')
+        .eq('bug_report_id', bugReportId)
+        .order('created_at', { ascending: true })
+    return (data ?? []) as SupportMessage[]
+}
+
+/** Admin invia un messaggio di risposta */
+export async function sendAdminSupportReply(bugReportId: string, content: string) {
+    const { user, db } = await assertAdmin()
+
+    const { data: report } = await db
+        .from('bug_reports')
+        .select('user_id')
+        .eq('id', bugReportId)
+        .single()
+
+    const { error } = await db.from('support_messages').insert({
+        bug_report_id: bugReportId,
+        sender_type: 'admin',
+        sender_id: user.id,
+        content,
+    })
+    if (error) throw new Error(error.message)
+
+    if (report?.user_id) {
+        pushToUser(report.user_id, {
+            title: 'Lurumi — Risposta dal supporto',
+            body: content.slice(0, 100),
+            url: '/support',
+            tag: `support-admin-${bugReportId}`,
+        }).catch(() => {})
+    }
+}
+
+/** Cambia lo stato di una segnalazione (open/closed) */
+export async function updateBugReportStatus(bugReportId: string, status: 'open' | 'closed') {
+    const { db } = await assertAdmin()
+    const { error } = await db
+        .from('bug_reports')
+        .update({ status })
+        .eq('id', bugReportId)
+    if (error) throw new Error(error.message)
+}
+

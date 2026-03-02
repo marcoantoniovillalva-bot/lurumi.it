@@ -4,6 +4,7 @@ import React, { useState, useRef, useEffect } from 'react'
 import { Send, Camera, ArrowLeft, X, History, MessageSquare, MoreVertical, Pencil, Trash2, Check } from 'lucide-react'
 import Image from 'next/image'
 import Link from 'next/link'
+import ReactMarkdown from 'react-markdown'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/hooks/useAuth'
 import { useUserProfile } from '@/hooks/useUserProfile'
@@ -396,7 +397,20 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                             {m.image && (
                                 <img src={m.image} alt="Upload" className="w-full h-auto rounded-lg mb-1 shadow-sm border border-white/20" />
                             )}
-                            {m.text && <div className="text-[15px] font-medium leading-relaxed">{m.text}</div>}
+                            {m.text && (
+                                m.sender === 'ai' ? (
+                                    <div className="text-[15px] font-medium leading-relaxed prose prose-sm max-w-none
+                                        prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0
+                                        prose-strong:font-black prose-strong:text-[#1C1C1E]
+                                        prose-code:bg-[#F4F4F8] prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-[#7B5CF6] prose-code:text-[13px] prose-code:font-mono
+                                        prose-headings:font-black prose-headings:text-[#1C1C1E]
+                                        prose-a:text-[#7B5CF6] prose-a:no-underline">
+                                        <ReactMarkdown>{m.text}</ReactMarkdown>
+                                    </div>
+                                ) : (
+                                    <div className="text-[15px] font-medium leading-relaxed">{m.text}</div>
+                                )
+                            )}
                         </div>
                     </div>
                 ))}
