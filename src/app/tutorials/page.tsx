@@ -342,6 +342,7 @@ export default function TutorialsPage() {
                                     alt="Nessun tutorial"
                                     className="w-36 h-36 object-contain mb-3 animate-character-float"
                                     onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
+                                    suppressHydrationWarning
                                 />
                                 <h3 className="text-xl font-bold mb-1.5 text-[#1C1C1E]">Nessun tutorial salvato</h3>
                                 <p className="text-[#9AA2B1] text-sm">Tocca "+" e incolla il link YouTube del tuo tutorial preferito</p>

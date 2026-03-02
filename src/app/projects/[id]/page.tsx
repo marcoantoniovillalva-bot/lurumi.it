@@ -4,13 +4,14 @@ import React, { useState, useEffect, useRef } from "react";
 import {
     ArrowLeft, Minus, Plus, RotateCcw, Timer, Share2,
     ChevronLeft, ChevronRight, StickyNote, Trash2,
-    Plus as PlusIcon, Camera, Save, Maximize2, Archive
+    Plus as PlusIcon, Camera, Save, Maximize2, Archive, Pencil
 } from "lucide-react";
 import { useProjectStore, Project, RoundCounter as RoundCounterType, ProjectImage } from "@/features/projects/store/useProjectStore";
 import { luDB } from "@/lib/db";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { RoundCounter } from "@/features/projects/components/RoundCounter";
+import { CounterImagePicker } from "@/features/projects/components/CounterImagePicker";
 import { FullscreenViewer } from "@/components/FullscreenViewer";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -44,6 +45,7 @@ export default function ProjectDetail() {
     const [notes, setNotes] = useState("");
     const [showNewCounterModal, setShowNewCounterModal] = useState(false);
     const [newCounterName, setNewCounterName] = useState("");
+    const [pickerCounterId, setPickerCounterId] = useState<string | null>(null);
     const [fullscreen, setFullscreen] = useState(false);
     const [hintVisible, setHintVisible] = useState(true);
     // Image data URLs loaded from IndexedDB (NOT stored in Zustand/localStorage)
@@ -472,6 +474,18 @@ export default function ProjectDetail() {
                                 <button onClick={() => fileInputRef.current?.click()} className="w-9 h-9 flex items-center justify-center bg-[#F4EEFF] text-[#7B5CF6] rounded-lg">
                                     <PlusIcon size={18} strokeWidth={3} />
                                 </button>
+                                {imageUrls.length > 0 && project.images?.[currentPage - 1] && (
+                                    <button
+                                        onClick={() => {
+                                            const imgId = project.images[currentPage - 1]?.id;
+                                            if (imgId) router.push(`/projects/${id}/edit-image/${imgId}`);
+                                        }}
+                                        className="w-9 h-9 flex items-center justify-center bg-[#FFF4E0] text-orange-500 rounded-lg"
+                                        title="Modifica immagine"
+                                    >
+                                        <Pencil size={16} strokeWidth={3} />
+                                    </button>
+                                )}
                                 <button onClick={handleDeleteCurrentImage} className="w-9 h-9 flex items-center justify-center bg-red-50 text-red-500 rounded-lg">
                                     <Trash2 size={18} strokeWidth={3} />
                                 </button>
@@ -543,32 +557,47 @@ export default function ProjectDetail() {
                     </button>
                 </div>
                 <div className="flex flex-col gap-3">
-                    {project.secs.map(sec => (
-                        <RoundCounter
-                            key={sec.id}
-                            {...sec}
-                            onIncrement={(sid) => {
-                                const updated = project.secs.map(s => s.id === sid ? { ...s, value: s.value + 1 } : s);
-                                updateProject(project.id, { secs: updated });
-                                syncSecs(updated);
-                            }}
-                            onDecrement={(sid) => {
-                                const updated = project.secs.map(s => s.id === sid ? { ...s, value: Math.max(1, s.value - 1) } : s);
-                                updateProject(project.id, { secs: updated });
-                                syncSecs(updated);
-                            }}
-                            onRename={(sid, newName) => {
-                                const updated = project.secs.map(s => s.id === sid ? { ...s, name: newName } : s);
-                                updateProject(project.id, { secs: updated });
-                                syncSecs(updated);
-                            }}
-                            onDelete={(sid) => {
-                                const updated = project.secs.filter(s => s.id !== sid);
-                                updateProject(project.id, { secs: updated });
-                                syncSecs(updated);
-                            }}
-                        />
-                    ))}
+                    {project.secs.map(sec => {
+                        // Trova l'URL dell'immagine associata al contatore
+                        const imgIndex = sec.imageId
+                            ? (project.images ?? []).findIndex(img => img.id === sec.imageId)
+                            : -1;
+                        const secImageUrl = imgIndex >= 0 ? imageUrls[imgIndex] : undefined;
+
+                        return (
+                            <RoundCounter
+                                key={sec.id}
+                                {...sec}
+                                imageUrl={secImageUrl}
+                                onIncrement={(sid) => {
+                                    const updated = project.secs.map(s => s.id === sid ? { ...s, value: s.value + 1 } : s);
+                                    updateProject(project.id, { secs: updated });
+                                    syncSecs(updated);
+                                }}
+                                onDecrement={(sid) => {
+                                    const updated = project.secs.map(s => s.id === sid ? { ...s, value: Math.max(1, s.value - 1) } : s);
+                                    updateProject(project.id, { secs: updated });
+                                    syncSecs(updated);
+                                }}
+                                onRename={(sid, newName) => {
+                                    const updated = project.secs.map(s => s.id === sid ? { ...s, name: newName } : s);
+                                    updateProject(project.id, { secs: updated });
+                                    syncSecs(updated);
+                                }}
+                                onDelete={(sid) => {
+                                    const updated = project.secs.filter(s => s.id !== sid);
+                                    updateProject(project.id, { secs: updated });
+                                    syncSecs(updated);
+                                }}
+                                onAssociateImage={(sid) => setPickerCounterId(sid)}
+                                onRemoveImage={(sid) => {
+                                    const updated = project.secs.map(s => s.id === sid ? { ...s, imageId: undefined } : s);
+                                    updateProject(project.id, { secs: updated });
+                                    syncSecs(updated);
+                                }}
+                            />
+                        );
+                    })}
                     {project.secs.length === 0 && (
                         <div className="text-center p-6 bg-[#FAFAFC] rounded-2xl border border-dashed border-[#EEF0F4] text-[#9AA2B1] text-sm font-medium">
                             Nessun contatore secondario aggiunto
@@ -576,6 +605,28 @@ export default function ProjectDetail() {
                     )}
                 </div>
             </div>
+
+            {/* CounterImagePicker */}
+            {pickerCounterId && (
+                <CounterImagePicker
+                    imageUrls={imageUrls}
+                    imageIds={(project.images ?? []).map(img => img.id)}
+                    currentImageId={project.secs.find(s => s.id === pickerCounterId)?.imageId}
+                    onSelect={(imgId) => {
+                        const updated = project.secs.map(s => s.id === pickerCounterId ? { ...s, imageId: imgId } : s);
+                        updateProject(project.id, { secs: updated });
+                        syncSecs(updated);
+                        setPickerCounterId(null);
+                    }}
+                    onRemove={() => {
+                        const updated = project.secs.map(s => s.id === pickerCounterId ? { ...s, imageId: undefined } : s);
+                        updateProject(project.id, { secs: updated });
+                        syncSecs(updated);
+                        setPickerCounterId(null);
+                    }}
+                    onClose={() => setPickerCounterId(null)}
+                />
+            )}
 
             {/* Modal nuovo contatore */}
             {showNewCounterModal && (

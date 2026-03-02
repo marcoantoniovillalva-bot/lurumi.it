@@ -20,6 +20,7 @@ function EmptyProjectsState() {
         alt="Inizia un progetto"
         className="w-40 h-40 object-contain mb-4 animate-character-float"
         onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
+        suppressHydrationWarning
       />
       <h3 className="text-xl font-black text-[#1C1C1E] mb-2">Cominciamo un progetto?</h3>
       <p className="text-[#9AA2B1] text-sm max-w-[240px] font-medium leading-relaxed">
@@ -277,6 +278,7 @@ export default function Home() {
             alt="Benvenuta"
             className="w-14 h-14 object-contain animate-character-bounce flex-shrink-0"
             onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
+            suppressHydrationWarning
           />
           <div>
             <h1 className="text-3xl font-black text-[#1C1C1E] mb-1">Progetti</h1>

@@ -4,8 +4,8 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
     Shield, BarChart2, Plus, Edit2, Trash2,
     ChevronDown, ChevronUp, ExternalLink, X, Save, ToggleLeft, ToggleRight,
-    CalendarDays, ArrowLeft, Users, UserCheck, Clock, MessageSquare, Send,
-    ChevronRight as ChevRight,
+    CalendarDays, ArrowLeft, Users, UserCheck, Clock, MessageSquare, Send, Bug,
+    ChevronRight as ChevRight, BookOpen, FileText, GripVertical,
 } from "lucide-react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
@@ -15,8 +15,13 @@ import {
     resetUserAiCredits, grantBonusAiCredits,
     getInterestMessages, sendAdminMessage,
     getAiSpendingSummary, getAdminSettings, setAdminSetting, getAiDeposits, addAiDeposit,
-    EventFormData, UserProfile, AiSpendingSummary, AiDeposit,
+    getAllBugReports, getAdminSupportMessages, sendAdminSupportReply, updateBugReportStatus,
+    EventFormData, UserProfile, AiSpendingSummary, AiDeposit, BugReport, SupportMessage,
 } from "@/features/admin/actions/admin";
+import {
+    getAdminLibraryItems, createLibraryItem, updateLibraryItem, deleteLibraryItem,
+    LibraryItem, LibrarySection, LibraryFormData,
+} from "@/features/admin/actions/library";
 
 /* ─── Types ─────────────────────────────────────────────── */
 interface Stats {
@@ -1094,10 +1099,686 @@ function SectionAiCosts({ onBack }: { onBack: () => void }) {
     )
 }
 
+/* ─── Support Chat Modal (admin → utente) ────────────────── */
+function SupportChatModal({ report, onClose, onStatusChange }: {
+    report: BugReport; onClose: () => void; onStatusChange: () => void;
+}) {
+    const [messages, setMessages] = useState<SupportMessage[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [text, setText] = useState('');
+    const [sending, setSending] = useState(false);
+    const [toggling, setToggling] = useState(false);
+    const bottomRef = useRef<HTMLDivElement>(null);
+    const inputRef = useRef<HTMLInputElement>(null);
+
+    const load = useCallback(async () => {
+        const data = await getAdminSupportMessages(report.id);
+        setMessages(data as SupportMessage[]);
+        setLoading(false);
+        setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 60);
+    }, [report.id]);
+
+    useEffect(() => { load(); }, [load]);
+
+    // Realtime: ascolta nuovi messaggi (dall'utente)
+    useEffect(() => {
+        const supabase = createClient();
+        const ch = supabase.channel(`support-admin-${report.id}`)
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'support_messages', filter: `bug_report_id=eq.${report.id}` }, () => load())
+            .subscribe();
+        return () => { supabase.removeChannel(ch); };
+    }, [report.id, load]);
+
+    useEffect(() => {
+        document.body.style.overflow = 'hidden';
+        const t = setTimeout(() => inputRef.current?.focus(), 300);
+        return () => { document.body.style.overflow = ''; clearTimeout(t); };
+    }, []);
+
+    const handleSend = async () => {
+        if (!text.trim() || sending) return;
+        setSending(true);
+        const content = text.trim();
+        setText('');
+        try {
+            await sendAdminSupportReply(report.id, content);
+            await load();
+        } catch (e: any) { setText(content); alert(e.message); }
+        finally { setSending(false); }
+    };
+
+    const handleToggleStatus = async () => {
+        setToggling(true);
+        try {
+            await updateBugReportStatus(report.id, report.status === 'open' ? 'closed' : 'open');
+            onStatusChange();
+            onClose();
+        } catch (e: any) { alert(e.message); }
+        finally { setToggling(false); }
+    };
+
+    const isClosed = report.status === 'closed';
+
+    return (
+        <div className="fixed inset-0 z-[20000] flex items-end justify-center bg-black/50" onClick={onClose}>
+            <div
+                className="w-full max-w-2xl bg-white rounded-t-[32px] shadow-2xl animate-in slide-in-from-bottom duration-300 flex flex-col"
+                style={{ maxHeight: '86dvh' }}
+                onClick={e => e.stopPropagation()}
+            >
+                {/* Handle + header */}
+                <div className="flex-shrink-0 px-5 pt-4 pb-3 border-b border-[#EEF0F4]">
+                    <div className="w-10 h-1 bg-[#EEF0F4] rounded-full mx-auto mb-3" />
+                    <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                            <p className="font-black text-[#1C1C1E] text-[15px] leading-snug">{report.description}</p>
+                            <div className="flex items-center gap-2 mt-1">
+                                <p className="text-[#9AA2B1] text-xs font-medium truncate">{report.user_email ?? 'Utente anonimo'}</p>
+                                <span className={`text-[10px] font-black px-2 py-0.5 rounded-full flex-shrink-0 ${isClosed ? 'bg-[#F4F4F8] text-[#9AA2B1]' : 'bg-green-100 text-green-700'}`}>
+                                    {isClosed ? 'Chiuso' : 'Aperto'}
+                                </span>
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                            <button
+                                onClick={handleToggleStatus}
+                                disabled={toggling}
+                                className={`text-[11px] font-black px-2.5 py-1.5 rounded-xl transition-colors disabled:opacity-50 ${isClosed ? 'bg-green-50 text-green-700 hover:bg-green-100' : 'bg-red-50 text-red-500 hover:bg-red-100'}`}
+                            >
+                                {toggling ? '...' : isClosed ? 'Riapri' : 'Chiudi'}
+                            </button>
+                            <button onClick={onClose} className="w-9 h-9 flex items-center justify-center bg-[#F4F4F8] rounded-xl text-[#9AA2B1]">
+                                <X size={16} />
+                            </button>
+                        </div>
+                    </div>
+                    {report.steps && (
+                        <p className="text-xs text-[#9AA2B1] mt-2 bg-[#FAFAFC] rounded-xl px-3 py-2 leading-relaxed">
+                            <span className="font-bold">Passi: </span>{report.steps}
+                        </p>
+                    )}
+                </div>
+
+                {/* Messaggi */}
+                <div className="flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-2 min-h-0">
+                    {loading ? (
+                        <p className="text-[#9AA2B1] text-sm text-center py-6">Caricamento...</p>
+                    ) : messages.length === 0 ? (
+                        <p className="text-[#9AA2B1] text-sm italic text-center py-6">Nessun messaggio — rispondi per avviare la conversazione</p>
+                    ) : messages.map(m => (
+                        <div key={m.id} className={`flex ${m.sender_type === 'admin' ? 'justify-end' : 'justify-start'}`}>
+                            <div className={`max-w-[78%] flex flex-col gap-0.5 ${m.sender_type === 'admin' ? 'items-end' : 'items-start'}`}>
+                                <span className="text-[10px] font-bold text-[#9AA2B1] px-1">
+                                    {m.sender_type === 'admin' ? 'Tu (admin)' : 'Utente'}
+                                </span>
+                                <div className={`px-3 py-2 rounded-2xl text-sm font-medium leading-relaxed break-words min-w-0 ${m.sender_type === 'admin' ? 'bg-[#7B5CF6] text-white rounded-br-sm' : 'bg-[#F4F4F8] text-[#1C1C1E] rounded-bl-sm'}`}>
+                                    {m.content}
+                                </div>
+                                <span className="text-[9px] text-[#C0C7D4] font-medium px-1">
+                                    {new Date(m.created_at).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                            </div>
+                        </div>
+                    ))}
+                    <div ref={bottomRef} />
+                </div>
+
+                {/* Input */}
+                {!isClosed && (
+                    <div className="flex-shrink-0 flex gap-2 px-4 py-3 border-t border-[#EEF0F4]">
+                        <input
+                            ref={inputRef}
+                            value={text}
+                            onChange={e => setText(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+                            placeholder="Rispondi all'utente..."
+                            className="flex-1 h-11 px-4 text-sm bg-[#FAFAFC] border border-[#EEF0F4] rounded-2xl outline-none focus:border-[#7B5CF6]"
+                        />
+                        <button
+                            onClick={handleSend}
+                            disabled={!text.trim() || sending}
+                            className="h-11 w-11 flex items-center justify-center bg-[#7B5CF6] text-white rounded-2xl disabled:opacity-40 flex-shrink-0 active:scale-90 transition-transform"
+                        >
+                            <Send size={15} />
+                        </button>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
+
+/* ─── Sezione: Segnalazioni supporto ─────────────────────── */
+function SectionSupport({ onBack }: { onBack: () => void }) {
+    const [reports, setReports] = useState<BugReport[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [activeReport, setActiveReport] = useState<BugReport | null>(null);
+    const [filter, setFilter] = useState<'open' | 'closed' | 'all'>('open');
+
+    const load = useCallback(async () => {
+        setLoading(true);
+        const data = await getAllBugReports();
+        setReports(data as BugReport[]);
+        setLoading(false);
+    }, []);
+
+    useEffect(() => { load(); }, [load]);
+
+    // Realtime: aggiorna lista quando arriva una nuova segnalazione o cambia stato
+    useEffect(() => {
+        const supabase = createClient();
+        const ch = supabase.channel('admin-support-rt')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'bug_reports' }, () => load())
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'support_messages' }, () => load())
+            .subscribe();
+        return () => { supabase.removeChannel(ch); };
+    }, [load]);
+
+    const filtered = reports.filter(r => filter === 'all' ? true : r.status === filter);
+    const openCount = reports.filter(r => r.status === 'open').length;
+
+    return (
+        <>
+            <div>
+                <SectionHeader title="Segnalazioni" onBack={onBack} />
+
+                {/* Filtro */}
+                <div className="flex gap-2 mb-4">
+                    {([['open', 'Aperte'], ['closed', 'Chiuse'], ['all', 'Tutte']] as const).map(([val, label]) => (
+                        <button
+                            key={val}
+                            onClick={() => setFilter(val)}
+                            className={`px-3 py-1.5 rounded-xl font-bold text-xs transition-colors ${filter === val ? 'bg-[#7B5CF6] text-white' : 'bg-[#F4F4F8] text-[#9AA2B1] hover:bg-[#EEF0F4]'}`}
+                        >
+                            {label}{val === 'open' && openCount > 0 ? ` (${openCount})` : ''}
+                        </button>
+                    ))}
+                </div>
+
+                {loading ? (
+                    <p className="text-center text-[#9AA2B1] font-bold py-8">Caricamento...</p>
+                ) : filtered.length === 0 ? (
+                    <p className="text-center text-[#9AA2B1] font-bold py-12">Nessuna segnalazione</p>
+                ) : (
+                    <div className="flex flex-col gap-3">
+                        {filtered.map(r => (
+                            <button
+                                key={r.id}
+                                onClick={() => setActiveReport(r)}
+                                className="w-full bg-white rounded-[20px] border border-[#EEF0F4] p-4 shadow-sm text-left active:scale-[0.98] transition-transform hover:border-[#D9B9F9]"
+                            >
+                                <div className="flex items-start gap-3">
+                                    <div className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${r.status === 'open' ? 'bg-green-500' : 'bg-[#C0C7D4]'}`} />
+                                    <div className="flex-1 min-w-0">
+                                        <p className="font-bold text-[#1C1C1E] text-sm leading-snug line-clamp-2">{r.description}</p>
+                                        <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                                            <p className="text-[#9AA2B1] text-xs font-medium truncate">{r.user_email ?? 'Anonimo'}</p>
+                                            <span className="text-[#9AA2B1] text-[10px]">·</span>
+                                            <p className="text-[#9AA2B1] text-[10px] font-medium flex-shrink-0">
+                                                {new Date(r.created_at).toLocaleDateString('it-IT', { day: '2-digit', month: 'short', year: 'numeric' })}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <span className={`text-[10px] font-black px-2 py-0.5 rounded-full flex-shrink-0 ml-1 ${r.status === 'open' ? 'bg-green-100 text-green-700' : 'bg-[#F4F4F8] text-[#9AA2B1]'}`}>
+                                        {r.status === 'open' ? 'Aperta' : 'Chiusa'}
+                                    </span>
+                                </div>
+                            </button>
+                        ))}
+                    </div>
+                )}
+            </div>
+
+            {activeReport && (
+                <SupportChatModal
+                    report={activeReport}
+                    onClose={() => setActiveReport(null)}
+                    onStatusChange={() => { load(); setActiveReport(null); }}
+                />
+            )}
+        </>
+    );
+}
+
 /* ═══════════════════════════════════════════════════════════
+   SECTION LIBRARY
+   ═══════════════════════════════════════════════════════════ */
+
+const MAX_COVERS = 3;
+const MAX_SEC_IMAGES = 3;
+const LIBRARY_BUCKET = 'library-content';
+
+function newSection(): LibrarySection {
+    return { id: crypto.randomUUID(), title: '', body: '', image_urls: [], order: 0 };
+}
+
+function LibraryFormModal({ initial, onClose, onSaved }: {
+    initial?: LibraryItem | null; onClose: () => void; onSaved: () => void;
+}) {
+    const [form, setForm] = useState<LibraryFormData>(initial ? {
+        title: initial.title,
+        description: initial.description,
+        item_type: initial.item_type,
+        tier: initial.tier,
+        language: initial.language ?? '',
+        cover_urls: initial.cover_urls,
+        content_type: initial.content_type,
+        pdf_url: initial.pdf_url ?? '',
+        sections: initial.sections,
+        is_published: initial.is_published,
+    } : {
+        title: '', description: '', item_type: 'schema', tier: 'free',
+        language: '', cover_urls: [], content_type: 'sections',
+        pdf_url: '', sections: [], is_published: true,
+    });
+    const [coverPreviews, setCoverPreviews] = useState<string[]>(initial?.cover_urls ?? []);
+    const [coverFiles, setCoverFiles] = useState<(File | null)[]>((initial?.cover_urls ?? []).map(() => null));
+    const [pdfFile, setPdfFile] = useState<File | null>(null);
+    const [sections, setSections] = useState<LibrarySection[]>(initial?.sections ?? []);
+    const [saving, setSaving] = useState(false);
+    const [err, setErr] = useState('');
+    const coverInputRef = useRef<HTMLInputElement>(null);
+    const pdfInputRef = useRef<HTMLInputElement>(null);
+
+    const handleAddCovers = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const files = Array.from(e.target.files ?? []); e.target.value = '';
+        const toAdd = files.slice(0, MAX_COVERS - coverPreviews.length);
+        setCoverFiles(p => [...p, ...toAdd]);
+        setCoverPreviews(p => [...p, ...toAdd.map(f => URL.createObjectURL(f))]);
+    };
+    const handleRemoveCover = (i: number) => {
+        setCoverFiles(p => p.filter((_, j) => j !== i));
+        setCoverPreviews(p => p.filter((_, j) => j !== i));
+    };
+
+    const uploadToStorage = async (path: string, file: File): Promise<string> => {
+        const supabase = createClient();
+        const { error } = await supabase.storage.from(LIBRARY_BUCKET).upload(path, file, { contentType: file.type, upsert: true });
+        if (error) throw new Error(`Upload fallito: ${error.message}`);
+        return supabase.storage.from(LIBRARY_BUCKET).getPublicUrl(path).data.publicUrl;
+    };
+
+    const handleSave = async () => {
+        if (!form.title.trim()) { setErr('Il titolo è obbligatorio'); return; }
+        setSaving(true); setErr('');
+        try {
+            const itemId = initial?.id ?? crypto.randomUUID();
+            // Upload covers
+            const finalCovers: string[] = [];
+            for (let i = 0; i < coverPreviews.length; i++) {
+                if (coverFiles[i]) {
+                    finalCovers.push(await uploadToStorage(`covers/${itemId}/cover-${i}-${Date.now()}`, coverFiles[i]!));
+                } else {
+                    // coverPreviews[i] è l'URL Supabase originale quando non è stato sostituito
+                    finalCovers.push(coverPreviews[i]);
+                }
+            }
+            // Upload PDF
+            let finalPdfUrl = form.pdf_url ?? '';
+            if (form.content_type === 'pdf' && pdfFile) {
+                finalPdfUrl = await uploadToStorage(`pdfs/${itemId}/document.pdf`, pdfFile);
+            }
+            // Upload section images — ricalcola order prima di salvare
+            const finalSections: LibrarySection[] = [];
+            for (const [si, sec] of sections.map((s, i) => [i, s] as const)) {
+                const secImgUrls: string[] = [];
+                for (const imgUrlOrLocal of sec.image_urls) {
+                    if (imgUrlOrLocal.startsWith('blob:') || imgUrlOrLocal.startsWith('data:')) {
+                        // local preview — need to re-fetch as blob
+                        const resp = await fetch(imgUrlOrLocal);
+                        const blob = await resp.blob();
+                        const file = new File([blob], 'img.jpg', { type: blob.type });
+                        secImgUrls.push(await uploadToStorage(`sections/${itemId}/${sec.id}/img-${Date.now()}-${secImgUrls.length}`, file));
+                    } else {
+                        secImgUrls.push(imgUrlOrLocal);
+                    }
+                }
+                finalSections.push({ ...sec, order: si, image_urls: secImgUrls });
+            }
+            const payload: LibraryFormData = {
+                ...form,
+                cover_urls: finalCovers.filter(Boolean),
+                pdf_url: finalPdfUrl,
+                sections: finalSections,
+            };
+            if (initial) {
+                await updateLibraryItem(initial.id, payload);
+            } else {
+                await createLibraryItem(itemId, payload);
+            }
+            onSaved();
+        } catch (e: any) { setErr(e.message); } finally { setSaving(false); }
+    };
+
+    // ── Section editor helpers ───────────────────────────────
+    const addSection = () => setSections(s => [...s, { ...newSection(), order: s.length }]);
+    const removeSection = (id: string) => setSections(s =>
+        s.filter(x => x.id !== id).map((x, i) => ({ ...x, order: i }))
+    );
+    const updateSectionField = (id: string, field: keyof LibrarySection, val: any) =>
+        setSections(s => s.map(x => x.id === id ? { ...x, [field]: val } : x));
+    const addSectionImages = (id: string, files: File[]) => {
+        setSections(s => s.map(x => {
+            if (x.id !== id) return x;
+            const toAdd = files.slice(0, MAX_SEC_IMAGES - x.image_urls.length);
+            return {
+                ...x,
+                image_urls: [...x.image_urls, ...toAdd.map(f => URL.createObjectURL(f))],
+                image_captions: [...(x.image_captions ?? []), ...toAdd.map(() => '')],
+            };
+        }));
+    };
+    const removeSectionImage = (id: string, i: number) =>
+        setSections(s => s.map(x => x.id === id ? {
+            ...x,
+            image_urls: x.image_urls.filter((_, j) => j !== i),
+            image_captions: (x.image_captions ?? []).filter((_, j) => j !== i),
+        } : x));
+    const updateSectionCaption = (id: string, i: number, val: string) =>
+        setSections(s => s.map(x => {
+            if (x.id !== id) return x;
+            const caps = [...(x.image_captions ?? x.image_urls.map(() => ''))];
+            caps[i] = val;
+            return { ...x, image_captions: caps };
+        }));
+
+    return (
+        <div className="fixed inset-0 z-[10000] flex items-end justify-center bg-black/40" onClick={onClose}>
+            <div className="w-full max-w-2xl bg-white rounded-t-[32px] p-6 pb-12 shadow-2xl animate-in slide-in-from-bottom duration-300 max-h-[92vh] overflow-y-auto"
+                onClick={e => e.stopPropagation()}>
+                <div className="w-12 h-1.5 bg-[#EEF0F4] rounded-full mx-auto mb-6" />
+                <div className="flex items-center justify-between mb-5">
+                    <h3 className="text-2xl font-black">{initial ? 'Modifica' : 'Nuovo Libro/Schema'}</h3>
+                    <button onClick={onClose} className="text-[#9AA2B1]"><X size={20} /></button>
+                </div>
+                {err && <p className="text-red-500 text-sm font-bold mb-4 bg-red-50 p-3 rounded-xl">{err}</p>}
+
+                {/* Covers */}
+                <div className="mb-4">
+                    <label className="text-xs font-black text-[#9AA2B1] uppercase tracking-wider block mb-2">Copertine ({coverPreviews.length}/{MAX_COVERS})</label>
+                    <div className="flex flex-wrap gap-2">
+                        {coverPreviews.map((src, i) => (
+                            <div key={i} className="relative w-20 h-28 rounded-xl overflow-hidden border border-[#EEF0F4]">
+                                <img src={src} alt="" className="w-full h-full object-cover" />
+                                <button onClick={() => handleRemoveCover(i)} className="absolute top-0.5 right-0.5 w-5 h-5 flex items-center justify-center bg-black/60 text-white rounded-full"><X size={10} /></button>
+                            </div>
+                        ))}
+                        {coverPreviews.length < MAX_COVERS && (
+                            <button type="button" onClick={() => coverInputRef.current?.click()}
+                                className="w-20 h-28 rounded-xl border-2 border-dashed border-[#E6DAFF] flex flex-col items-center justify-center text-[#7B5CF6] bg-[#FAFAFC] hover:bg-[#F4EEFF] transition-colors">
+                                <Plus size={20} /><span className="text-[10px] font-bold mt-0.5">Aggiungi</span>
+                            </button>
+                        )}
+                    </div>
+                    <input type="file" ref={coverInputRef} accept="image/*" multiple className="hidden" onChange={handleAddCovers} />
+                </div>
+
+                <div className="space-y-4">
+                    <div>
+                        <label className="text-xs font-black text-[#9AA2B1] uppercase tracking-wider block mb-1">Titolo *</label>
+                        <input value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} className="w-full h-12 px-4 bg-[#FAFAFC] border border-[#E6DAFF] rounded-xl outline-none focus:border-[#7B5CF6] font-medium" />
+                    </div>
+                    <div>
+                        <label className="text-xs font-black text-[#9AA2B1] uppercase tracking-wider block mb-1">Descrizione</label>
+                        <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} rows={2} className="w-full px-4 py-3 bg-[#FAFAFC] border border-[#E6DAFF] rounded-xl outline-none focus:border-[#7B5CF6] font-medium resize-none" />
+                    </div>
+                    <div className="grid grid-cols-3 gap-3">
+                        <div>
+                            <label className="text-xs font-black text-[#9AA2B1] uppercase tracking-wider block mb-1">Tipo</label>
+                            <select value={form.item_type} onChange={e => setForm(f => ({ ...f, item_type: e.target.value as any }))} className="w-full h-12 px-3 bg-[#FAFAFC] border border-[#E6DAFF] rounded-xl outline-none focus:border-[#7B5CF6] font-medium">
+                                <option value="schema">Schema</option>
+                                <option value="book">Libro</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label className="text-xs font-black text-[#9AA2B1] uppercase tracking-wider block mb-1">Tier</label>
+                            <select value={form.tier} onChange={e => setForm(f => ({ ...f, tier: e.target.value as any }))} className="w-full h-12 px-3 bg-[#FAFAFC] border border-[#E6DAFF] rounded-xl outline-none focus:border-[#7B5CF6] font-medium">
+                                <option value="free">Free</option>
+                                <option value="premium">Premium</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label className="text-xs font-black text-[#9AA2B1] uppercase tracking-wider block mb-1">Lingua</label>
+                            <input value={form.language ?? ''} onChange={e => setForm(f => ({ ...f, language: e.target.value }))} placeholder="es. Italiano" className="w-full h-12 px-3 bg-[#FAFAFC] border border-[#E6DAFF] rounded-xl outline-none focus:border-[#7B5CF6] font-medium" />
+                        </div>
+                    </div>
+
+                    {/* Pubblicato toggle */}
+                    <div className="flex items-center justify-between">
+                        <span className="text-xs font-black text-[#9AA2B1] uppercase tracking-wider">Pubblicato</span>
+                        <button type="button" onClick={() => setForm(f => ({ ...f, is_published: !f.is_published }))}>
+                            {form.is_published
+                                ? <ToggleRight size={28} className="text-[#7B5CF6]" />
+                                : <ToggleLeft size={28} className="text-[#9AA2B1]" />}
+                        </button>
+                    </div>
+
+                    {/* Content type */}
+                    <div>
+                        <label className="text-xs font-black text-[#9AA2B1] uppercase tracking-wider block mb-2">Tipo di contenuto</label>
+                        <div className="grid grid-cols-2 gap-2">
+                            {(['pdf', 'sections'] as const).map(ct => (
+                                <button key={ct} type="button" onClick={() => setForm(f => ({ ...f, content_type: ct }))}
+                                    className={`h-12 rounded-xl font-black text-sm transition-colors ${form.content_type === ct ? 'bg-[#7B5CF6] text-white' : 'bg-[#FAFAFC] border border-[#E6DAFF] text-[#9AA2B1]'}`}>
+                                    {ct === 'pdf' ? '📄 PDF' : '📝 Sezioni'}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* PDF Upload */}
+                    {form.content_type === 'pdf' && (
+                        <div>
+                            <label className="text-xs font-black text-[#9AA2B1] uppercase tracking-wider block mb-2">File PDF</label>
+                            {(pdfFile || form.pdf_url) && (
+                                <div className="flex items-center gap-2 mb-2 bg-[#F4EEFF] rounded-xl px-3 py-2">
+                                    <FileText size={16} className="text-[#7B5CF6]" />
+                                    <span className="text-sm font-bold text-[#7B5CF6] truncate flex-1">
+                                        {pdfFile ? pdfFile.name : 'PDF caricato'}
+                                    </span>
+                                    <button onClick={() => { setPdfFile(null); setForm(f => ({ ...f, pdf_url: '' })); }} className="text-[#9AA2B1]"><X size={14} /></button>
+                                </div>
+                            )}
+                            <button type="button" onClick={() => pdfInputRef.current?.click()}
+                                className="w-full h-12 border-2 border-dashed border-[#E6DAFF] rounded-xl flex items-center justify-center gap-2 text-[#7B5CF6] font-bold text-sm hover:bg-[#F4EEFF] transition-colors">
+                                <Plus size={16} /> {pdfFile || form.pdf_url ? 'Sostituisci PDF' : 'Carica PDF'}
+                            </button>
+                            <input type="file" ref={pdfInputRef} accept="application/pdf" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) setPdfFile(f); e.target.value = ''; }} />
+                        </div>
+                    )}
+
+                    {/* Sections editor */}
+                    {form.content_type === 'sections' && (
+                        <div>
+                            <div className="flex items-center justify-between mb-3">
+                                <label className="text-xs font-black text-[#9AA2B1] uppercase tracking-wider">Sezioni ({sections.length})</label>
+                                <button type="button" onClick={addSection} className="flex items-center gap-1 text-[#7B5CF6] font-black text-xs px-3 py-1.5 bg-[#F4EEFF] rounded-xl active:scale-95 transition-transform">
+                                    <Plus size={14} /> Aggiungi
+                                </button>
+                            </div>
+                            <div className="flex flex-col gap-3">
+                                {sections.map((sec, si) => {
+                                    const secImgInput = React.createRef<HTMLInputElement>();
+                                    return (
+                                        <div key={sec.id} className="border border-[#E6DAFF] rounded-2xl p-4 bg-[#FAFAFC]">
+                                            <div className="flex items-center gap-2 mb-3">
+                                                <span className="text-xs font-black text-[#9AA2B1] w-5">{si + 1}.</span>
+                                                <input
+                                                    value={sec.title}
+                                                    onChange={e => updateSectionField(sec.id, 'title', e.target.value)}
+                                                    placeholder="Titolo sezione"
+                                                    className="flex-1 h-9 px-3 bg-white border border-[#E6DAFF] rounded-xl outline-none focus:border-[#7B5CF6] font-bold text-sm"
+                                                />
+                                                <button onClick={() => removeSection(sec.id)} className="text-red-400 active:scale-90 transition-transform"><X size={16} /></button>
+                                            </div>
+                                            <textarea
+                                                value={sec.body}
+                                                onChange={e => updateSectionField(sec.id, 'body', e.target.value)}
+                                                placeholder="Contenuto della sezione…"
+                                                rows={3}
+                                                className="w-full px-3 py-2 bg-white border border-[#E6DAFF] rounded-xl outline-none focus:border-[#7B5CF6] font-medium text-sm resize-none mb-3"
+                                            />
+                                            {/* Section images */}
+                                            <div className="flex flex-col gap-2">
+                                                {sec.image_urls.map((url, ii) => (
+                                                    <div key={ii} className="flex items-center gap-2">
+                                                        <div className="relative w-14 h-14 rounded-xl overflow-hidden border border-[#EEF0F4] flex-shrink-0">
+                                                            <img src={url} alt="" className="w-full h-full object-cover" />
+                                                            <button onClick={() => removeSectionImage(sec.id, ii)} className="absolute top-0.5 right-0.5 w-4 h-4 flex items-center justify-center bg-black/60 text-white rounded-full"><X size={8} /></button>
+                                                        </div>
+                                                        <input
+                                                            value={(sec.image_captions ?? [])[ii] ?? ''}
+                                                            onChange={e => updateSectionCaption(sec.id, ii, e.target.value)}
+                                                            placeholder="Nome immagine (opzionale)"
+                                                            className="flex-1 h-9 px-3 bg-white border border-[#E6DAFF] rounded-xl outline-none focus:border-[#7B5CF6] font-medium text-sm"
+                                                        />
+                                                    </div>
+                                                ))}
+                                                <div className="flex items-center gap-2">
+                                                    {sec.image_urls.length < MAX_SEC_IMAGES && (
+                                                        <button type="button" onClick={() => (secImgInput as any).current?.click()}
+                                                            className="w-14 h-14 rounded-xl border-2 border-dashed border-[#E6DAFF] flex flex-col items-center justify-center text-[#7B5CF6] bg-white hover:bg-[#F4EEFF] transition-colors flex-shrink-0">
+                                                            <Plus size={14} /><span className="text-[9px] font-bold">img</span>
+                                                        </button>
+                                                    )}
+                                                </div>
+                                                <input ref={secImgInput} type="file" accept="image/*" multiple className="hidden"
+                                                    onChange={e => { const files = Array.from(e.target.files ?? []); addSectionImages(sec.id, files); e.target.value = ''; }} />
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                <button
+                    onClick={handleSave}
+                    disabled={saving}
+                    className="w-full mt-6 h-12 bg-[#7B5CF6] text-white font-black rounded-2xl flex items-center justify-center gap-2 disabled:opacity-50 active:scale-[0.98] transition-transform"
+                >
+                    {saving ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Save size={18} />}
+                    {saving ? 'Salvataggio…' : (initial ? 'Salva modifiche' : 'Crea')}
+                </button>
+            </div>
+        </div>
+    );
+}
+
+function SectionLibrary({ onBack }: { onBack: () => void }) {
+    const [items, setItems] = useState<LibraryItem[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [formItem, setFormItem] = useState<LibraryItem | null | 'new'>('new' as any);
+    const [showForm, setShowForm] = useState(false);
+    const [deleteId, setDeleteId] = useState<string | null>(null);
+    const [deleting, setDeleting] = useState(false);
+
+    const load = useCallback(async () => {
+        try {
+            const data = await getAdminLibraryItems();
+            setItems(data);
+        } catch {} finally { setLoading(false); }
+    }, []);
+
+    useEffect(() => { load(); }, [load]);
+
+    const handleDelete = async (id: string) => {
+        setDeleting(true);
+        try { await deleteLibraryItem(id); await load(); } catch {} finally { setDeleting(false); setDeleteId(null); }
+    };
+
+    return (
+        <div>
+            <SectionHeader title="Libreria" onBack={onBack} />
+            <button
+                onClick={() => { setFormItem(null); setShowForm(true); }}
+                className="w-full h-12 bg-[#7B5CF6] text-white font-black rounded-2xl flex items-center justify-center gap-2 mb-4 active:scale-[0.98] transition-transform"
+            >
+                <Plus size={18} /> Nuovo Libro/Schema
+            </button>
+
+            {loading ? (
+                <div className="space-y-3">
+                    {[...Array(3)].map((_, i) => <div key={i} className="h-20 bg-[#F4F4F8] rounded-2xl animate-pulse" />)}
+                </div>
+            ) : items.length === 0 ? (
+                <div className="text-center py-12 text-[#9AA2B1] font-bold">Nessun elemento in libreria</div>
+            ) : (
+                <div className="flex flex-col gap-3">
+                    {items.map(item => (
+                        <div key={item.id} className="bg-white border border-[#EEF0F4] rounded-2xl p-4 flex items-center gap-3 shadow-sm">
+                            {item.cover_urls[0] ? (
+                                <img src={item.cover_urls[0]} alt={item.title} className="w-12 h-16 rounded-xl object-cover flex-shrink-0" />
+                            ) : (
+                                <div className="w-12 h-16 rounded-xl bg-[#F4F4F8] flex items-center justify-center flex-shrink-0">
+                                    <BookOpen size={20} className="text-[#9AA2B1]" />
+                                </div>
+                            )}
+                            <div className="flex-1 min-w-0">
+                                <p className="font-black text-[#1C1C1E] text-sm truncate">{item.title}</p>
+                                <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                                    <span className={`text-[10px] font-black px-1.5 py-0.5 rounded-full ${item.item_type === 'book' ? 'bg-[#7B5CF6] text-white' : 'bg-amber-500 text-white'}`}>
+                                        {item.item_type === 'book' ? 'Libro' : 'Schema'}
+                                    </span>
+                                    <span className={`text-[10px] font-black px-1.5 py-0.5 rounded-full ${item.tier === 'premium' ? 'bg-emerald-600 text-white' : 'bg-[#F4F4F8] text-[#9AA2B1]'}`}>
+                                        {item.tier === 'premium' ? '✦ Premium' : 'Free'}
+                                    </span>
+                                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${item.is_published ? 'bg-green-100 text-green-700' : 'bg-[#F4F4F8] text-[#9AA2B1]'}`}>
+                                        {item.is_published ? 'Pubblicato' : 'Bozza'}
+                                    </span>
+                                </div>
+                            </div>
+                            <div className="flex gap-1 flex-shrink-0">
+                                <button
+                                    onClick={() => { setFormItem(item); setShowForm(true); }}
+                                    className="w-8 h-8 flex items-center justify-center rounded-xl bg-[#F4EEFF] text-[#7B5CF6] active:scale-90 transition-transform"
+                                >
+                                    <Edit2 size={14} />
+                                </button>
+                                <button
+                                    onClick={() => setDeleteId(item.id)}
+                                    className="w-8 h-8 flex items-center justify-center rounded-xl bg-red-50 text-red-500 active:scale-90 transition-transform"
+                                >
+                                    <Trash2 size={14} />
+                                </button>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            {/* Delete confirm */}
+            {deleteId && (
+                <div className="fixed inset-0 z-[10001] flex items-center justify-center bg-black/40 p-4">
+                    <div className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl">
+                        <p className="font-black text-[#1C1C1E] text-lg mb-2">Elimina elemento</p>
+                        <p className="text-[#9AA2B1] text-sm mb-5">Questa azione è irreversibile. I file caricati non saranno eliminati dallo storage.</p>
+                        <div className="flex gap-3">
+                            <button onClick={() => setDeleteId(null)} className="flex-1 h-11 bg-[#F4F4F8] rounded-2xl font-black text-sm text-[#1C1C1E]">Annulla</button>
+                            <button onClick={() => handleDelete(deleteId)} disabled={deleting} className="flex-1 h-11 bg-red-500 rounded-2xl font-black text-sm text-white disabled:opacity-50">
+                                {deleting ? '…' : 'Elimina'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {showForm && (
+                <LibraryFormModal
+                    initial={formItem as LibraryItem | null}
+                    onClose={() => setShowForm(false)}
+                    onSaved={() => { setShowForm(false); load(); }}
+                />
+            )}
+        </div>
+    );
+}
+
+/* ══════════════════════════════════════════════════════════
    MAIN DASHBOARD
    ═══════════════════════════════════════════════════════════ */
-type Section = null | 'peak' | 'users' | 'events' | 'ai-costs';
+type Section = null | 'peak' | 'users' | 'events' | 'ai-costs' | 'support' | 'library';
 
 export function AdminDashboard() {
     const [stats, setStats] = useState<Stats | null>(null);
@@ -1143,6 +1824,20 @@ export function AdminDashboard() {
         return (
             <div className="max-w-2xl mx-auto px-4 pt-6 pb-24">
                 <SectionAiCosts onBack={() => setActiveSection(null)} />
+            </div>
+        );
+    }
+    if (activeSection === 'support') {
+        return (
+            <div className="max-w-2xl mx-auto px-4 pt-6 pb-24">
+                <SectionSupport onBack={() => setActiveSection(null)} />
+            </div>
+        );
+    }
+    if (activeSection === 'library') {
+        return (
+            <div className="max-w-2xl mx-auto px-4 pt-6 pb-24">
+                <SectionLibrary onBack={() => setActiveSection(null)} />
             </div>
         );
     }
@@ -1194,6 +1889,18 @@ export function AdminDashboard() {
                     title="Costi AI"
                     subtitle="Spesa, budget e controllo servizi AI"
                     onClick={() => setActiveSection('ai-costs')}
+                />
+                <SectionCard
+                    icon={<Bug size={20} className="text-orange-500" />}
+                    title="Segnalazioni"
+                    subtitle="Gestisci e rispondi ai ticket di supporto"
+                    onClick={() => setActiveSection('support')}
+                />
+                <SectionCard
+                    icon={<BookOpen size={20} className="text-[#7B5CF6]" />}
+                    title="Libreria"
+                    subtitle="Carica e gestisci libri e schemi"
+                    onClick={() => setActiveSection('library')}
                 />
             </div>
         </div>

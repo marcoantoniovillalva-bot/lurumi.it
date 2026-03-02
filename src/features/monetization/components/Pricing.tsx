@@ -1,11 +1,12 @@
 "use client";
 
 import React, { useEffect, useState, useRef } from "react";
-import { Check, ArrowLeft, Gem, CheckCircle2, XCircle, Loader2, RefreshCw, Clock } from "lucide-react";
+import { Check, ArrowLeft, Gem, CheckCircle2, XCircle, Loader2, RefreshCw, Clock, CalendarDays, Sparkles } from "lucide-react";
 import { createCheckoutSession, createBillingPortalSession } from "../actions/stripe";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useUserProfile, broadcastProfileRefresh } from "@/hooks/useUserProfile";
+import { AiCreditsBar } from "@/components/AiCreditsBar";
 
 const features = {
     free: [
@@ -48,7 +49,7 @@ interface SyncResult {
 
 export const Pricing: React.FC = () => {
     const searchParams = useSearchParams()
-    const { profile, loading, refreshProfile } = useUserProfile()
+    const { profile, loading, refreshProfile, aiCredits } = useUserProfile()
     const isPremium = profile?.tier === 'premium'
 
     const [checkoutLoading, setCheckoutLoading] = useState(false)
@@ -335,6 +336,55 @@ export const Pricing: React.FC = () => {
             <p className="text-xs text-center text-[#9AA2B1] mt-6 font-medium">
                 Pagamento sicuro tramite Stripe · Disdici in qualsiasi momento
             </p>
+
+            {/* ── Credito eventi ── */}
+            {profile !== null && (
+                <div className="bg-white rounded-[28px] border border-[#EEF0F4] p-6 shadow-sm mt-6">
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <div className="flex items-center gap-2 mb-1">
+                                <CalendarDays size={18} className="text-[#7B5CF6]" />
+                                <h2 className="text-lg font-black text-[#1C1C1E]">Credito eventi</h2>
+                            </div>
+                            <p className="text-[#9AA2B1] text-xs font-medium">
+                                Usabile per prenotare corsi ed eventi
+                            </p>
+                        </div>
+                        <span className="text-2xl font-black text-[#7B5CF6]">
+                            €{(profile?.event_credit ?? 0).toFixed(2)}
+                        </span>
+                    </div>
+                </div>
+            )}
+
+            {/* ── Crediti AI ── */}
+            {aiCredits && (
+                <div className="bg-white rounded-[28px] border border-[#EEF0F4] p-6 shadow-sm mt-6">
+                    <div className="flex items-center gap-2 mb-4">
+                        <Sparkles size={18} className="text-[#7B5CF6]" />
+                        <h2 className="text-lg font-black text-[#1C1C1E]">Crediti AI</h2>
+                    </div>
+                    <AiCreditsBar credits={aiCredits} />
+                    <div className="mt-4 grid grid-cols-2 gap-2">
+                        {[
+                            { label: 'Chat crochet', cost: '2 cr.' },
+                            { label: 'Analisi schema', cost: '5 cr.' },
+                            { label: 'Immagine veloce', cost: '8 cr.' },
+                            { label: 'Immagine HD', cost: '20 cr.' },
+                        ].map(item => (
+                            <div key={item.label} className="flex items-center justify-between bg-[#FAFAFC] rounded-xl px-3 py-2">
+                                <span className="text-xs font-medium text-[#9AA2B1]">{item.label}</span>
+                                <span className="text-xs font-black text-[#7B5CF6]">{item.cost}</span>
+                            </div>
+                        ))}
+                    </div>
+                    {profile?.tier === 'free' && (
+                        <Link href="/pricing" className="mt-4 flex items-center justify-center gap-2 w-full py-3 bg-[#7B5CF6] text-white rounded-2xl font-bold text-sm">
+                            Passa a Premium — 300 crediti/mese
+                        </Link>
+                    )}
+                </div>
+            )}
         </div>
     );
 };

@@ -38,6 +38,7 @@ export const ToolsDashboard: React.FC = () => {
                                 alt={tool.title}
                                 className="w-12 h-12 object-contain animate-character-breathe"
                                 onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
+                                suppressHydrationWarning
                             />
                         </div>
                         <div className="flex-1">
