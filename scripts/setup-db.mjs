@@ -303,6 +303,9 @@ CREATE INDEX IF NOT EXISTS event_bookings_event_id ON event_bookings(event_id);
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS ai_credits_used INT DEFAULT 0;
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS ai_credits_reset_at TIMESTAMPTZ DEFAULT NOW();
 
+-- Tema personaggio scelto dall'utente (default: luly)
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS character_theme TEXT DEFAULT 'luly';
+
 -- Abilita Realtime su profiles per sync crediti multi-device
 DO $$ BEGIN
   ALTER PUBLICATION supabase_realtime ADD TABLE profiles;

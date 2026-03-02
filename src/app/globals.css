@@ -103,3 +103,25 @@
     border: 1px solid rgba(255,255,255,0.5);
   }
 }
+/* ── Animazioni personaggi ───────────────────────────────── */
+@keyframes character-float {
+  0%, 100% { transform: translateY(0px) rotate(-1deg); }
+  50%       { transform: translateY(-10px) rotate(1deg); }
+}
+@keyframes character-bounce {
+  0%, 100% { transform: translateY(0px) scale(1); }
+  50%       { transform: translateY(-6px) scale(1.03); }
+}
+@keyframes character-breathe {
+  0%, 100% { transform: scale(1); }
+  50%       { transform: scale(1.04); }
+}
+.animate-character-float {
+  animation: character-float 4s ease-in-out infinite;
+}
+.animate-character-bounce {
+  animation: character-bounce 2.5s ease-in-out infinite;
+}
+.animate-character-breathe {
+  animation: character-breathe 3s ease-in-out infinite;
+}

@@ -1,23 +1,33 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Palette, CheckCircle, CalendarDays, Sparkles } from "lucide-react";
+import { Palette, CheckCircle, CalendarDays, Sparkles, Smile } from "lucide-react";
 import { AiCreditsBar } from "@/components/AiCreditsBar";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
-import { useUserProfile } from "@/hooks/useUserProfile";
+import { useUserProfile, broadcastProfileRefresh } from "@/hooks/useUserProfile";
 import { SocialBar } from "@/components/SocialBar";
 import { useSearchParams } from "next/navigation";
+import {
+    useCharacterTheme,
+    CHARACTERS,
+    getCharacterUrl,
+    type CharacterName,
+} from "@/hooks/useCharacterTheme";
+import { updateCharacterTheme } from "@/app/actions/updateCharacterTheme";
 
 export default function ProfiloPage() {
     const { user, loading } = useAuth();
     const { profile, aiCredits } = useUserProfile();
+    const { character, getUrl } = useCharacterTheme();
     const router = useRouter();
     const searchParams = useSearchParams();
-    const canvaStatus = searchParams.get('canva'); // 'success' | 'error' | null
+    const canvaStatus = searchParams.get('canva');
     const [canvaConnected, setCanvaConnected] = useState(false);
+    const [isPending, startTransition] = useTransition();
+    const [themeSaved, setThemeSaved] = useState(false);
 
     useEffect(() => {
         if (!user) return;
@@ -31,6 +41,15 @@ export default function ProfiloPage() {
     useEffect(() => {
         if (!loading && !user) router.push("/login");
     }, [user, loading, router]);
+
+    const handleSelectCharacter = (name: CharacterName) => {
+        startTransition(async () => {
+            await updateCharacterTheme(name);
+            broadcastProfileRefresh();
+            setThemeSaved(true);
+            setTimeout(() => setThemeSaved(false), 2000);
+        });
+    };
 
     const sections = [
         { href: "/", label: "Progetti", emoji: "🧶", desc: "I tuoi lavori attivi" },
@@ -48,19 +67,27 @@ export default function ProfiloPage() {
 
     return (
         <div className="max-w-2xl mx-auto px-4 pt-6 pb-24">
-            {/* Greeting */}
-            <div className="mb-8">
-                <h1 className="text-3xl font-black text-[#1C1C1E] mb-1">
-                    {firstName ? `Ciao, ${firstName}!` : "Il tuo Profilo"} 👤
-                </h1>
-                <p className="text-[#9AA2B1] text-sm font-medium">{user.email}</p>
-                <span
-                    className={`inline-block mt-2 text-[11px] font-black px-2.5 py-1 rounded-full ${
-                        profile?.tier === "premium" ? "bg-[#7B5CF6] text-white" : "bg-[#F4F4F8] text-[#9AA2B1]"
-                    }`}
-                >
-                    {profile?.tier === "premium" ? "✦ Premium" : "Free"}
-                </span>
+            {/* Greeting con personaggio */}
+            <div className="mb-8 flex items-center gap-4">
+                <img
+                    src={getUrl('profile')}
+                    alt="Il tuo personaggio"
+                    className="w-20 h-20 object-contain animate-character-bounce flex-shrink-0"
+                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
+                />
+                <div>
+                    <h1 className="text-3xl font-black text-[#1C1C1E] mb-1">
+                        {firstName ? `Ciao, ${firstName}!` : "Il tuo Profilo"}
+                    </h1>
+                    <p className="text-[#9AA2B1] text-sm font-medium">{user.email}</p>
+                    <span
+                        className={`inline-block mt-2 text-[11px] font-black px-2.5 py-1 rounded-full ${
+                            profile?.tier === "premium" ? "bg-[#7B5CF6] text-white" : "bg-[#F4F4F8] text-[#9AA2B1]"
+                        }`}
+                    >
+                        {profile?.tier === "premium" ? "✦ Premium" : "Free"}
+                    </span>
+                </div>
             </div>
 
             {/* Quick nav */}
@@ -78,6 +105,52 @@ export default function ProfiloPage() {
                         </div>
                     </Link>
                 ))}
+            </div>
+
+            {/* ── Tema personaggio ── */}
+            <div className="bg-white rounded-[28px] border border-[#EEF0F4] p-6 shadow-sm mb-6">
+                <div className="flex items-center gap-2 mb-1">
+                    <Smile size={18} className="text-[#7B5CF6]" />
+                    <h2 className="text-lg font-black text-[#1C1C1E]">Il tuo personaggio</h2>
+                    {themeSaved && (
+                        <span className="ml-auto text-[11px] font-black text-green-600 bg-green-50 px-2 py-0.5 rounded-full">
+                            ✓ Salvato
+                        </span>
+                    )}
+                </div>
+                <p className="text-[#9AA2B1] text-xs font-medium mb-4">
+                    Scegli chi ti accompagna nell'app — si aggiorna ovunque in tempo reale
+                </p>
+                <div className="grid grid-cols-4 gap-3">
+                    {CHARACTERS.map(({ name, label }) => {
+                        const isSelected = character === name;
+                        return (
+                            <button
+                                key={name}
+                                onClick={() => handleSelectCharacter(name)}
+                                disabled={isPending}
+                                className={`flex flex-col items-center gap-1.5 p-2 rounded-2xl border-2 transition-all active:scale-95 ${
+                                    isSelected
+                                        ? 'border-[#7B5CF6] bg-[#F4EEFF]'
+                                        : 'border-[#EEF0F4] bg-[#FAFAFC] hover:border-[#D9B9F9]'
+                                }`}
+                            >
+                                <img
+                                    src={getCharacterUrl(name, 'welcome')}
+                                    alt={label}
+                                    className={`w-14 h-14 object-contain transition-transform ${isSelected ? 'animate-character-bounce' : ''}`}
+                                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.opacity = '0.3' }}
+                                />
+                                <span className={`text-[11px] font-black ${isSelected ? 'text-[#7B5CF6]' : 'text-[#9AA2B1]'}`}>
+                                    {label}
+                                </span>
+                                {isSelected && (
+                                    <div className="w-1.5 h-1.5 rounded-full bg-[#7B5CF6]" />
+                                )}
+                            </button>
+                        );
+                    })}
+                </div>
             </div>
 
             {/* ── Canva Integration ── */}
