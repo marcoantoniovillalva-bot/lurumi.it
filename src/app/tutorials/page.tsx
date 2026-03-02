@@ -6,10 +6,12 @@ import { useProjectStore, Tutorial } from "@/features/projects/store/useProjectS
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { useCharacterTheme } from "@/hooks/useCharacterTheme";
 
 export default function TutorialsPage() {
     const { tutorials, addTutorial, deleteTutorial, updateTutorial } = useProjectStore();
     const { user } = useAuth();
+    const { getUrl } = useCharacterTheme();
     const supabase = createClient();
     const [searchQuery, setSearchQuery] = useState("");
     const [showSearch, setShowSearch] = useState(false);
@@ -335,6 +337,12 @@ export default function TutorialsPage() {
                             </>
                         ) : (
                             <>
+                                <img
+                                    src={getUrl('tutorials_empty')}
+                                    alt="Nessun tutorial"
+                                    className="w-36 h-36 object-contain mb-3 animate-character-float"
+                                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
+                                />
                                 <h3 className="text-xl font-bold mb-1.5 text-[#1C1C1E]">Nessun tutorial salvato</h3>
                                 <p className="text-[#9AA2B1] text-sm">Tocca "+" e incolla il link YouTube del tuo tutorial preferito</p>
                             </>

@@ -11,6 +11,7 @@ interface UserProfile {
   event_credit: number
   ai_credits_used: number
   ai_credits_reset_at: string | null
+  character_theme: string | null
 }
 
 export interface AiCreditsInfo {
@@ -41,7 +42,7 @@ export function useUserProfile() {
     if (!user) { setProfile(null); setLoading(false); return }
     const supabase = createClient()
     const { data, error } = await supabase.from('profiles')
-      .select('tier, stripe_customer_id, is_admin, event_credit, ai_credits_used, ai_credits_reset_at')
+      .select('tier, stripe_customer_id, is_admin, event_credit, ai_credits_used, ai_credits_reset_at, character_theme')
       .eq('id', user.id).single()
     if (error) console.warn('[useUserProfile] fetch failed:', error.message)
     setProfile(data as UserProfile ?? {
@@ -51,6 +52,7 @@ export function useUserProfile() {
       event_credit: 0,
       ai_credits_used: 0,
       ai_credits_reset_at: null,
+      character_theme: 'luly',
     })
     setLoading(false)
   }, [user?.id]) // eslint-disable-line react-hooks/exhaustive-deps

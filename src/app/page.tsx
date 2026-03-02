@@ -9,10 +9,30 @@ import { SocialBar } from "@/components/SocialBar";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { loadPdfjs } from "@/lib/pdfjs";
+import { useCharacterTheme } from "@/hooks/useCharacterTheme";
+
+function EmptyProjectsState() {
+  const { getUrl } = useCharacterTheme();
+  return (
+    <div className="flex flex-col items-center justify-center pt-10 pb-12 text-center">
+      <img
+        src={getUrl('projects_empty')}
+        alt="Inizia un progetto"
+        className="w-40 h-40 object-contain mb-4 animate-character-float"
+        onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
+      />
+      <h3 className="text-xl font-black text-[#1C1C1E] mb-2">Cominciamo un progetto?</h3>
+      <p className="text-[#9AA2B1] text-sm max-w-[240px] font-medium leading-relaxed">
+        Carica un pattern o un'immagine per iniziare a creare oggi stesso.
+      </p>
+    </div>
+  );
+}
 
 export default function Home() {
   const { projects, addProject, deleteProject, updateProject } = useProjectStore();
   const { user } = useAuth();
+  const { getUrl } = useCharacterTheme();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const supabase = createClient();
 
@@ -251,9 +271,17 @@ export default function Home() {
   return (
     <div className="max-w-2xl mx-auto px-4 pt-6 pb-36 lg:pb-20">
       <div className="flex items-center justify-between mb-4">
-        <div>
-          <h1 className="text-3xl font-black text-[#1C1C1E] mb-1">Progetti</h1>
-          <p className="text-[#9AA2B1] text-sm font-medium">I tuoi lavori attivi</p>
+        <div className="flex items-center gap-3">
+          <img
+            src={getUrl('welcome')}
+            alt="Benvenuta"
+            className="w-14 h-14 object-contain animate-character-bounce flex-shrink-0"
+            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
+          />
+          <div>
+            <h1 className="text-3xl font-black text-[#1C1C1E] mb-1">Progetti</h1>
+            <p className="text-[#9AA2B1] text-sm font-medium">I tuoi lavori attivi</p>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -425,20 +453,7 @@ export default function Home() {
           <p className="text-[#9AA2B1] font-bold text-sm">Nessun progetto trovato per "{searchQuery}"</p>
         </div>
       ) : (
-        <div className="flex flex-col items-center justify-center pt-10 pb-12 text-center">
-          <div className="w-[200px] sm:w-[240px] mb-4 opacity-90">
-            <svg viewBox="0 0 300 200" className="w-full h-auto" aria-hidden="true">
-              <rect x="20" y="60" width="90" height="70" rx="8" fill="#FFE2A8" />
-              <circle cx="190" cy="85" r="36" fill="none" stroke="#B39DDB" strokeWidth="6" />
-              <line x1="215" y1="110" x2="245" y2="140" stroke="#B39DDB" strokeWidth="6" strokeLinecap="round" />
-              <rect x="40" y="140" width="220" height="6" rx="3" fill="#EAE7FB" />
-            </svg>
-          </div>
-          <h3 className="text-xl font-black text-[#1C1C1E] mb-2">Cominciamo un progetto?</h3>
-          <p className="text-[#9AA2B1] text-sm max-w-[240px] font-medium leading-relaxed">
-            Carica un pattern o un'immagine per iniziare a creare oggi stesso.
-          </p>
-        </div>
+        <EmptyProjectsState />
       )}
 
       <div className="mt-10 pt-6 border-t border-[#EEF0F4]">
