@@ -62,7 +62,7 @@ const SLOT_PROMPTS = {
         `${desc}, cheerfully talking to a small cute round robot companion standing next to them, with a speech bubble containing three dots (typing indicator). Expression: lively, friendly, mid-conversation.`,
 
     tool_books: (desc) =>
-        `${desc}, sitting cross-legged on the floor, reading a large open book with crochet stitch diagrams and pattern charts visible on the pages. Expression: absorbed and interested, leaning slightly forward.`,
+        `${desc}, holding a large colorful open book and smiling happily at the camera, surrounded by small floating books and yarn balls. Expression: joyful and excited about reading.`,
 
     tool_timer: (desc) =>
         `${desc}, holding a round stopwatch in one raised hand while counting stitches on the fingers of the other hand, a small colorful ball of yarn at their feet. Expression: focused and concentrated, tongue slightly out.`,
@@ -88,39 +88,45 @@ const argSlot      = args.includes('--slot')      ? args[args.indexOf('--slot') 
 const characters = argCharacter ? [argCharacter] : ALL_CHARACTERS
 const slots      = argSlot      ? [argSlot]      : ALL_SLOTS
 
-// ── Helper: chiama Replicate e aspetta il risultato ─────────
-async function runReplicate(model, input) {
-    const createRes = await fetch('https://api.replicate.com/v1/predictions', {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${REPLICATE_TOKEN}`,
-            'Content-Type': 'application/json',
-            'Prefer': 'wait',
-        },
-        body: JSON.stringify({ version: model, input }),
-    })
+// ── Helper: POST a Replicate con retry su 429 ──────────────
+async function replicatePost(url, body) {
+    let attempts = 0
+    while (true) {
+        attempts++
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${REPLICATE_TOKEN}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(body),
+        })
 
-    if (!createRes.ok) {
-        const err = await createRes.text()
-        throw new Error(`Replicate create failed: ${err}`)
+        if (res.status === 429) {
+            const data = await res.json().catch(() => ({}))
+            const wait = ((data.retry_after ?? 10) + 2) * 1000
+            console.log(`  ⏳ Rate limit — attendo ${Math.round(wait/1000)}s...`)
+            await new Promise(r => setTimeout(r, wait))
+            continue
+        }
+
+        if (!res.ok) throw new Error(await res.text())
+        return await res.json()
     }
+}
 
-    let prediction = await createRes.json()
-
-    // Polling se non ancora completato
-    while (prediction.status !== 'succeeded' && prediction.status !== 'failed') {
-        await new Promise(r => setTimeout(r, 2000))
-        const pollRes = await fetch(`https://api.replicate.com/v1/predictions/${prediction.id}`, {
+// ── Helper: polling risultato ───────────────────────────────
+async function pollPrediction(id) {
+    while (true) {
+        await new Promise(r => setTimeout(r, 2500))
+        const res = await fetch(`https://api.replicate.com/v1/predictions/${id}`, {
             headers: { 'Authorization': `Bearer ${REPLICATE_TOKEN}` },
         })
-        prediction = await pollRes.json()
+        const pred = await res.json()
+        if (pred.status === 'succeeded') return pred
+        if (pred.status === 'failed') throw new Error(pred.error ?? 'Prediction failed')
+        process.stdout.write('.')
     }
-
-    if (prediction.status === 'failed') {
-        throw new Error(`Replicate prediction failed: ${prediction.error}`)
-    }
-
-    return prediction.output
 }
 
 // ── Helper: scarica immagine come Buffer ────────────────────
@@ -159,6 +165,17 @@ async function generateAndUpload(character, slot) {
         return
     }
 
+    // Skip se già caricato su Supabase (evita rigenerazione)
+    if (!args.includes('--force')) {
+        const { data: existing } = await supabase.storage
+            .from(BUCKET)
+            .list(character, { search: `${slot}.png` })
+        if (existing?.some(f => f.name === `${slot}.png`)) {
+            console.log(`  ⏭ ${character}/${slot} già esistente — skip (usa --force per rigenerare)`)
+            return
+        }
+    }
+
     const desc      = CHARACTER_DESC[character]
     const promptFn  = SLOT_PROMPTS[slot]
     const basePrompt = promptFn(desc)
@@ -172,45 +189,23 @@ async function generateAndUpload(character, slot) {
 
     let generatedUrl
     try {
-        // Usiamo l'API diretta per nano-banana-2 (deployment ufficiale Google)
-        const genRes = await fetch('https://api.replicate.com/v1/models/google/nano-banana-2/predictions', {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${REPLICATE_TOKEN}`,
-                'Content-Type': 'application/json',
-                'Prefer': 'wait',
-            },
-            body: JSON.stringify({
+        // Step 1: Genera con Nano Banana 2
+        const pred = await replicatePost(
+            'https://api.replicate.com/v1/models/google/nano-banana-2/predictions',
+            {
                 input: {
                     prompt: fullPrompt,
                     image: refDataUri,
                     aspect_ratio: '3:4',
                     output_format: 'png',
                 },
-            }),
-        })
+            }
+        )
 
-        if (!genRes.ok) {
-            const errText = await genRes.text()
-            throw new Error(`nano-banana-2 error: ${errText}`)
-        }
-
-        let pred = await genRes.json()
-
-        // Polling
-        while (pred.status !== 'succeeded' && pred.status !== 'failed') {
-            await new Promise(r => setTimeout(r, 2500))
-            const pollRes = await fetch(`https://api.replicate.com/v1/predictions/${pred.id}`, {
-                headers: { 'Authorization': `Bearer ${REPLICATE_TOKEN}` },
-            })
-            pred = await pollRes.json()
-            process.stdout.write('.')
-        }
+        const completed = pred.status === 'succeeded' ? pred : await pollPrediction(pred.id)
         process.stdout.write('\n')
 
-        if (pred.status === 'failed') throw new Error(`nano-banana-2 failed: ${pred.error}`)
-
-        generatedUrl = Array.isArray(pred.output) ? pred.output[0] : pred.output
+        generatedUrl = Array.isArray(completed.output) ? completed.output[0] : completed.output
         if (!generatedUrl) throw new Error('Nessun output da nano-banana-2')
 
     } catch (err) {
@@ -218,38 +213,23 @@ async function generateAndUpload(character, slot) {
         return
     }
 
-    // Step 2: Rimuovi sfondo
+    // Step 2: Rimuovi sfondo (cjwbw/rembg)
     console.log(`  🪄 Rimozione sfondo ${character}/${slot}...`)
     let finalBuffer
     try {
-        const bgRes = await fetch('https://api.replicate.com/v1/models/851-labs/background-remover/predictions', {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${REPLICATE_TOKEN}`,
-                'Content-Type': 'application/json',
-                'Prefer': 'wait',
-            },
-            body: JSON.stringify({
+        // cjwbw/rembg — rimozione sfondo con versione specifica
+        const bgPred = await replicatePost(
+            'https://api.replicate.com/v1/predictions',
+            {
+                version: 'fb8af171cfa1616ddcf1242c093f9c46bcada5ad4cf6f2fbe8b81b330ec5c003',
                 input: { image: generatedUrl },
-            }),
-        })
+            }
+        )
 
-        if (!bgRes.ok) throw new Error(`background-remover error: ${await bgRes.text()}`)
-
-        let bgPred = await bgRes.json()
-        while (bgPred.status !== 'succeeded' && bgPred.status !== 'failed') {
-            await new Promise(r => setTimeout(r, 2000))
-            const pollRes = await fetch(`https://api.replicate.com/v1/predictions/${bgPred.id}`, {
-                headers: { 'Authorization': `Bearer ${REPLICATE_TOKEN}` },
-            })
-            bgPred = await pollRes.json()
-            process.stdout.write('.')
-        }
+        const bgCompleted = bgPred.status === 'succeeded' ? bgPred : await pollPrediction(bgPred.id)
         process.stdout.write('\n')
 
-        if (bgPred.status === 'failed') throw new Error(`background-remover failed: ${bgPred.error}`)
-
-        const transparentUrl = Array.isArray(bgPred.output) ? bgPred.output[0] : bgPred.output
+        const transparentUrl = Array.isArray(bgCompleted.output) ? bgCompleted.output[0] : bgCompleted.output
         finalBuffer = await downloadImage(transparentUrl)
 
     } catch (err) {
