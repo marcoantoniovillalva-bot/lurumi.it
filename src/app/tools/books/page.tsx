@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { BookOpen, ArrowLeft, Lock, ChevronRight, Search, X } from "lucide-react";
+import { BookOpen, ArrowLeft, Lock, ChevronRight, Search, X, Sparkles, Star } from "lucide-react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { useUserProfile } from "@/hooks/useUserProfile";
@@ -9,116 +9,255 @@ import { useAuth } from "@/hooks/useAuth";
 import type { LibraryItem } from "@/features/admin/actions/library";
 
 /* ─── Cover Gallery Fullscreen ──────────────────────────────── */
-function CoverGallery({ item, onClose }: { item: LibraryItem; onClose: () => void }) {
+function CoverGallery({ item, userTier, onClose }: {
+    item: LibraryItem;
+    userTier: 'free' | 'premium';
+    onClose: () => void;
+}) {
     const [idx, setIdx] = useState(0);
-    const touchStartX = useRef<number | null>(null);
+    const [scale, setScale] = useState(1);
+    const [translate, setTranslate] = useState({ x: 0, y: 0 });
+    const [descExpanded, setDescExpanded] = useState(false);
     const images = item.cover_urls;
+    const isLocked = item.tier === 'premium' && userTier !== 'premium';
+    const typeLabel = item.item_type === 'book' ? 'Libro' : 'Schema';
+    const hasLongDesc = (item.description?.length ?? 0) > 80;
+
+    // Touch tracking
+    const touchStartX = useRef<number | null>(null);
+    const touchStartY = useRef<number | null>(null);
+    const pinchDist = useRef<number | null>(null);
+    const doubleTapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const tapCount = useRef(0);
+
+    const resetZoom = () => { setScale(1); setTranslate({ x: 0, y: 0 }); };
+
+    const goToSlide = useCallback((n: number) => {
+        setIdx(n); resetZoom();
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
         const handler = (e: KeyboardEvent) => {
             if (e.key === 'Escape') onClose();
-            if (e.key === 'ArrowRight') setIdx(i => Math.min(images.length - 1, i + 1));
-            if (e.key === 'ArrowLeft') setIdx(i => Math.max(0, i - 1));
+            if (e.key === 'ArrowRight' && scale === 1) goToSlide(Math.min(images.length - 1, idx + 1));
+            if (e.key === 'ArrowLeft'  && scale === 1) goToSlide(Math.max(0, idx - 1));
         };
         window.addEventListener('keydown', handler);
         document.body.style.overflow = 'hidden';
         return () => { window.removeEventListener('keydown', handler); document.body.style.overflow = ''; };
-    }, [images.length, onClose]);
+    }, [images.length, idx, scale, onClose, goToSlide]);
+
+    const handleTouchStart = (e: React.TouchEvent) => {
+        if (e.touches.length === 2) {
+            const dx = e.touches[0].clientX - e.touches[1].clientX;
+            const dy = e.touches[0].clientY - e.touches[1].clientY;
+            pinchDist.current = Math.hypot(dx, dy);
+        } else {
+            touchStartX.current = e.touches[0].clientX;
+            touchStartY.current = e.touches[0].clientY;
+        }
+    };
+
+    const handleTouchMove = (e: React.TouchEvent) => {
+        if (e.touches.length === 2 && pinchDist.current !== null) {
+            e.preventDefault();
+            const dx = e.touches[0].clientX - e.touches[1].clientX;
+            const dy = e.touches[0].clientY - e.touches[1].clientY;
+            const newDist = Math.hypot(dx, dy);
+            const ratio = newDist / pinchDist.current;
+            pinchDist.current = newDist;
+            setScale(s => Math.min(5, Math.max(1, s * ratio)));
+        } else if (e.touches.length === 1 && scale > 1) {
+            e.preventDefault();
+            if (touchStartX.current === null || touchStartY.current === null) return;
+            const dx = e.touches[0].clientX - touchStartX.current;
+            const dy = e.touches[0].clientY - touchStartY.current;
+            touchStartX.current = e.touches[0].clientX;
+            touchStartY.current = e.touches[0].clientY;
+            setTranslate(t => ({ x: t.x + dx, y: t.y + dy }));
+        }
+    };
+
+    const handleTouchEnd = (e: React.TouchEvent) => {
+        pinchDist.current = null;
+        // Swipe per cambiare slide (solo se non zoomato)
+        if (scale === 1 && touchStartX.current !== null && e.changedTouches.length === 1) {
+            const diff = touchStartX.current - e.changedTouches[0].clientX;
+            if (Math.abs(diff) > 50) {
+                if (diff > 0) goToSlide(Math.min(images.length - 1, idx + 1));
+                else goToSlide(Math.max(0, idx - 1));
+            }
+        }
+        // Double tap → reset zoom
+        tapCount.current += 1;
+        if (tapCount.current === 1) {
+            doubleTapTimer.current = setTimeout(() => { tapCount.current = 0; }, 280);
+        } else if (tapCount.current === 2) {
+            if (doubleTapTimer.current) clearTimeout(doubleTapTimer.current);
+            tapCount.current = 0;
+            scale > 1 ? resetZoom() : setScale(2);
+        }
+        touchStartX.current = null;
+        touchStartY.current = null;
+    };
 
     return (
         <div className="fixed inset-0 z-[99999] bg-black flex flex-col">
-            <div className="flex items-center justify-between px-4 py-3 bg-black/60 flex-shrink-0">
+            {/* Header compatto */}
+            <div className="flex items-center justify-between px-4 py-2 bg-black/60 flex-shrink-0">
                 <div>
-                    <p className="text-white font-black text-base leading-tight truncate max-w-[220px]">{item.title}</p>
-                    <p className="text-white/50 text-xs font-bold">{idx + 1} / {images.length}</p>
+                    <p className="text-white font-black text-sm leading-tight truncate max-w-[220px]">{item.title}</p>
+                    <p className="text-white/40 text-[11px] font-bold">
+                        {images.length > 1 ? `${idx + 1} / ${images.length} · ` : ''}
+                        {scale > 1 ? `${Math.round(scale * 100)}% — doppio tap per reset` : 'Pizzica per zoomare'}
+                    </p>
                 </div>
-                <button onClick={onClose} className="w-10 h-10 flex items-center justify-center text-white bg-white/10 rounded-full active:scale-90 transition-transform">
-                    <X size={22} />
+                <button onClick={onClose} className="w-9 h-9 flex items-center justify-center text-white bg-white/10 rounded-full active:scale-90 transition-transform">
+                    <X size={20} />
                 </button>
             </div>
+
+            {/* Immagine — flex-1, occupa tutto lo spazio disponibile */}
             <div
                 className="flex-1 flex items-center justify-center relative overflow-hidden"
-                onTouchStart={e => { touchStartX.current = e.touches[0].clientX; }}
-                onTouchEnd={e => {
-                    if (touchStartX.current === null) return;
-                    const diff = touchStartX.current - e.changedTouches[0].clientX;
-                    if (Math.abs(diff) > 50) {
-                        if (diff > 0) setIdx(i => Math.min(images.length - 1, i + 1));
-                        else setIdx(i => Math.max(0, i - 1));
-                    }
-                    touchStartX.current = null;
-                }}
+                onTouchStart={handleTouchStart}
+                onTouchMove={handleTouchMove}
+                onTouchEnd={handleTouchEnd}
+                style={{ touchAction: scale > 1 ? 'none' : 'pan-y' }}
             >
-                <img src={images[idx]} alt={item.title} className="max-w-full max-h-full object-contain select-none" draggable={false} />
-                {images.length > 1 && (
+                <img
+                    src={images[idx]}
+                    alt={item.title}
+                    className="max-w-full max-h-full object-contain select-none"
+                    draggable={false}
+                    style={{
+                        transform: `scale(${scale}) translate(${translate.x / scale}px, ${translate.y / scale}px)`,
+                        transformOrigin: 'center center',
+                        transition: scale === 1 ? 'transform 0.25s ease' : 'none',
+                        cursor: scale > 1 ? 'grab' : 'default',
+                        willChange: 'transform',
+                    }}
+                />
+                {/* Frecce navigazione — solo se non zoomato */}
+                {scale === 1 && images.length > 1 && (
                     <>
                         {idx > 0 && (
-                            <button onClick={() => setIdx(i => i - 1)} className="absolute left-2 top-1/2 -translate-y-1/2 w-10 h-10 bg-black/40 text-white rounded-full flex items-center justify-center active:scale-90 transition-transform">
+                            <button onClick={() => goToSlide(idx - 1)} className="absolute left-2 top-1/2 -translate-y-1/2 w-10 h-10 bg-black/40 text-white rounded-full flex items-center justify-center active:scale-90 transition-transform">
                                 <ChevronRight size={20} className="rotate-180" />
                             </button>
                         )}
                         {idx < images.length - 1 && (
-                            <button onClick={() => setIdx(i => i + 1)} className="absolute right-2 top-1/2 -translate-y-1/2 w-10 h-10 bg-black/40 text-white rounded-full flex items-center justify-center active:scale-90 transition-transform">
+                            <button onClick={() => goToSlide(idx + 1)} className="absolute right-2 top-1/2 -translate-y-1/2 w-10 h-10 bg-black/40 text-white rounded-full flex items-center justify-center active:scale-90 transition-transform">
                                 <ChevronRight size={20} />
                             </button>
                         )}
                     </>
                 )}
             </div>
+
             {/* Dots */}
-            {images.length > 1 && (
-                <div className="flex justify-center gap-1.5 py-3 bg-black/60 flex-shrink-0">
+            {images.length > 1 && scale === 1 && (
+                <div className="flex justify-center gap-1.5 py-2 bg-black/60 flex-shrink-0">
                     {images.map((_, i) => (
-                        <button key={i} onClick={() => setIdx(i)} className={`w-2 h-2 rounded-full transition-all ${i === idx ? 'bg-white scale-125' : 'bg-white/30'}`} />
+                        <button key={i} onClick={() => goToSlide(i)} className={`w-2 h-2 rounded-full transition-all ${i === idx ? 'bg-white scale-125' : 'bg-white/30'}`} />
                     ))}
                 </div>
             )}
-            {/* Info panel */}
-            <div className="bg-black/80 px-5 py-4 flex-shrink-0">
-                <div className="flex items-center gap-2 mb-1">
-                    <span className={`text-[11px] font-black px-2 py-0.5 rounded-full ${item.item_type === 'book' ? 'bg-[#7B5CF6] text-white' : 'bg-amber-500 text-white'}`}>
-                        {item.item_type === 'book' ? 'Libro' : 'Schema'}
+
+            {/* CTA panel — compatto, non ruba spazio all'immagine */}
+            <div className="bg-black/90 px-4 py-3 flex-shrink-0">
+                {/* Badge fila */}
+                <div className="flex items-center gap-1.5 mb-2 flex-wrap">
+                    <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${item.item_type === 'book' ? 'bg-[#7B5CF6] text-white' : 'bg-amber-500 text-white'}`}>
+                        {typeLabel}
                     </span>
-                    <span className={`text-[11px] font-black px-2 py-0.5 rounded-full ${item.tier === 'premium' ? 'bg-emerald-600 text-white' : 'bg-white/20 text-white'}`}>
+                    <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${item.tier === 'premium' ? 'bg-emerald-600 text-white' : 'bg-white/20 text-white'}`}>
                         {item.tier === 'premium' ? '✦ Premium' : 'Gratuito'}
                     </span>
-                    {item.language && <span className="text-[11px] font-bold text-white/50">{item.language}</span>}
+                    {item.language && <span className="text-[10px] font-bold text-white/40">{item.language}</span>}
                 </div>
-                {item.description && <p className="text-white/70 text-xs leading-relaxed line-clamp-3">{item.description}</p>}
+
+                {/* Descrizione espandibile */}
+                {item.description && (
+                    <div className="mb-2">
+                        <p className={`text-white/70 text-xs font-medium leading-relaxed ${descExpanded ? '' : 'line-clamp-2'}`}>
+                            {item.description}
+                        </p>
+                        {hasLongDesc && (
+                            <button
+                                onClick={() => setDescExpanded(v => !v)}
+                                className="text-[#A78BFA] text-[11px] font-black mt-0.5 active:opacity-70 transition-opacity"
+                            >
+                                {descExpanded ? 'Mostra meno ↑' : 'Leggi tutto ↓'}
+                            </button>
+                        )}
+                    </div>
+                )}
+
+                {isLocked ? (
+                    /* ── Paywall ── */
+                    <div className="flex items-center gap-3">
+                        {/* Testo + vantaggi */}
+                        <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5 mb-1">
+                                <Lock size={13} className="text-[#A78BFA] flex-shrink-0" />
+                                <p className="text-white font-black text-sm leading-none">Solo per utenti Premium</p>
+                            </div>
+                            <div className="flex flex-col gap-0.5">
+                                {[
+                                    { icon: <BookOpen size={11} />, text: 'Tutti gli schemi e libri premium' },
+                                    { icon: <Sparkles size={11} />, text: '300 crediti AI al mese' },
+                                    { icon: <Star size={11} />, text: 'Contenuti esclusivi' },
+                                ].map(({ icon, text }, i) => (
+                                    <div key={i} className="flex items-center gap-1.5">
+                                        <span className="text-[#A78BFA] flex-shrink-0">{icon}</span>
+                                        <span className="text-white/70 text-xs font-semibold">{text}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                        {/* Bottone verticale a destra */}
+                        <Link
+                            href="/pricing"
+                            onClick={onClose}
+                            className="flex-shrink-0 flex flex-col items-center justify-center gap-1 px-4 py-3 bg-gradient-to-b from-[#7B5CF6] to-[#6D48F0] text-white font-black text-xs rounded-2xl active:scale-95 transition-transform shadow-lg shadow-[#7B5CF6]/40 text-center"
+                        >
+                            <Sparkles size={16} />
+                            <span>Passa a<br />Premium</span>
+                        </Link>
+                    </div>
+                ) : (
+                    /* ── Apri contenuto ── */
+                    <Link
+                        href={`/tools/books/${item.id}`}
+                        onClick={onClose}
+                        className="flex items-center justify-center gap-2 w-full h-11 bg-[#7B5CF6] text-white font-black text-sm rounded-xl active:scale-[0.98] transition-transform"
+                    >
+                        <BookOpen size={16} />
+                        Apri {typeLabel}
+                        <ChevronRight size={16} />
+                    </Link>
+                )}
             </div>
         </div>
     );
 }
 
 /* ─── Library Card ────────────────────────────────────────── */
-function LibraryCard({ item, userTier, onCoverDoubleClick }: {
+function LibraryCard({ item, userTier, onCoverClick }: {
     item: LibraryItem;
     userTier: 'free' | 'premium';
-    onCoverDoubleClick: () => void;
+    onCoverClick: () => void;
 }) {
     const isLocked = item.tier === 'premium' && userTier !== 'premium';
     const cover = item.cover_urls[0] ?? null;
-    const tapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const tapCount = useRef(0);
-
-    const handleCoverClick = () => {
-        tapCount.current += 1;
-        if (tapCount.current === 1) {
-            tapTimer.current = setTimeout(() => { tapCount.current = 0; }, 300);
-        } else if (tapCount.current === 2) {
-            if (tapTimer.current) clearTimeout(tapTimer.current);
-            tapCount.current = 0;
-            onCoverDoubleClick();
-        }
-    };
 
     return (
         <div className="bg-white rounded-[20px] border border-[#EEF0F4] overflow-hidden shadow-sm active:scale-[0.98] transition-transform">
-            {/* Cover */}
+            {/* Cover — click apre fullscreen per tutti */}
             <div
                 className="relative aspect-[3/4] bg-[#F4F4F8] cursor-pointer"
-                onClick={handleCoverClick}
-                onDoubleClick={onCoverDoubleClick}
+                onClick={item.cover_urls.length > 0 ? onCoverClick : undefined}
             >
                 {cover ? (
                     <img src={cover} alt={item.title} className="w-full h-full object-cover" draggable={false} />
@@ -257,7 +396,7 @@ export default function BooksPage() {
                                 key={item.id}
                                 item={item}
                                 userTier={userTier}
-                                onCoverDoubleClick={() => item.cover_urls.length > 0 && setGalleryItem(item)}
+                                onCoverClick={() => setGalleryItem(item)}
                             />
                         ))}
                     </div>
@@ -278,7 +417,7 @@ export default function BooksPage() {
             </div>
 
             {galleryItem && (
-                <CoverGallery item={galleryItem} onClose={() => setGalleryItem(null)} />
+                <CoverGallery item={galleryItem} userTier={userTier} onClose={() => setGalleryItem(null)} />
             )}
         </>
     );

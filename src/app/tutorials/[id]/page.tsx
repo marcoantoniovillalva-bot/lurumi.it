@@ -305,6 +305,8 @@ export default function TutorialDetail() {
                                 updateTutorial(tutorial.id, { secs: updated });
                                 syncSecs(updated);
                             }}
+                            onAssociateImage={() => {}}
+                            onRemoveImage={() => {}}
                         />
                     ))}
                     {tutorial.secs.length === 0 && (

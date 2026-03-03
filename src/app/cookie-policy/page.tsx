@@ -45,16 +45,16 @@ const cookies = [
             {
                 nome: 'lurumi_consent_v1',
                 fornitore: 'Lurumi (primo parti)',
-                scopo: 'Memorizza le preferenze di consenso ai cookie dell\'utente. Consente di non riproporre il banner ad ogni visita.',
-                durata: '12 mesi',
-                tipo: 'localStorage',
+                scopo: 'Memorizza le preferenze di consenso ai cookie dell\'utente. Consente di non riproporre il banner ad ogni visita. Se l\'utente è autenticato, le preferenze vengono sincronizzate anche su Supabase per garantire la coerenza su più dispositivi.',
+                durata: '12 mesi (localStorage) / fino alla cancellazione account (Supabase)',
+                tipo: 'localStorage + Supabase DB (se autenticato)',
             },
             {
-                nome: 'zustand store (lurumi-projects)',
+                nome: 'lurumi-project-storage',
                 fornitore: 'Lurumi (primo parti)',
-                scopo: 'Conserva i dati dei progetti di uncinetto/maglia localmente sul dispositivo per garantire la disponibilità offline.',
+                scopo: 'Conserva i dati dei progetti di uncinetto/maglia localmente sul dispositivo per garantire la disponibilità offline. I file binari (PDF, immagini) sono in IndexedDB; i metadati strutturati in localStorage.',
                 durata: 'Fino a cancellazione manuale',
-                tipo: 'localStorage (IndexedDB)',
+                tipo: 'localStorage + IndexedDB',
             },
         ],
     },
@@ -101,7 +101,7 @@ export default function CookiePolicyPage() {
                     Ai sensi del Provvedimento del Garante per la Protezione dei Dati Personali dell'8 maggio 2014
                     e delle Linee Guida Cookie del 10 giugno 2021 (doc. web n. 9677876).
                 </p>
-                <p className="text-xs text-[#9AA2B1] font-medium mt-2">Ultimo aggiornamento: febbraio 2025</p>
+                <p className="text-xs text-[#9AA2B1] font-medium mt-2">Ultimo aggiornamento: marzo 2026</p>
             </div>
 
             {/* 1. Cosa sono */}
@@ -182,7 +182,7 @@ export default function CookiePolicyPage() {
                 <p className="mt-3">
                     Il consenso viene memorizzato nel tuo browser tramite <code className="bg-[#F4F4F8] px-1.5 py-0.5 rounded text-[#7B5CF6] font-mono text-xs">localStorage</code> con
                     la chiave <code className="bg-[#F4F4F8] px-1.5 py-0.5 rounded text-[#7B5CF6] font-mono text-xs">lurumi_consent_v1</code> e ha
-                    validità di 12 mesi, dopodiché ti verrà riproposto il banner.
+                    validità di 12 mesi, dopodiché ti verrà riproposto il banner. Se sei autenticato, le preferenze vengono sincronizzate anche sul tuo profilo Supabase, in modo da mantenere le stesse scelte su tutti i tuoi dispositivi.
                 </p>
                 <p className="mt-3 p-4 bg-[#F4EEFF] rounded-2xl font-medium">
                     Puoi modificare o revocare il tuo consenso in qualsiasi momento accedendo a{' '}

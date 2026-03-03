@@ -45,6 +45,7 @@ export default function ProfiloPage() {
     const handleSelectCharacter = (name: CharacterName) => {
         localStorage.setItem('lurumi_character_theme', name);
         if (user?.id) localStorage.setItem(`lurumi_char_${user.id}`, name);
+        document.cookie = `lurumi_char=${name}; path=/; max-age=${60 * 60 * 24 * 365}; SameSite=Lax`;
         startTransition(async () => {
             await updateCharacterTheme(name);
             broadcastProfileRefresh();

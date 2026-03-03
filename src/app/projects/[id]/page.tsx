@@ -4,7 +4,8 @@ import React, { useState, useEffect, useRef } from "react";
 import {
     ArrowLeft, Minus, Plus, RotateCcw, Timer, Share2,
     ChevronLeft, ChevronRight, StickyNote, Trash2,
-    Plus as PlusIcon, Camera, Save, Maximize2, Archive, Pencil
+    Plus as PlusIcon, Camera, Save, Maximize2, Archive, Pencil,
+    GripVertical, ChevronUp, ChevronDown, Loader2, X
 } from "lucide-react";
 import { useProjectStore, Project, RoundCounter as RoundCounterType, ProjectImage } from "@/features/projects/store/useProjectStore";
 import { luDB } from "@/lib/db";
@@ -16,6 +17,8 @@ import { FullscreenViewer } from "@/components/FullscreenViewer";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { loadPdfjs } from "@/lib/pdfjs";
+
+
 
 export default function ProjectDetail() {
     const { id } = useParams();
@@ -51,6 +54,19 @@ export default function ProjectDetail() {
     // Image data URLs loaded from IndexedDB (NOT stored in Zustand/localStorage)
     const [imageUrls, setImageUrls] = useState<string[]>([]);
 
+    // Reorder states (counters)
+    const [reorderMode, setReorderMode] = useState(false);
+    const [dragIdx, setDragIdx] = useState<number | null>(null);
+    const [overIdx, setOverIdx] = useState<number | null>(null);
+    // Image manager states
+    const [showImageManager, setShowImageManager] = useState(false);
+    const [imgDragIdx, setImgDragIdx] = useState<number | null>(null);
+    const [imgOverIdx, setImgOverIdx] = useState<number | null>(null);
+    // Canva export states
+    const [exportingCanva, setExportingCanva] = useState(false);
+    const [canvaConnected, setCanvaConnected] = useState(false);
+    const [canvaStatus, setCanvaStatus] = useState<'preparing' | 'uploading' | null>(null);
+
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const renderTaskRef = useRef<any>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -61,6 +77,9 @@ export default function ProjectDetail() {
     const hasLoadedRef = useRef(false);
     const wasTimerRunningRef = useRef(false);
     const lastTapRef = useRef(0);
+    const longPressRef = useRef<NodeJS.Timeout | null>(null);
+    const lpStartPos = useRef<{ x: number; y: number } | null>(null);
+    const imgDragState = useRef<{ from: number; over: number | null } | null>(null);
 
     // Init timer + notes dallo store, reset hint al cambio progetto
     useEffect(() => {
@@ -204,6 +223,7 @@ export default function ProjectDetail() {
                     images: (remote.images ?? []).map((img: any) =>
                         typeof img === 'string' ? { id: img } : { id: img.id ?? '' }
                     ),
+                    coverImageId: remote.cover_image_id ?? undefined,
                 };
                 if (!isTimerRunningRef.current) {
                     updates.timer = remote.timer_seconds ?? 0;
@@ -258,6 +278,50 @@ export default function ProjectDetail() {
             router.replace('/');
         }
     }, [project]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Controlla se Canva è connesso
+    useEffect(() => {
+        if (!user) return;
+        const supabase = createClient();
+        supabase.from('profiles').select('canva_token').eq('id', user.id).single().then(({ data }) => {
+            setCanvaConnected(!!(data as any)?.canva_token);
+        });
+    }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Pointer drag globale per il riordino immagini (funziona su mobile e desktop)
+    useEffect(() => {
+        if (imgDragIdx === null) return;
+        imgDragState.current = { from: imgDragIdx, over: null };
+
+        const onMove = (e: PointerEvent) => {
+            const el = document.elementFromPoint(e.clientX, e.clientY);
+            const item = el?.closest('[data-img-idx]') as HTMLElement | null;
+            if (item) {
+                const idx = parseInt(item.dataset.imgIdx ?? '-1');
+                if (idx >= 0 && imgDragState.current) {
+                    imgDragState.current.over = idx;
+                    setImgOverIdx(idx);
+                }
+            }
+        };
+
+        const onUp = () => {
+            if (imgDragState.current) {
+                const { from, over } = imgDragState.current;
+                if (over !== null && over !== from) moveImage(from, over);
+            }
+            imgDragState.current = null;
+            setImgDragIdx(null);
+            setImgOverIdx(null);
+        };
+
+        document.addEventListener('pointermove', onMove);
+        document.addEventListener('pointerup', onUp);
+        return () => {
+            document.removeEventListener('pointermove', onMove);
+            document.removeEventListener('pointerup', onUp);
+        };
+    }, [imgDragIdx]); // eslint-disable-line react-hooks/exhaustive-deps
 
     if (project) hasLoadedRef.current = true;
     if (!project) {
@@ -319,13 +383,170 @@ export default function ProjectDetail() {
         setIsEditingNotes(false);
     };
 
+    // ── Image manager helpers ────────────────────────────────────────────────
+    const moveImage = (from: number, to: number) => {
+        const newImages = [...(project.images ?? [])];
+        const [removed] = newImages.splice(from, 1);
+        newImages.splice(to, 0, removed);
+        const newUrls = [...imageUrls];
+        const [removedUrl] = newUrls.splice(from, 1);
+        newUrls.splice(to, 0, removedUrl);
+        updateProject(project.id, { images: newImages });
+        setImageUrls(newUrls);
+        setCurrentPage(p => {
+            if (p - 1 === from) return to + 1;
+            return p;
+        });
+        syncProject({ images: newImages.map(img => ({ id: img.id })) });
+    };
+
+    const setCoverImage = (imgId: string) => {
+        updateProject(project.id, { coverImageId: imgId });
+        syncProject({ cover_image_id: imgId });
+    };
+
+    // ── Reorder helpers ──────────────────────────────────────────────────────
+    const moveCounter = (from: number, to: number) => {
+        const newSecs = [...project.secs];
+        const [removed] = newSecs.splice(from, 1);
+        newSecs.splice(to, 0, removed);
+        updateProject(project.id, { secs: newSecs });
+        syncSecs(newSecs);
+    };
+
+    const startLongPress = (e: React.PointerEvent) => {
+        lpStartPos.current = { x: e.clientX, y: e.clientY };
+        longPressRef.current = setTimeout(() => {
+            setReorderMode(true);
+            if (navigator.vibrate) navigator.vibrate(40);
+        }, 500);
+    };
+
+    const cancelLongPress = () => {
+        if (longPressRef.current) { clearTimeout(longPressRef.current); longPressRef.current = null; }
+        lpStartPos.current = null;
+    };
+
+    const checkLongPressMove = (e: React.PointerEvent) => {
+        if (!lpStartPos.current) return;
+        if (Math.abs(e.clientX - lpStartPos.current.x) > 8 || Math.abs(e.clientY - lpStartPos.current.y) > 8) cancelLongPress();
+    };
+
+    // ── Canva export ─────────────────────────────────────────────────────────
+    const handleExportCanva = async () => {
+        if (!canvaConnected) {
+            alert('Connetti prima Canva dal tuo profilo per usare questa funzione.');
+            return;
+        }
+
+        // Apri la finestra SUBITO — i browser bloccano window.open() dopo un await
+        const canvaWin = window.open('about:blank', '_blank');
+        const wasRunning = isTimerRunning;
+        if (wasRunning) setIsTimerRunning(false);
+        const timerLabel = formatTime(elapsedRef.current);
+
+        setExportingCanva(true);
+        setCanvaStatus('preparing');
+        try {
+            const imgs = project.images ?? [];
+            const associatedIds = new Set(project.secs.map(s => s.imageId).filter(Boolean));
+
+            // Comprimi URL immagine → base64 JPEG (max 640px)
+            const compress = async (url: string | undefined): Promise<string | null> => {
+                if (!url) return null;
+                try {
+                    const blob = await fetch(url).then(r => r.blob());
+                    const dataUrl = await new Promise<string>(resolve => {
+                        const reader = new FileReader();
+                        reader.onloadend = () => resolve(reader.result as string);
+                        reader.readAsDataURL(blob);
+                    });
+                    const imgEl = await new Promise<HTMLImageElement>(resolve => {
+                        const i = new Image();
+                        i.onload = () => resolve(i);
+                        i.src = dataUrl;
+                    });
+                    const scale = Math.min(640 / imgEl.width, 640 / imgEl.height, 1);
+                    const cv = document.createElement('canvas');
+                    cv.width = Math.round(imgEl.width * scale);
+                    cv.height = Math.round(imgEl.height * scale);
+                    cv.getContext('2d')!.drawImage(imgEl, 0, 0, cv.width, cv.height);
+                    return cv.toDataURL('image/jpeg', 0.78);
+                } catch { return null; }
+            };
+
+            type ExportSection =
+                | { type: 'title';   title: string; timer: string; coverBase64?: string | null }
+                | { type: 'counter'; name: string; value: number; imageBase64?: string | null }
+                | { type: 'image';   label: string; imageBase64: string | null }
+                | { type: 'notes';   text: string; title: string; timer: string };
+
+            const sections: ExportSection[] = [];
+
+            // Pagina titolo
+            const coverIdx = project.coverImageId
+                ? imgs.findIndex(img => img.id === project.coverImageId)
+                : 0;
+            sections.push({
+                type: 'title',
+                title: project.title,
+                timer: timerLabel,
+                coverBase64: await compress(imageUrls[coverIdx >= 0 ? coverIdx : 0]),
+            });
+
+            // Immagini non associate
+            for (let i = 0; i < imgs.length; i++) {
+                if (!associatedIds.has(imgs[i].id) && imageUrls[i]) {
+                    sections.push({ type: 'image', label: `Immagine ${i + 1}`, imageBase64: await compress(imageUrls[i]) });
+                }
+            }
+
+            // Pagina per ogni contatore
+            for (const sec of project.secs) {
+                const imgIdx = sec.imageId ? imgs.findIndex(img => img.id === sec.imageId) : -1;
+                sections.push({ type: 'counter', name: sec.name, value: sec.value, imageBase64: imgIdx >= 0 ? await compress(imageUrls[imgIdx]) : null });
+            }
+
+            // Pagina note
+            if (project.notesHtml) {
+                sections.push({ type: 'notes', text: project.notesHtml.replace(/<[^>]+>/g, '').trim(), title: project.title, timer: timerLabel });
+            }
+
+            setCanvaStatus('uploading');
+            const res = await fetch('/api/canva/export-project', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title: project.title, sections }),
+            });
+
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({ error: 'Errore sconosciuto' }));
+                canvaWin?.close();
+                alert(`Esportazione fallita: ${err.error}`);
+                return;
+            }
+
+            const { designUrl } = await res.json();
+            if (canvaWin) canvaWin.location.href = designUrl;
+            else window.open(designUrl, '_blank');
+
+        } catch (e) {
+            canvaWin?.close();
+            console.error('[Canva Export]', e);
+            alert("Errore durante l'esportazione su Canva.");
+        } finally {
+            setExportingCanva(false);
+            setCanvaStatus(null);
+            if (wasRunning) setIsTimerRunning(true);
+        }
+    };
+
     const handleExportZip = async () => {
         const { zipSync, strToU8 } = await import('fflate');
         const infoLines = [
             `Progetto: ${project.title}`,
             `Creato: ${new Date(project.createdAt).toLocaleDateString('it-IT')}`,
-            `Timer: ${formatTime(project.timer)}`,
-            `Giri principali: ${project.counter}`,
+            `Tempo totale: ${formatTime(elapsedRef.current)}`,
             project.secs.length > 0
                 ? `Giri secondari: ${project.secs.map(s => `${s.name}: ${s.value}`).join(', ')}`
                 : '',
@@ -405,6 +626,19 @@ export default function ProjectDetail() {
                     >
                         <Archive size={20} />
                     </button>
+                    {canvaConnected && (
+                        <button
+                            onClick={handleExportCanva}
+                            disabled={exportingCanva}
+                            className="h-10 px-3 flex items-center gap-1.5 bg-[#00C4CC]/10 border border-[#00C4CC]/30 rounded-xl text-[#008B8F] font-black text-xs active:scale-95 transition-transform shadow-sm disabled:opacity-60"
+                            title="Esporta su Canva"
+                        >
+                            {exportingCanva ? <Loader2 size={15} className="animate-spin" /> : (
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm0 4.5c4.136 0 7.5 3.364 7.5 7.5 0 4.136-3.364 7.5-7.5 7.5-4.136 0-7.5-3.364-7.5-7.5 0-4.136 3.364-7.5 7.5-7.5zm0 2.25a5.25 5.25 0 100 10.5 5.25 5.25 0 000-10.5z"/></svg>
+                            )}
+                            Canva
+                        </button>
+                    )}
                 </div>
             </div>
 
@@ -491,6 +725,15 @@ export default function ProjectDetail() {
                                 </button>
                             </>
                         )}
+                        {project.type !== 'pdf' && project.images.length > 1 && (
+                            <button
+                                onClick={() => setShowImageManager(true)}
+                                className="w-9 h-9 flex items-center justify-center bg-[#F4EEFF] text-[#7B5CF6] rounded-lg"
+                                title="Gestisci immagini"
+                            >
+                                <GripVertical size={18} />
+                            </button>
+                        )}
                         <button
                             onClick={() => setFullscreen(true)}
                             className="w-9 h-9 flex items-center justify-center bg-[#FAFAFC] text-[#9AA2B1] hover:text-[#7B5CF6] rounded-lg transition-colors"
@@ -548,54 +791,110 @@ export default function ProjectDetail() {
             <div className="mb-8">
                 <div className="flex items-center justify-between mb-4 px-2">
                     <h2 className="text-xl font-black text-[#1C1C1E]">Contatori Giri</h2>
-                    <button
-                        onClick={() => { setNewCounterName(""); setShowNewCounterModal(true); }}
-                        className="bg-[#7B5CF6]/10 text-[#7B5CF6] px-3 py-1.5 rounded-xl font-black text-xs flex items-center gap-2"
-                    >
-                        <PlusIcon size={14} strokeWidth={3} />
-                        NUOVO
-                    </button>
+                    <div className="flex items-center gap-2">
+                        {project.secs.length > 1 && (
+                            <button
+                                onClick={() => setReorderMode(r => !r)}
+                                className={`px-3 py-1.5 rounded-xl font-black text-xs flex items-center gap-1.5 transition-colors ${reorderMode ? 'bg-green-500/10 text-green-600 border border-green-200' : 'bg-[#F4EEFF] text-[#7B5CF6]'}`}
+                            >
+                                <GripVertical size={13} strokeWidth={3} />
+                                {reorderMode ? 'FINE' : 'ORDINA'}
+                            </button>
+                        )}
+                        {!reorderMode && (
+                            <button
+                                onClick={() => { setNewCounterName(""); setShowNewCounterModal(true); }}
+                                className="bg-[#7B5CF6]/10 text-[#7B5CF6] px-3 py-1.5 rounded-xl font-black text-xs flex items-center gap-2"
+                            >
+                                <PlusIcon size={14} strokeWidth={3} />
+                                NUOVO
+                            </button>
+                        )}
+                    </div>
                 </div>
+                {reorderMode && (
+                    <p className="text-xs text-[#9AA2B1] font-medium px-2 mb-3">
+                        <span className="hidden md:inline">Trascina le card per riordinare • </span>
+                        Usa ↑↓ per spostare
+                    </p>
+                )}
                 <div className="flex flex-col gap-3">
-                    {project.secs.map(sec => {
-                        // Trova l'URL dell'immagine associata al contatore
+                    {project.secs.map((sec, index) => {
                         const imgIndex = sec.imageId
                             ? (project.images ?? []).findIndex(img => img.id === sec.imageId)
                             : -1;
                         const secImageUrl = imgIndex >= 0 ? imageUrls[imgIndex] : undefined;
 
                         return (
-                            <RoundCounter
+                            <div
                                 key={sec.id}
-                                {...sec}
-                                imageUrl={secImageUrl}
-                                onIncrement={(sid) => {
-                                    const updated = project.secs.map(s => s.id === sid ? { ...s, value: s.value + 1 } : s);
-                                    updateProject(project.id, { secs: updated });
-                                    syncSecs(updated);
+                                draggable={reorderMode}
+                                onPointerDown={reorderMode ? undefined : startLongPress}
+                                onPointerUp={reorderMode ? undefined : cancelLongPress}
+                                onPointerCancel={reorderMode ? undefined : cancelLongPress}
+                                onPointerMove={reorderMode ? undefined : checkLongPressMove}
+                                onDragStart={() => setDragIdx(index)}
+                                onDragEnd={() => { setDragIdx(null); setOverIdx(null); }}
+                                onDragOver={(e) => { e.preventDefault(); setOverIdx(index); }}
+                                onDrop={() => {
+                                    if (dragIdx !== null && dragIdx !== index) moveCounter(dragIdx, index);
+                                    setDragIdx(null); setOverIdx(null);
                                 }}
-                                onDecrement={(sid) => {
-                                    const updated = project.secs.map(s => s.id === sid ? { ...s, value: Math.max(1, s.value - 1) } : s);
-                                    updateProject(project.id, { secs: updated });
-                                    syncSecs(updated);
-                                }}
-                                onRename={(sid, newName) => {
-                                    const updated = project.secs.map(s => s.id === sid ? { ...s, name: newName } : s);
-                                    updateProject(project.id, { secs: updated });
-                                    syncSecs(updated);
-                                }}
-                                onDelete={(sid) => {
-                                    const updated = project.secs.filter(s => s.id !== sid);
-                                    updateProject(project.id, { secs: updated });
-                                    syncSecs(updated);
-                                }}
-                                onAssociateImage={(sid) => setPickerCounterId(sid)}
-                                onRemoveImage={(sid) => {
-                                    const updated = project.secs.map(s => s.id === sid ? { ...s, imageId: undefined } : s);
-                                    updateProject(project.id, { secs: updated });
-                                    syncSecs(updated);
-                                }}
-                            />
+                                className={`relative flex items-stretch gap-2 transition-all ${reorderMode ? 'cursor-grab active:cursor-grabbing' : ''} ${overIdx === index && dragIdx !== index ? 'ring-2 ring-[#7B5CF6] rounded-[28px]' : ''} ${dragIdx === index ? 'opacity-50' : ''}`}
+                            >
+                                {/* Reorder controls — visible only in reorder mode */}
+                                {reorderMode && (
+                                    <div className="flex flex-col items-center justify-center gap-1 bg-[#F4EEFF] rounded-2xl px-1 py-2 shrink-0">
+                                        <button
+                                            onClick={() => index > 0 && moveCounter(index, index - 1)}
+                                            disabled={index === 0}
+                                            className="w-7 h-7 flex items-center justify-center rounded-lg text-[#7B5CF6] disabled:opacity-25 hover:bg-[#7B5CF6]/10 active:scale-90 transition-all"
+                                        >
+                                            <ChevronUp size={16} strokeWidth={3} />
+                                        </button>
+                                        <GripVertical size={14} className="text-[#9AA2B1] md:block hidden" />
+                                        <button
+                                            onClick={() => index < project.secs.length - 1 && moveCounter(index, index + 1)}
+                                            disabled={index === project.secs.length - 1}
+                                            className="w-7 h-7 flex items-center justify-center rounded-lg text-[#7B5CF6] disabled:opacity-25 hover:bg-[#7B5CF6]/10 active:scale-90 transition-all"
+                                        >
+                                            <ChevronDown size={16} strokeWidth={3} />
+                                        </button>
+                                    </div>
+                                )}
+                                <div className="flex-1 min-w-0">
+                                    <RoundCounter
+                                        {...sec}
+                                        imageUrl={secImageUrl}
+                                        onIncrement={(sid) => {
+                                            const updated = project.secs.map(s => s.id === sid ? { ...s, value: s.value + 1 } : s);
+                                            updateProject(project.id, { secs: updated });
+                                            syncSecs(updated);
+                                        }}
+                                        onDecrement={(sid) => {
+                                            const updated = project.secs.map(s => s.id === sid ? { ...s, value: Math.max(1, s.value - 1) } : s);
+                                            updateProject(project.id, { secs: updated });
+                                            syncSecs(updated);
+                                        }}
+                                        onRename={(sid, newName) => {
+                                            const updated = project.secs.map(s => s.id === sid ? { ...s, name: newName } : s);
+                                            updateProject(project.id, { secs: updated });
+                                            syncSecs(updated);
+                                        }}
+                                        onDelete={(sid) => {
+                                            const updated = project.secs.filter(s => s.id !== sid);
+                                            updateProject(project.id, { secs: updated });
+                                            syncSecs(updated);
+                                        }}
+                                        onAssociateImage={(sid) => setPickerCounterId(sid)}
+                                        onRemoveImage={(sid) => {
+                                            const updated = project.secs.map(s => s.id === sid ? { ...s, imageId: undefined } : s);
+                                            updateProject(project.id, { secs: updated });
+                                            syncSecs(updated);
+                                        }}
+                                    />
+                                </div>
+                            </div>
                         );
                     })}
                     {project.secs.length === 0 && (
@@ -605,6 +904,117 @@ export default function ProjectDetail() {
                     )}
                 </div>
             </div>
+
+            {/* Image Manager Modal */}
+            {showImageManager && (
+                <div className="fixed inset-0 z-[10000] flex items-end md:items-center justify-center bg-black/50" onClick={() => setShowImageManager(false)}>
+                    <div
+                        className="w-full max-w-2xl bg-white rounded-t-[32px] md:rounded-[32px] shadow-2xl animate-in slide-in-from-bottom md:slide-in-from-bottom-0 duration-300 flex flex-col max-h-[85vh]"
+                        onClick={e => e.stopPropagation()}
+                    >
+                        {/* Header */}
+                        <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#EEF0F4] shrink-0">
+                            <div>
+                                <h3 className="text-xl font-black text-[#1C1C1E]">Gestisci Immagini</h3>
+                                <p className="text-xs text-[#9AA2B1] font-medium mt-0.5">
+                                    ⭐ Copertina · Trascina ☰ o usa ↑↓ per riordinare
+                                </p>
+                            </div>
+                            <button
+                                onClick={() => setShowImageManager(false)}
+                                className="w-9 h-9 flex items-center justify-center rounded-xl bg-[#FAFAFC] border border-[#EEF0F4] text-[#9AA2B1]"
+                            >
+                                <X size={18} />
+                            </button>
+                        </div>
+
+                        {/* Image list */}
+                        <div className="overflow-y-auto flex-1 px-4 py-3">
+                            {(project.images ?? []).map((img, i) => {
+                                const url = imageUrls[i];
+                                const isCover = project.coverImageId
+                                    ? img.id === project.coverImageId
+                                    : i === 0;
+                                const isDragging = imgDragIdx === i;
+                                const isOver = imgOverIdx === i && imgDragIdx !== i;
+                                return (
+                                    <div
+                                        key={img.id}
+                                        data-img-idx={i}
+                                        className={`flex items-center gap-3 p-2.5 rounded-2xl mb-2 border transition-all select-none
+                                            ${isOver ? 'border-[#7B5CF6] bg-[#F4EEFF]' : isDragging ? 'opacity-40 border-dashed border-[#7B5CF6]' : 'border-transparent hover:border-[#EEF0F4] hover:bg-[#FAFAFC]'}`}
+                                    >
+                                        {/* Drag handle — pointer events, works on mobile + desktop */}
+                                        <div
+                                            className="w-8 h-16 flex items-center justify-center shrink-0 rounded-xl bg-[#FAFAFC] border border-[#EEF0F4] cursor-grab active:cursor-grabbing touch-none"
+                                            onPointerDown={(e) => {
+                                                e.preventDefault();
+                                                setImgDragIdx(i);
+                                            }}
+                                            title="Trascina per riordinare"
+                                        >
+                                            <GripVertical size={16} className="text-[#9AA2B1]" />
+                                        </div>
+
+                                        {/* Thumbnail */}
+                                        <div className="w-16 h-16 rounded-xl overflow-hidden bg-[#FAFAFC] border border-[#EEF0F4] shrink-0 relative">
+                                            {url && <img src={url} alt="" className="w-full h-full object-cover" draggable={false} />}
+                                            {isCover && (
+                                                <div className="absolute top-1 right-1 w-5 h-5 bg-amber-400 rounded-full flex items-center justify-center shadow-sm">
+                                                    <span className="text-[10px]">⭐</span>
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        {/* Info */}
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-sm font-bold text-[#1C1C1E]">
+                                                Immagine {i + 1}
+                                                {isCover && <span className="ml-2 text-amber-500 text-xs font-black">COPERTINA</span>}
+                                            </p>
+                                            {!isCover && (
+                                                <button
+                                                    onClick={() => setCoverImage(img.id)}
+                                                    className="text-xs text-[#9AA2B1] hover:text-amber-500 font-bold mt-0.5 transition-colors"
+                                                >
+                                                    ⭐ Imposta come copertina
+                                                </button>
+                                            )}
+                                        </div>
+
+                                        {/* ↑↓ tap controls */}
+                                        <div className="flex flex-col gap-1 shrink-0">
+                                            <button
+                                                onClick={() => i > 0 && moveImage(i, i - 1)}
+                                                disabled={i === 0}
+                                                className="w-8 h-8 flex items-center justify-center rounded-lg bg-[#FAFAFC] border border-[#EEF0F4] text-[#7B5CF6] disabled:opacity-25 active:scale-90 transition-all"
+                                            >
+                                                <ChevronUp size={15} strokeWidth={3} />
+                                            </button>
+                                            <button
+                                                onClick={() => i < (project.images.length - 1) && moveImage(i, i + 1)}
+                                                disabled={i === project.images.length - 1}
+                                                className="w-8 h-8 flex items-center justify-center rounded-lg bg-[#FAFAFC] border border-[#EEF0F4] text-[#7B5CF6] disabled:opacity-25 active:scale-90 transition-all"
+                                            >
+                                                <ChevronDown size={15} strokeWidth={3} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+
+                        <div className="px-6 pb-6 pt-3 shrink-0">
+                            <button
+                                onClick={() => setShowImageManager(false)}
+                                className="w-full h-12 bg-[#7B5CF6] text-white rounded-2xl font-bold shadow-lg"
+                            >
+                                Fatto
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* CounterImagePicker */}
             {pickerCounterId && (
@@ -664,6 +1074,23 @@ export default function ProjectDetail() {
                             >
                                 Crea
                             </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Canva export loading toast */}
+            {exportingCanva && (
+                <div className="fixed bottom-6 left-0 right-0 flex justify-center z-[10001] px-4 pointer-events-none">
+                    <div className="bg-[#1C1C1E] text-white rounded-2xl px-5 py-3 flex items-center gap-3 shadow-2xl">
+                        <Loader2 size={18} className="animate-spin text-[#00C4CC] shrink-0" />
+                        <div>
+                            <p className="text-sm font-bold leading-tight">
+                                {canvaStatus === 'preparing' ? 'Preparando il PDF…' : 'Caricando su Canva…'}
+                            </p>
+                            <p className="text-xs text-white/50 mt-0.5">
+                                {canvaStatus === 'preparing' ? 'Elaborazione immagini e testi' : 'Attendere, potrebbe richiedere qualche secondo'}
+                            </p>
                         </div>
                     </div>
                 </div>

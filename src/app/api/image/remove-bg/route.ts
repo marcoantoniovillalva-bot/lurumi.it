@@ -62,20 +62,21 @@ export async function POST(req: NextRequest) {
 
         // L'output è un oggetto ReadableStream / FileOutput — estraiamo come base64
         let resultBase64: string
-        if (output && typeof (output as any).blob === 'function') {
-            const blob = await (output as any).blob()
+        const out = output as any
+        if (out && typeof out.blob === 'function') {
+            const blob = await out.blob()
             const buffer = Buffer.from(await blob.arrayBuffer())
             resultBase64 = `data:image/png;base64,${buffer.toString('base64')}`
-        } else if (typeof output === 'string' && output.startsWith('data:')) {
-            resultBase64 = output
-        } else if (typeof output === 'string' && output.startsWith('http')) {
+        } else if (typeof out === 'string' && out.startsWith('data:')) {
+            resultBase64 = out
+        } else if (typeof out === 'string' && out.startsWith('http')) {
             // Scarica l'immagine e convertila in base64
-            const res = await fetch(output)
+            const res = await fetch(out)
             const arrayBuffer = await res.arrayBuffer()
             const buffer = Buffer.from(arrayBuffer)
             resultBase64 = `data:image/png;base64,${buffer.toString('base64')}`
-        } else if (Array.isArray(output) && output.length > 0) {
-            const item = output[0]
+        } else if (Array.isArray(out) && out.length > 0) {
+            const item = out[0]
             if (typeof item === 'string' && item.startsWith('http')) {
                 const res = await fetch(item)
                 const arrayBuffer = await res.arrayBuffer()

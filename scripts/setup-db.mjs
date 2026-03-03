@@ -466,6 +466,9 @@ ALTER TABLE ai_deposits ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bug_reports ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'open';
 ALTER TABLE bug_reports ADD COLUMN IF NOT EXISTS user_email TEXT;
 
+-- ── Immagine di copertina progetto ────────────────────────────────────────────
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS cover_image_id TEXT;
+
 -- Permetti agli utenti di leggere le proprie segnalazioni (necessario per il thread)
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='bug_reports' AND policyname='bug_reports_user_select') THEN

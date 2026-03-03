@@ -326,7 +326,7 @@ export default function SupportPage() {
             {/* Email contact */}
             <div className="mb-6">
                 <a
-                    href="mailto:support@lurumi.app"
+                    href="mailto:lurumi@marketizzati.it"
                     className="bg-white p-5 rounded-3xl border border-[#EEF0F4] shadow-sm flex items-center gap-4 active:scale-[0.98] transition-transform"
                 >
                     <div className="w-12 h-12 bg-[#F4EEFF] rounded-2xl flex items-center justify-center text-[#7B5CF6]">
@@ -334,7 +334,7 @@ export default function SupportPage() {
                     </div>
                     <div className="flex-1">
                         <h3 className="font-bold text-[#1C1C1E]">Email</h3>
-                        <p className="text-xs text-[#9AA2B1]">support@lurumi.app — rispondiamo entro 24 ore</p>
+                        <p className="text-xs text-[#9AA2B1]">lurumi@marketizzati.it — rispondiamo entro 24 ore</p>
                     </div>
                     <ExternalLink size={18} className="text-[#EEF0F4]" />
                 </a>
