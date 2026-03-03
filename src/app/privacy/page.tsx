@@ -29,7 +29,7 @@ export default function PrivacyPage() {
                 <p className="text-[#9AA2B1] text-sm font-medium">
                     Ai sensi degli artt. 13 e 14 del Regolamento UE 2016/679 (GDPR) e del D.Lgs. 196/2003 come modificato dal D.Lgs. 101/2018.
                 </p>
-                <p className="text-xs text-[#9AA2B1] font-medium mt-2">Ultimo aggiornamento: febbraio 2025</p>
+                <p className="text-xs text-[#9AA2B1] font-medium mt-2">Ultimo aggiornamento: marzo 2026</p>
             </div>
 
             <Section title="1. Titolare del trattamento">
@@ -55,7 +55,7 @@ export default function PrivacyPage() {
                         { cat: 'Dati di utilizzo', desc: 'Informazioni su come interagisci con l\'app: funzionalità usate, strumenti AI attivati, pattern caricati, timestamp delle azioni.' },
                         { cat: 'Dati tecnici', desc: 'Indirizzo IP, tipo di dispositivo e browser, sistema operativo, identificativi di sessione necessari al funzionamento del servizio.' },
                         { cat: 'Dati di pagamento', desc: 'Non conserviamo direttamente i dati delle carte di credito. Il pagamento è gestito da Stripe Inc., certificato PCI-DSS.' },
-                        { cat: 'Contenuti caricati', desc: 'Pattern PDF e immagini caricati nell\'app. Questi vengono conservati localmente sul tuo dispositivo (IndexedDB) e non vengono trasmessi ai nostri server salvo diversa indicazione.' },
+                        { cat: 'Contenuti caricati', desc: 'Pattern PDF e immagini caricati nell\'app. Vengono conservati localmente sul tuo dispositivo (IndexedDB). Se hai effettuato il login, vengono sincronizzati su Supabase Storage (bucket privato accessibile solo al tuo account) per garantire la disponibilità su più dispositivi.' },
                     ].map(({ cat, desc }) => (
                         <li key={cat} className="lu-card p-4">
                             <p className="font-black text-[#1C1C1E] text-sm mb-1">{cat}</p>
@@ -92,8 +92,9 @@ export default function PrivacyPage() {
                 <p>I tuoi dati possono essere comunicati, nella misura strettamente necessaria, ai seguenti Responsabili del Trattamento (art. 28 GDPR):</p>
                 <div className="space-y-2 mt-2">
                     {[
-                        { nome: 'Supabase Inc.', ruolo: 'Autenticazione e database', sede: 'USA — Clausole Contrattuali Standard (SCC)', info: 'supabase.com/privacy' },
-                        { nome: 'Replicate Inc.', ruolo: 'Elaborazione AI (generazione immagini, chat)', sede: 'USA — Clausole Contrattuali Standard (SCC)', info: 'replicate.com/privacy' },
+                        { nome: 'Supabase Inc.', ruolo: 'Autenticazione, database e file storage', sede: 'USA — Clausole Contrattuali Standard (SCC)', info: 'supabase.com/privacy' },
+                        { nome: 'OpenAI Inc.', ruolo: 'Elaborazione AI: assistente chat, analisi immagini pattern (Vision), generazione immagini (DALL-E 3)', sede: 'USA — Clausole Contrattuali Standard (SCC)', info: 'openai.com/policies/privacy-policy' },
+                        { nome: 'Replicate Inc.', ruolo: 'Generazione immagini AI (Flux Schnell, Flux Dev)', sede: 'USA — Clausole Contrattuali Standard (SCC)', info: 'replicate.com/privacy' },
                         { nome: 'Stripe Inc.', ruolo: 'Elaborazione pagamenti', sede: 'USA — PCI-DSS + Clausole Contrattuali Standard', info: 'stripe.com/privacy' },
                     ].map(({ nome, ruolo, sede, info }) => (
                         <div key={nome} className="lu-card p-4">

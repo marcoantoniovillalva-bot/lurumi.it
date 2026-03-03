@@ -249,7 +249,7 @@ export default function TutorialsPage() {
                         <div key={t.id} className="bg-white p-3.5 rounded-2xl border border-[#EEF0F4] shadow-sm flex items-center gap-4 active:scale-[0.98] transition-transform">
                             <Link href={`/tutorials/${t.id}`} className="flex-1 flex items-center gap-4 min-w-0">
                                 <div className="w-20 h-14 bg-black rounded-xl overflow-hidden relative group flex-shrink-0">
-                                    <img src={t.thumbUrl} alt="" className="w-full h-full object-cover opacity-80 group-hover:scale-110 transition-transform" />
+                                    <img src={t.thumbUrl} alt={t.title} className="w-full h-full object-cover opacity-80 group-hover:scale-110 transition-transform" />
                                     <div className="absolute inset-0 flex items-center justify-center text-white">
                                         <Youtube size={20} />
                                     </div>

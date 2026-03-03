@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useRef, useState, useEffect } from "react";
-import { Search, ListFilter, Plus, MoreVertical, Pencil, Trash2, Share2, Check, X } from "lucide-react";
+import { Search, ListFilter, Plus, MoreVertical, Pencil, Trash2, Share2, Check, X, ExternalLink } from "lucide-react";
 import { useProjectStore, Project } from "@/features/projects/store/useProjectStore";
 import { luDB } from "@/lib/db";
 import Link from "next/link";
@@ -99,6 +99,15 @@ export default function Home() {
   const [menuId, setMenuId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  const [canvaConnected, setCanvaConnected] = useState(false);
+
+  useEffect(() => {
+    if (!user) return;
+    const supabase = createClient();
+    supabase.from('profiles').select('canva_token').eq('id', user.id).single().then(({ data }) => {
+      setCanvaConnected(!!(data as any)?.canva_token);
+    });
+  }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Small 120px JPEG thumbnail — avoids localStorage quota issues
   const generateThumbnail = (file: File): Promise<string> =>
@@ -435,6 +444,16 @@ export default function Home() {
                         <Share2 size={15} className="text-[#7B5CF6]" />
                         Condividi
                       </button>
+                      {canvaConnected && (
+                        <Link
+                          href={`/projects/${project.id}?canvaExport=1`}
+                          onClick={() => setMenuId(null)}
+                          className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm font-bold text-[#008B8F] hover:bg-[#00C4CC]/10 rounded-xl"
+                        >
+                          <ExternalLink size={15} className="text-[#00C4CC]" />
+                          Esporta su Canva
+                        </Link>
+                      )}
                       <div className="h-px bg-[#F4F4F8] my-1" />
                       <button
                         onClick={() => handleDelete(project.id)}

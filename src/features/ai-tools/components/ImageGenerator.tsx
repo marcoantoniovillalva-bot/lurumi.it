@@ -173,7 +173,7 @@ export const ImageGenerator: React.FC = () => {
                     <div className="rounded-2xl border border-[#EEF0F4] bg-[#F4EEFF] flex flex-col items-center justify-center gap-5 py-16 animate-in fade-in duration-300">
                         <div className="relative w-20 h-20">
                             <div className="absolute inset-0 rounded-2xl overflow-hidden border-2 border-[#7B5CF6]/20 p-2">
-                                <img src="/images/logo/isotipo.png" alt="" className="w-full h-full object-contain opacity-80" />
+                                <img src="/images/logo/isotipo.png" alt="Lurumi" className="w-full h-full object-contain opacity-80" />
                             </div>
                             <div className="absolute inset-0 rounded-2xl border-4 border-[#7B5CF6] border-t-transparent animate-spin" />
                         </div>

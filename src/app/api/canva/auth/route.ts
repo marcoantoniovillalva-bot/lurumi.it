@@ -25,7 +25,7 @@ export async function GET() {
         code_challenge: codeChallenge,
     })
 
-    const authUrl = `https://www.canva.com/api/oauth/v2/authorize?${params.toString()}`
+    const authUrl = `https://www.canva.com/api/oauth/authorize?${params.toString()}`
 
     // Store verifier in a short-lived cookie so callback can use it
     const response = NextResponse.redirect(authUrl)

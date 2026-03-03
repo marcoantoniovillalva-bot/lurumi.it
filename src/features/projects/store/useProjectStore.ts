@@ -31,6 +31,7 @@ export interface Project {
     secs: RoundCounter[]
     notesHtml: string
     images: ProjectImage[]
+    coverImageId?: string
 }
 
 export interface Tutorial {

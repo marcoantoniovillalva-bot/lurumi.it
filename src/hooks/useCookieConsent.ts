@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { createClient } from '@/lib/supabase/client'
 
 const CONSENT_KEY = 'lurumi_consent_v1'
 
@@ -19,16 +20,54 @@ export function useCookieConsent() {
     const [loaded, setLoaded] = useState(false)
 
     useEffect(() => {
-        try {
-            const stored = localStorage.getItem(CONSENT_KEY)
-            if (stored) setConsent(JSON.parse(stored))
-        } catch { /* ignore */ }
-        setLoaded(true)
+        const load = async () => {
+            try {
+                // 1. Prima leggi da localStorage (veloce, offline-first)
+                const stored = localStorage.getItem(CONSENT_KEY)
+                if (stored) {
+                    setConsent(JSON.parse(stored))
+                    setLoaded(true)
+                    return
+                }
+
+                // 2. Se non c'è nulla in locale e l'utente è loggato, prova da Supabase
+                const supabase = createClient()
+                const { data: { user } } = await supabase.auth.getUser()
+                if (user) {
+                    const { data: profile } = await supabase
+                        .from('profiles')
+                        .select('cookie_consent')
+                        .eq('id', user.id)
+                        .single()
+                    if (profile?.cookie_consent) {
+                        const remote = profile.cookie_consent as CookieConsentData
+                        localStorage.setItem(CONSENT_KEY, JSON.stringify(remote))
+                        setConsent(remote)
+                    }
+                }
+            } catch { /* ignore */ }
+            setLoaded(true)
+        }
+        load()
     }, [])
 
     const save = (data: CookieConsentData) => {
         localStorage.setItem(CONSENT_KEY, JSON.stringify(data))
         setConsent(data)
+
+        // Sync su Supabase in background (best-effort)
+        try {
+            const supabase = createClient()
+            supabase.auth.getUser().then(({ data: { user } }) => {
+                if (user) {
+                    supabase
+                        .from('profiles')
+                        .update({ cookie_consent: data })
+                        .eq('id', user.id)
+                        .then(() => {}) // fire and forget
+                }
+            })
+        } catch { /* localStorage rimane la fonte primaria */ }
     }
 
     const acceptAll = () =>

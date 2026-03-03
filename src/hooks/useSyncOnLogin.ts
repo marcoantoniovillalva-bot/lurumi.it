@@ -58,6 +58,7 @@ export function useSyncOnLogin(user: User | null) {
                         images: (p.images ?? []).map((img: { id?: string } | string) =>
                             ({ id: typeof img === 'string' ? img : (img.id ?? '') })
                         ),
+                        coverImageId: p.cover_image_id ?? undefined,
                     }
                     if (localIds.has(p.id)) updateProject(p.id, mapped)
                     else addProject(mapped)

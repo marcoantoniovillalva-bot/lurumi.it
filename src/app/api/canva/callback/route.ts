@@ -6,8 +6,11 @@ export async function GET(request: NextRequest) {
     const code = searchParams.get('code')
     const error = searchParams.get('error')
 
+    console.log('[Canva Callback] params:', { code: !!code, error })
+
     if (error || !code) {
-        return NextResponse.redirect(new URL('/profilo?canva=error', request.url))
+        console.error('[Canva Callback] No code or error from Canva:', { error })
+        return NextResponse.redirect(new URL(`/profilo?canva=error&reason=canva_denied&detail=${encodeURIComponent(error ?? 'no_code')}`, request.url))
     }
 
     const clientId = process.env.CANVA_CLIENT_ID
@@ -15,8 +18,12 @@ export async function GET(request: NextRequest) {
     const redirectUri = process.env.CANVA_REDIRECT_URI ?? 'https://lurumi.it/api/canva/callback'
     const codeVerifier = request.cookies.get('canva_cv')?.value
 
+    console.log('[Canva Callback] env check:', { hasClientId: !!clientId, hasSecret: !!clientSecret, hasVerifier: !!codeVerifier, redirectUri })
+
     if (!clientId || !clientSecret || !codeVerifier) {
-        return NextResponse.redirect(new URL('/profilo?canva=error', request.url))
+        const reason = !clientId ? 'no_client_id' : !clientSecret ? 'no_client_secret' : 'no_cookie'
+        console.error('[Canva Callback] Missing env or cookie:', { clientId: !!clientId, clientSecret: !!clientSecret, codeVerifier: !!codeVerifier })
+        return NextResponse.redirect(new URL(`/profilo?canva=error&reason=${reason}`, request.url))
     }
 
     // Exchange code for token
@@ -34,7 +41,9 @@ export async function GET(request: NextRequest) {
     })
 
     if (!tokenRes.ok) {
-        return NextResponse.redirect(new URL('/profilo?canva=error', request.url))
+        const body = await tokenRes.text()
+        console.error('[Canva Callback] Token exchange failed:', tokenRes.status, body)
+        return NextResponse.redirect(new URL(`/profilo?canva=error&reason=token_exchange&status=${tokenRes.status}&detail=${encodeURIComponent(body.slice(0, 200))}`, request.url))
     }
 
     const { access_token } = await tokenRes.json()
