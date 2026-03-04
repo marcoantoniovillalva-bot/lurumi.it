@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { createServerClient } from '@supabase/ssr'
 
 export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url)
@@ -57,9 +57,30 @@ export async function GET(request: NextRequest) {
         return clearStateAndRedirect(failUrl)
     }
 
-    // ── Step 2: Crea la sessione Supabase con il Google id_token ──
-    // Il client SSR scrive automaticamente i cookie di sessione nella risposta
-    const supabase = await createClient()
+    // ── Step 2: Prepara il redirect e crea il client Supabase che scrive
+    //            i cookie di sessione DIRETTAMENTE sulla response del redirect.
+    //            Questo è il pattern corretto per Route Handlers che restituiscono
+    //            NextResponse custom (redirect/json) invece di usare cookies() di Next.js.
+    const response = NextResponse.redirect(origin)
+    response.cookies.delete('g_oauth_state')
+
+    const supabase = createServerClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+        {
+            cookies: {
+                getAll() {
+                    return request.cookies.getAll()
+                },
+                setAll(cookiesToSet) {
+                    cookiesToSet.forEach(({ name, value, options }) => {
+                        response.cookies.set(name, value, options)
+                    })
+                },
+            },
+        }
+    )
+
     const { error: signInError } = await supabase.auth.signInWithIdToken({
         provider: 'google',
         token: id_token,
@@ -80,9 +101,6 @@ export async function GET(request: NextRequest) {
         )
     }
 
-    // ── Step 4: Redirect all'app — i cookie di sessione sono già impostati ──
-    const response = NextResponse.redirect(origin)
-    response.cookies.delete('g_oauth_state')
     return response
 }
 
