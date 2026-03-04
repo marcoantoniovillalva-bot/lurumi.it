@@ -29,6 +29,10 @@ export const metadata: Metadata = {
   authors: [{ name: "Lurumi", url: "https://lurumi.it" }],
   creator: "Lurumi",
   manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+  },
   icons: {
     icon: [
       { url: "/icon.png", type: "image/png" },
@@ -60,6 +64,7 @@ export const viewport = {
   userScalable: false,
   viewportFit: "cover",
 };
+
 
 export default async function RootLayout({
   children,
