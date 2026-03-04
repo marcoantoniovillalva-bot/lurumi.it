@@ -8,8 +8,8 @@ export async function GET(request: NextRequest) {
     const oauthError = searchParams.get('error')
 
     const storedState = request.cookies.get('g_oauth_state')?.value
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3010'
-    const failUrl = `${appUrl}/?auth_error=1`
+    const origin = new URL(request.url).origin
+    const failUrl = `${origin}/?auth_error=1`
 
     // Validazione CSRF state
     if (oauthError || !code || !storedState || state !== storedState) {
@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
         return clearStateAndRedirect(failUrl)
     }
 
-    const redirectUri = `${appUrl}/api/auth/google/callback`
+    const redirectUri = `${origin}/api/auth/google/callback`
 
     // ── Step 1: Scambia il code con Google per ottenere id_token ──
     const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
@@ -79,7 +79,7 @@ export async function GET(request: NextRequest) {
     }
 
     // ── Step 4: Redirect all'app — i cookie di sessione sono già impostati ──
-    const response = NextResponse.redirect(appUrl)
+    const response = NextResponse.redirect(origin)
     response.cookies.delete('g_oauth_state')
     return response
 }

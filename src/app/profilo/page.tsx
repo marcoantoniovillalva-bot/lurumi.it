@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Palette, CheckCircle } from "lucide-react";
+import { Palette, CheckCircle, Mail } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useUserProfile, broadcastProfileRefresh } from "@/hooks/useUserProfile";
@@ -28,6 +28,8 @@ export default function ProfiloPage() {
     const [isPending, startTransition] = useTransition();
     const [themeSaved, setThemeSaved] = useState(false);
     const [showAvatarModal, setShowAvatarModal] = useState(false);
+    const [emailPrefs, setEmailPrefs] = useState<{ newsletter: boolean; marketing: boolean } | null>(null);
+    const [emailPrefsSaved, setEmailPrefsSaved] = useState(false);
 
     useEffect(() => {
         if (!user) return;
@@ -41,6 +43,29 @@ export default function ProfiloPage() {
     useEffect(() => {
         if (!loading && !user) router.push("/login");
     }, [user, loading, router]);
+
+    useEffect(() => {
+        if (profile && emailPrefs === null) {
+            setEmailPrefs({
+                newsletter: profile.newsletter_opt_in ?? true,
+                marketing: profile.marketing_opt_in ?? false,
+            });
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [profile?.newsletter_opt_in, profile?.marketing_opt_in]);
+
+    const handleEmailPrefToggle = async (field: 'newsletter' | 'marketing', value: boolean) => {
+        if (!user) return;
+        const newPrefs = { ...(emailPrefs ?? { newsletter: true, marketing: false }), [field]: value };
+        setEmailPrefs(newPrefs);
+        const supabase = createClient();
+        await supabase.from('profiles').update({
+            newsletter_opt_in: newPrefs.newsletter,
+            marketing_opt_in: newPrefs.marketing,
+        }).eq('id', user.id);
+        setEmailPrefsSaved(true);
+        setTimeout(() => setEmailPrefsSaved(false), 2000);
+    };
 
     const handleSelectCharacter = (name: CharacterName) => {
         localStorage.setItem('lurumi_character_theme', name);
@@ -220,6 +245,61 @@ export default function ProfiloPage() {
                             Connetti
                         </a>
                     )}
+                </div>
+            </div>
+
+            {/* ── Preferenze Email ── */}
+            <div className="bg-white rounded-[28px] border border-[#EEF0F4] p-6 shadow-sm mb-6">
+                <div className="flex items-center gap-2 mb-1">
+                    <Mail size={18} className="text-[#7B5CF6]" />
+                    <h2 className="text-lg font-black text-[#1C1C1E]">Email</h2>
+                    {emailPrefsSaved && (
+                        <span className="ml-auto text-[11px] font-black text-green-600 bg-green-50 px-2 py-0.5 rounded-full">
+                            ✓ Salvato
+                        </span>
+                    )}
+                </div>
+                <p className="text-[#9AA2B1] text-xs font-medium mb-4">
+                    Gestisci le comunicazioni che vuoi ricevere da Lurumi
+                </p>
+                <div className="space-y-3">
+                    {/* Newsletter toggle */}
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <p className="text-sm font-bold text-[#1C1C1E]">Newsletter e aggiornamenti prodotto</p>
+                            <p className="text-xs text-[#9AA2B1] font-medium">Novità, tutorial e nuove funzionalità</p>
+                        </div>
+                        <button
+                            onClick={() => handleEmailPrefToggle('newsletter', !(emailPrefs?.newsletter ?? true))}
+                            className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${
+                                (emailPrefs?.newsletter ?? true) ? 'bg-[#7B5CF6]' : 'bg-[#D1D5DB]'
+                            }`}
+                            aria-label="Toggle newsletter"
+                        >
+                            <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${
+                                (emailPrefs?.newsletter ?? true) ? 'translate-x-5' : 'translate-x-0'
+                            }`} />
+                        </button>
+                    </div>
+                    <div className="h-px bg-[#EEF0F4]" />
+                    {/* Marketing toggle */}
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <p className="text-sm font-bold text-[#1C1C1E]">Offerte e promozioni</p>
+                            <p className="text-xs text-[#9AA2B1] font-medium">Sconti, eventi speciali e offerte esclusive</p>
+                        </div>
+                        <button
+                            onClick={() => handleEmailPrefToggle('marketing', !(emailPrefs?.marketing ?? false))}
+                            className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${
+                                (emailPrefs?.marketing ?? false) ? 'bg-[#7B5CF6]' : 'bg-[#D1D5DB]'
+                            }`}
+                            aria-label="Toggle marketing"
+                        >
+                            <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${
+                                (emailPrefs?.marketing ?? false) ? 'translate-x-5' : 'translate-x-0'
+                            }`} />
+                        </button>
+                    </div>
                 </div>
             </div>
 

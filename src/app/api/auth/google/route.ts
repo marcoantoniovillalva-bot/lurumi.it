@@ -1,7 +1,7 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'crypto'
 
-export async function GET() {
+export async function GET(request: NextRequest) {
     const clientId = process.env.GOOGLE_CLIENT_ID
     if (!clientId) {
         return NextResponse.json(
@@ -10,8 +10,8 @@ export async function GET() {
         )
     }
 
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3010'
-    const redirectUri = `${appUrl}/api/auth/google/callback`
+    const origin = new URL(request.url).origin
+    const redirectUri = `${origin}/api/auth/google/callback`
 
     // State token per protezione CSRF
     const state = crypto.randomBytes(16).toString('hex')

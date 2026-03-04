@@ -14,6 +14,7 @@ export default function LoginPage() {
     const [error, setError] = useState('')
     const [message, setMessage] = useState('')
     const [isPending, startTransition] = useTransition()
+    const [newsletterOptIn, setNewsletterOptIn] = useState(true)
 
 
     const handleSubmit = (e: React.FormEvent) => {
@@ -28,13 +29,20 @@ export default function LoginPage() {
                 if (error) setError(getErrorMessage(error.message))
                 else window.location.href = '/'
             } else {
-                const { error } = await supabase.auth.signUp({
+                const { data, error } = await supabase.auth.signUp({
                     email,
                     password,
                     options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
                 })
-                if (error) setError(getErrorMessage(error.message))
-                else setMessage('Controlla la tua email per confermare la registrazione!')
+                if (error) {
+                    setError(getErrorMessage(error.message))
+                } else {
+                    // Salva preferenza newsletter sul profilo appena creato
+                    if (data.user) {
+                        await supabase.from('profiles').update({ newsletter_opt_in: newsletterOptIn }).eq('id', data.user.id)
+                    }
+                    setMessage('Controlla la tua email per confermare la registrazione!')
+                }
             }
         })
     }
@@ -125,6 +133,21 @@ export default function LoginPage() {
                         <p className="text-green-600 text-xs font-medium px-1 animate-in fade-in slide-in-from-top-1 duration-200">
                             {message}
                         </p>
+                    )}
+
+                    {/* Newsletter opt-in (solo signup) */}
+                    {tab === 'signup' && (
+                        <label className="flex items-start gap-2.5 cursor-pointer mt-1">
+                            <input
+                                type="checkbox"
+                                checked={newsletterOptIn}
+                                onChange={e => setNewsletterOptIn(e.target.checked)}
+                                className="mt-0.5 w-4 h-4 rounded accent-[#7B5CF6] flex-shrink-0"
+                            />
+                            <span className="text-xs text-[#9AA2B1] font-medium leading-relaxed">
+                                Voglio ricevere aggiornamenti e novità di Lurumi
+                            </span>
+                        </label>
                     )}
 
                     {/* Submit */}
