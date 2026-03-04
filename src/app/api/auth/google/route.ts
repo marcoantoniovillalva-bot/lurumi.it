@@ -10,7 +10,9 @@ export async function GET(request: NextRequest) {
         )
     }
 
-    const origin = new URL(request.url).origin
+    // Normalizza sempre a www in produzione per corrispondere all'URI registrata su Google Cloud
+    const rawOrigin = new URL(request.url).origin
+    const origin = rawOrigin.replace('https://lurumi.it', 'https://www.lurumi.it')
     const redirectUri = `${origin}/api/auth/google/callback`
 
     // State token per protezione CSRF

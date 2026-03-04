@@ -8,7 +8,9 @@ export async function GET(request: NextRequest) {
     const oauthError = searchParams.get('error')
 
     const storedState = request.cookies.get('g_oauth_state')?.value
-    const origin = new URL(request.url).origin
+    // Normalizza sempre a www in produzione
+    const rawOrigin = new URL(request.url).origin
+    const origin = rawOrigin.replace('https://lurumi.it', 'https://www.lurumi.it')
     const failUrl = `${origin}/?auth_error=1`
 
     // Validazione CSRF state
