@@ -307,6 +307,7 @@ export default function TutorialDetail() {
                             }}
                             onAssociateImage={() => {}}
                             onRemoveImage={() => {}}
+                            hideImageOption={true}
                         />
                     ))}
                     {tutorial.secs.length === 0 && (

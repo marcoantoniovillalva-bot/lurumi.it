@@ -25,6 +25,7 @@ export interface LibraryItem {
     cover_urls: string[]
     content_type: 'pdf' | 'sections'
     pdf_url: string | null
+    video_url: string | null
     sections: LibrarySection[]
     is_published: boolean
     created_at: string
@@ -40,6 +41,7 @@ export interface LibraryFormData {
     cover_urls: string[]
     content_type: 'pdf' | 'sections'
     pdf_url?: string
+    video_url?: string
     sections: LibrarySection[]
     is_published?: boolean
 }
@@ -88,6 +90,7 @@ export async function createLibraryItem(
             cover_urls: form.cover_urls,
             content_type: form.content_type,
             pdf_url: form.pdf_url || null,
+            video_url: form.video_url || null,
             sections: form.sections,
             is_published: form.is_published ?? true,
         })
@@ -123,6 +126,7 @@ export async function updateLibraryItem(
     if (form.cover_urls !== undefined) payload.cover_urls = form.cover_urls
     if (form.content_type !== undefined) payload.content_type = form.content_type
     if (form.pdf_url !== undefined) payload.pdf_url = form.pdf_url || null
+    if (form.video_url !== undefined) payload.video_url = form.video_url || null
     if (form.sections !== undefined) payload.sections = form.sections
     if (form.is_published !== undefined) payload.is_published = form.is_published
 

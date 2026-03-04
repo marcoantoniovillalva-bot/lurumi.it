@@ -1364,12 +1364,13 @@ function LibraryFormModal({ initial, onClose, onSaved }: {
         cover_urls: initial.cover_urls,
         content_type: initial.content_type,
         pdf_url: initial.pdf_url ?? '',
+        video_url: initial.video_url ?? '',
         sections: initial.sections,
         is_published: initial.is_published,
     } : {
         title: '', description: '', item_type: 'schema', tier: 'free',
         language: '', cover_urls: [], content_type: 'sections',
-        pdf_url: '', sections: [], is_published: true,
+        pdf_url: '', video_url: '', sections: [], is_published: true,
     });
     const [coverPreviews, setCoverPreviews] = useState<string[]>(initial?.cover_urls ?? []);
     const [coverFiles, setCoverFiles] = useState<(File | null)[]>((initial?.cover_urls ?? []).map(() => null));
@@ -1586,6 +1587,18 @@ function LibraryFormModal({ initial, onClose, onSaved }: {
                             <input type="file" ref={pdfInputRef} accept="application/pdf" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) setPdfFile(f); e.target.value = ''; }} />
                         </div>
                     )}
+
+                    {/* Video YouTube */}
+                    <div>
+                        <label className="text-xs font-black text-[#9AA2B1] uppercase tracking-wider block mb-2">Link Video YouTube (opzionale)</label>
+                        <input
+                            type="url"
+                            placeholder="https://www.youtube.com/watch?v=..."
+                            value={form.video_url ?? ''}
+                            onChange={e => setForm(f => ({ ...f, video_url: e.target.value }))}
+                            className="w-full h-11 border border-[#EEF0F4] rounded-xl px-3 text-sm font-bold text-[#1C1C1E] placeholder:text-[#C4C9D4] focus:outline-none focus:border-[#7B5CF6]"
+                        />
+                    </div>
 
                     {/* Sections editor */}
                     {form.content_type === 'sections' && (
