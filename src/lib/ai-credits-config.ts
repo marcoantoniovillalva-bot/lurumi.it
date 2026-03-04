@@ -6,7 +6,7 @@ export const MONTHLY_CREDITS = {
 } as const
 
 export const CREDIT_COSTS = {
-    chat: 2,
+    chat: 0,   // Groq Llama 3.3 70B — gratuito, nessun credito scalato
     vision: 5,
     image_fast: 8,
     image_hd: 20,
