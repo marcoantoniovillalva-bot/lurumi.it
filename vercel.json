@@ -4,13 +4,5 @@
       "path": "/api/cron/event-reminders",
       "schedule": "0 9 * * *"
     }
-  ],
-  "redirects": [
-    {
-      "source": "/(.*)",
-      "has": [{ "type": "host", "value": "lurumi.it" }],
-      "destination": "https://www.lurumi.it/$1",
-      "permanent": true
-    }
   ]
 }
