@@ -15,6 +15,13 @@ export default function LoginPage() {
     const [message, setMessage] = useState('')
     const [isPending, startTransition] = useTransition()
 
+    // Mostra errore da redirect OAuth (es. ?auth_error=apple)
+    useState(() => {
+        if (typeof window !== 'undefined' && window.location.search.includes('auth_error')) {
+            setError('Accesso social non riuscito. Riprova o usa email e password.')
+        }
+    })
+
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault()
         setError('')
@@ -40,6 +47,10 @@ export default function LoginPage() {
 
     const handleGoogle = () => {
         window.location.href = '/api/auth/google'
+    }
+
+    const handleApple = () => {
+        window.location.href = '/api/auth/apple'
     }
 
     return (
@@ -162,6 +173,17 @@ export default function LoginPage() {
                         <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
                     </svg>
                     Continua con Google
+                </button>
+
+                {/* Apple Sign In */}
+                <button
+                    onClick={handleApple}
+                    className="w-full flex items-center justify-center gap-3 py-3.5 bg-[#1C1C1E] rounded-2xl text-sm font-bold text-white active:scale-95 transition-all hover:opacity-90 mt-2"
+                >
+                    <svg width="17" height="21" viewBox="0 0 814 1000" aria-hidden="true" fill="white">
+                        <path d="M788.1 340.9c-5.8 4.5-108.2 62.2-108.2 190.5 0 148.4 130.3 200.9 134.2 202.2-.6 3.2-20.7 71.9-68.7 141.9-42.8 61.6-87.5 123.1-155.5 123.1s-85.5-39.5-164-39.5c-76 0-103.7 40.8-165.9 40.8s-105-37.3-166.2-120C12 406.7 0 210.7 0 204.1C0 94.2 68.2 37.3 135.1 37.3c35.7 0 82.4 27.6 111 27.6 27.6 0 80.3-29.4 124.5-29.4 20.3 0 107.8 1.9 163.4 99.5zm-119.7-219.6c-7.7 34.6-25.8 71.9-54.1 100.2-27.6 27.6-71.5 47.9-109.8 47.9-2.6 0-4.5-.6-5.8-1.3-1.3-1.3-1.3-3.2-1.3-5.8 0-32 16.5-70.9 44.8-101.4 27.6-29.4 73.2-52.1 113.3-56 2.6-.6 5.1-.6 5.8-.6 2.6 0 5.1.6 5.8 1.3 1.3 1.3 1.3 3.2 1.3 5.8z"/>
+                    </svg>
+                    Continua con Apple
                 </button>
             </div>
 
