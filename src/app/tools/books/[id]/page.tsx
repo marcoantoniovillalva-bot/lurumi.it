@@ -226,6 +226,27 @@ function SectionsAccordion({ sections }: { sections: LibrarySection[] }) {
     );
 }
 
+/* ─── YouTube Embed ──────────────────────────────────────────── */
+function getYouTubeId(url: string): string | null {
+    const match = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+    return match?.[1] ?? null;
+}
+function YouTubeEmbed({ url }: { url: string }) {
+    const videoId = getYouTubeId(url);
+    if (!videoId) return null;
+    return (
+        <div className="mb-6 rounded-2xl overflow-hidden border border-[#EEF0F4] bg-black aspect-video">
+            <iframe
+                src={`https://www.youtube.com/embed/${videoId}`}
+                title="Video YouTube"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+                className="w-full h-full"
+            />
+        </div>
+    );
+}
+
 /* ─── Paywall Overlay ────────────────────────────────────────── */
 function PaywallOverlay() {
     return (
@@ -334,6 +355,9 @@ export default function BookDetailPage() {
             </div>
             <h1 className="text-2xl font-black text-[#1C1C1E] mb-2 leading-tight">{item.title}</h1>
             {item.description && <p className="text-[#9AA2B1] text-sm leading-relaxed mb-6">{item.description}</p>}
+
+            {/* Video YouTube */}
+            {item.video_url && <YouTubeEmbed url={item.video_url} />}
 
             {/* Content */}
             {isLocked ? (

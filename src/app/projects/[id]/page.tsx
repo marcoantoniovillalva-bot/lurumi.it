@@ -568,6 +568,19 @@ export default function ProjectDetail() {
             }
         } catch {}
 
+        // Includi tutte le immagini del progetto
+        if (project.images?.length) {
+            for (let i = 0; i < project.images.length; i++) {
+                try {
+                    const imgRecord = await luDB.getFile(project.images[i].id);
+                    if (imgRecord?.blob) {
+                        const buf = await imgRecord.blob.arrayBuffer();
+                        files[`immagine-${i + 1}.jpg`] = new Uint8Array(buf);
+                    }
+                } catch {}
+            }
+        }
+
         const zipped = zipSync(files);
         const blob = new Blob([zipped.buffer as ArrayBuffer], { type: 'application/zip' });
         const url = URL.createObjectURL(blob);

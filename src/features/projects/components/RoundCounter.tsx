@@ -15,6 +15,7 @@ interface RoundCounterProps {
     onDelete: (id: string) => void;
     onAssociateImage: (id: string) => void;   // apre il picker
     onRemoveImage: (id: string) => void;
+    hideImageOption?: boolean;
 }
 
 export const RoundCounter: React.FC<RoundCounterProps> = ({
@@ -29,6 +30,7 @@ export const RoundCounter: React.FC<RoundCounterProps> = ({
     onDelete,
     onAssociateImage,
     onRemoveImage,
+    hideImageOption,
 }) => {
     const [showMenu, setShowMenu] = useState(false);
     const [isRenaming, setIsRenaming] = useState(false);
@@ -112,21 +114,25 @@ export const RoundCounter: React.FC<RoundCounterProps> = ({
                                             <Pencil size={14} className="text-[#7B5CF6]" />
                                             Rinomina
                                         </button>
-                                        <button
-                                            onClick={() => { onAssociateImage(id); setShowMenu(false); }}
-                                            className="w-full flex items-center gap-2.5 px-3 py-2 text-sm font-bold text-[#1C1C1E] hover:bg-[#F4F4F8] rounded-xl"
-                                        >
-                                            <Image size={14} className="text-[#7B5CF6]" />
-                                            {imageId ? 'Cambia immagine' : 'Associa immagine'}
-                                        </button>
-                                        {imageId && (
-                                            <button
-                                                onClick={() => { onRemoveImage(id); setShowMenu(false); }}
-                                                className="w-full flex items-center gap-2.5 px-3 py-2 text-sm font-bold text-orange-500 hover:bg-orange-50 rounded-xl"
-                                            >
-                                                <XIcon size={14} />
-                                                Rimuovi immagine
-                                            </button>
+                                        {!hideImageOption && (
+                                            <>
+                                                <button
+                                                    onClick={() => { onAssociateImage(id); setShowMenu(false); }}
+                                                    className="w-full flex items-center gap-2.5 px-3 py-2 text-sm font-bold text-[#1C1C1E] hover:bg-[#F4F4F8] rounded-xl"
+                                                >
+                                                    <Image size={14} className="text-[#7B5CF6]" />
+                                                    {imageId ? 'Cambia immagine' : 'Associa immagine'}
+                                                </button>
+                                                {imageId && (
+                                                    <button
+                                                        onClick={() => { onRemoveImage(id); setShowMenu(false); }}
+                                                        className="w-full flex items-center gap-2.5 px-3 py-2 text-sm font-bold text-orange-500 hover:bg-orange-50 rounded-xl"
+                                                    >
+                                                        <XIcon size={14} />
+                                                        Rimuovi immagine
+                                                    </button>
+                                                )}
+                                            </>
                                         )}
                                         <button
                                             onClick={() => { onDelete(id); setShowMenu(false); }}

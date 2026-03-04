@@ -556,6 +556,9 @@ EXCEPTION WHEN OTHERS THEN NULL; END $$;
 -- marketing_opt_in:  consenso esplicito (unchecked) — offerte e promozioni
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS newsletter_opt_in BOOLEAN DEFAULT true;
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS marketing_opt_in BOOLEAN DEFAULT false;
+
+-- ── Library video URL ────────────────────────────────────────────────────────
+ALTER TABLE library_items ADD COLUMN IF NOT EXISTS video_url TEXT;
 `
 
 async function run() {
