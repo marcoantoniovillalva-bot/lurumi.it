@@ -1824,10 +1824,15 @@ function SectionNewsletter({ onBack }: { onBack: () => void }) {
                         {(['newsletter', 'marketing', 'all'] as const).map(t => (
                             <button key={t} onClick={() => setTarget(t)}
                                 className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors ${target === t ? 'bg-[#7B5CF6] text-white border-[#7B5CF6]' : 'bg-white text-[#9AA2B1] border-[#EEF0F4]'}`}>
-                                {t === 'newsletter' ? '📧 Newsletter opt-in' : t === 'marketing' ? '🎯 Marketing opt-in' : '🌐 Tutte (newsletter + marketing)'}
+                                {t === 'newsletter' ? '📧 Aggiornamenti prodotto' : t === 'marketing' ? '🎯 Offerte e promozioni' : '🌐 Tutte le iscritte'}
                             </button>
                         ))}
                     </div>
+                    <p className="text-[11px] text-[#9AA2B1] font-medium mt-1">
+                        {target === 'newsletter' && 'Utenti che hanno attivato "Newsletter e aggiornamenti" nel profilo'}
+                        {target === 'marketing' && 'Utenti che hanno attivato "Offerte e promozioni" nel profilo'}
+                        {target === 'all' && 'Tutte le utenti con almeno una preferenza email attiva'}
+                    </p>
                 </div>
 
                 {/* Oggetto */}
