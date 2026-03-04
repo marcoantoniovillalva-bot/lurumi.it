@@ -38,7 +38,7 @@ const userCharKey = (uid: string) => `lurumi_char_${uid}` // cache per-utente (p
 
 // Versione asset: incrementa questo numero ogni volta che carichi nuove immagini
 // su Supabase Storage per forzare il reload nei browser degli utenti.
-const CHAR_ASSET_VERSION = 'v3'
+const CHAR_ASSET_VERSION = 'v4'
 
 export function getCharacterUrl(character: CharacterName, slot: CharacterSlot): string {
     return `${SUPABASE_URL}/storage/v1/object/public/character-themes/${character}/${slot}.png?v=${CHAR_ASSET_VERSION}`
