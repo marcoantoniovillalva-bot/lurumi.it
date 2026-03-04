@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient, type CookieOptions } from '@supabase/ssr'
+import { sendWelcomeEmail } from '@/lib/resend'
 
 export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url)
@@ -92,13 +93,20 @@ export async function GET(request: NextRequest) {
         return clearStateAndRedirect(failUrl)
     }
 
-    // ── Step 3: Crea profilo se è il primo accesso ──
+    // ── Step 3: Crea profilo e invia welcome email se è il primo accesso ──
     const { data: { user: authedUser } } = await supabase.auth.getUser()
     if (authedUser) {
         await supabase.from('profiles').upsert(
             { id: authedUser.id, tier: 'free' },
             { onConflict: 'id', ignoreDuplicates: true }
         )
+
+        // Welcome email solo al primo accesso (created_at < 60s fa)
+        const isNewUser = Date.now() - new Date(authedUser.created_at).getTime() < 60_000
+        if (isNewUser && authedUser.email) {
+            const firstName = authedUser.user_metadata?.full_name?.split(' ')[0] as string | undefined
+            sendWelcomeEmail(authedUser.email, firstName).catch(() => {})
+        }
     }
 
     return response
