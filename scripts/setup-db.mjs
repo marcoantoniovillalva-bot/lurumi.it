@@ -550,6 +550,12 @@ END $$;
 DO $$ BEGIN
   ALTER PUBLICATION supabase_realtime ADD TABLE library_items;
 EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+-- ── Email preferences (GDPR) ────────────────────────────────────────────────
+-- newsletter_opt_in: legittimo interesse (pre-checked) — novità prodotto
+-- marketing_opt_in:  consenso esplicito (unchecked) — offerte e promozioni
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS newsletter_opt_in BOOLEAN DEFAULT true;
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS marketing_opt_in BOOLEAN DEFAULT false;
 `
 
 async function run() {

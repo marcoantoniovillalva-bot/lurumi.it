@@ -29,6 +29,7 @@
     "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0",
     "replicate": "^1.0.1",
+    "resend": "^6.9.3",
     "stripe": "^17.6.0",
     "tailwind-merge": "^2.6.0",
     "web-push": "^3.6.7",

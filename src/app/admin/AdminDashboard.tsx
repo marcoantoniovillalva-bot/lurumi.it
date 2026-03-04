@@ -5,7 +5,7 @@ import {
     Shield, BarChart2, Plus, Edit2, Trash2,
     ChevronDown, ChevronUp, ExternalLink, X, Save, ToggleLeft, ToggleRight,
     CalendarDays, ArrowLeft, Users, UserCheck, Clock, MessageSquare, Send, Bug,
-    ChevronRight as ChevRight, BookOpen, FileText, GripVertical,
+    ChevronRight as ChevRight, BookOpen, FileText, GripVertical, Mail,
 } from "lucide-react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
@@ -1778,7 +1778,99 @@ function SectionLibrary({ onBack }: { onBack: () => void }) {
 /* ══════════════════════════════════════════════════════════
    MAIN DASHBOARD
    ═══════════════════════════════════════════════════════════ */
-type Section = null | 'peak' | 'users' | 'events' | 'ai-costs' | 'support' | 'library';
+// ── Sezione Newsletter ──────────────────────────────────────────────────────
+function SectionNewsletter({ onBack }: { onBack: () => void }) {
+    const [subject, setSubject] = useState('');
+    const [body, setBody] = useState('');
+    const [target, setTarget] = useState<'newsletter' | 'marketing' | 'all'>('newsletter');
+    const [sending, setSending] = useState(false);
+    const [result, setResult] = useState<{ sent: number; total: number } | null>(null);
+    const [error, setError] = useState('');
+
+    const handleSend = async () => {
+        if (!subject.trim() || !body.trim()) { setError('Compila oggetto e testo.'); return; }
+        setSending(true); setError(''); setResult(null);
+        try {
+            const res = await fetch('/api/email/newsletter', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ subject, bodyHtml: `<p style="margin:0 0 16px;font-size:15px;color:#1C1C1E;line-height:1.7;">${body.replace(/\n/g, '<br>')}</p>`, target }),
+            });
+            const data = await res.json();
+            if (!res.ok) { setError(data.error ?? 'Errore invio'); return; }
+            setResult({ sent: data.sent, total: data.total });
+            setSubject(''); setBody('');
+        } catch { setError('Errore di rete'); }
+        finally { setSending(false); }
+    };
+
+    return (
+        <>
+            <div className="flex items-center gap-3 mb-8">
+                <button onClick={onBack} className="w-10 h-10 flex items-center justify-center bg-white border border-[#EEF0F4] rounded-xl text-[#9AA2B1]">
+                    <ArrowLeft size={20} />
+                </button>
+                <div className="flex items-center gap-2">
+                    <Mail size={22} className="text-pink-500" />
+                    <h2 className="text-2xl font-black text-[#1C1C1E]">Newsletter</h2>
+                </div>
+            </div>
+
+            <div className="bg-white rounded-[28px] border border-[#EEF0F4] p-6 shadow-sm space-y-4">
+                {/* Target */}
+                <div>
+                    <label className="text-xs font-black text-[#9AA2B1] uppercase tracking-wide mb-2 block">Destinatarie</label>
+                    <div className="flex gap-2 flex-wrap">
+                        {(['newsletter', 'marketing', 'all'] as const).map(t => (
+                            <button key={t} onClick={() => setTarget(t)}
+                                className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors ${target === t ? 'bg-[#7B5CF6] text-white border-[#7B5CF6]' : 'bg-white text-[#9AA2B1] border-[#EEF0F4]'}`}>
+                                {t === 'newsletter' ? '📧 Newsletter opt-in' : t === 'marketing' ? '🎯 Marketing opt-in' : '🌐 Tutte (newsletter + marketing)'}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
+                {/* Oggetto */}
+                <div>
+                    <label className="text-xs font-black text-[#9AA2B1] uppercase tracking-wide mb-2 block">Oggetto email</label>
+                    <input
+                        value={subject} onChange={e => setSubject(e.target.value)}
+                        placeholder="es. Novità di marzo su Lurumi 🧶"
+                        className="w-full px-4 py-3 bg-[#FAFAFC] border border-[#EEF0F4] rounded-2xl text-sm font-medium text-[#1C1C1E] focus:outline-none focus:border-[#7B5CF6] transition-colors"
+                    />
+                </div>
+
+                {/* Body */}
+                <div>
+                    <label className="text-xs font-black text-[#9AA2B1] uppercase tracking-wide mb-2 block">Testo email</label>
+                    <textarea
+                        value={body} onChange={e => setBody(e.target.value)} rows={8}
+                        placeholder="Scrivi il testo della newsletter. Vai a capo per i paragrafi."
+                        className="w-full px-4 py-3 bg-[#FAFAFC] border border-[#EEF0F4] rounded-2xl text-sm font-medium text-[#1C1C1E] focus:outline-none focus:border-[#7B5CF6] transition-colors resize-none"
+                    />
+                    <p className="text-[10px] text-[#9AA2B1] mt-1 font-medium">Il testo sarà racchiuso nel template Lurumi con logo e footer automaticamente.</p>
+                </div>
+
+                {error && <p className="text-red-500 text-xs font-bold">{error}</p>}
+                {result && (
+                    <div className="bg-green-50 border border-green-200 rounded-2xl px-4 py-3">
+                        <p className="text-green-700 text-sm font-bold">✓ Inviate {result.sent} / {result.total} email</p>
+                    </div>
+                )}
+
+                <button onClick={handleSend} disabled={sending}
+                    className="w-full py-3.5 bg-[#7B5CF6] text-white rounded-2xl font-bold text-sm flex items-center justify-center gap-2 active:scale-95 transition-transform disabled:opacity-60">
+                    {sending
+                        ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Invio in corso...</>
+                        : <><Send size={16} /> Invia Newsletter</>
+                    }
+                </button>
+            </div>
+        </>
+    );
+}
+
+type Section = null | 'peak' | 'users' | 'events' | 'ai-costs' | 'support' | 'library' | 'newsletter';
 
 export function AdminDashboard() {
     const [stats, setStats] = useState<Stats | null>(null);
@@ -1842,6 +1934,14 @@ export function AdminDashboard() {
         );
     }
 
+    if (activeSection === 'newsletter') {
+        return (
+            <div className="max-w-2xl mx-auto px-4 pt-6 pb-24">
+                <SectionNewsletter onBack={() => setActiveSection(null)} />
+            </div>
+        );
+    }
+
     /* ── Home Dashboard ── */
     return (
         <div className="max-w-2xl mx-auto px-4 pt-6 pb-24">
@@ -1901,6 +2001,12 @@ export function AdminDashboard() {
                     title="Libreria"
                     subtitle="Carica e gestisci libri e schemi"
                     onClick={() => setActiveSection('library')}
+                />
+                <SectionCard
+                    icon={<Mail size={20} className="text-pink-500" />}
+                    title="Newsletter"
+                    subtitle="Invia email a iscritte newsletter o marketing"
+                    onClick={() => setActiveSection('newsletter')}
                 />
             </div>
         </div>
