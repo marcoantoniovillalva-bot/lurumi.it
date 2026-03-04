@@ -35,7 +35,7 @@ export const Header = () => {
 
     return (
     <>
-        <header className="lu-gradient-header sticky top-0 z-[9999] px-5 py-2 shadow-[0_2px_6px_rgba(0,0,0,0.08)] transition-all">
+        <header className="lu-gradient-header sticky top-0 z-[9999] px-5 py-2 pt-[calc(0.5rem+env(safe-area-inset-top))] shadow-[0_2px_6px_rgba(0,0,0,0.08)] transition-all">
             <div className="max-w-2xl mx-auto flex items-center justify-between">
                 {/* Left: Spacer */}
                 <div className="w-10" />
