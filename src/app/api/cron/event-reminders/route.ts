@@ -3,9 +3,9 @@ import { createServiceClient } from '@/lib/supabase/server'
 import { pushToUser } from '@/lib/webpush'
 
 /**
- * Cron job — eseguito ogni ora da Vercel.
+ * Cron job — eseguito ogni giorno alle 09:00 UTC da Vercel (piano Hobby).
  * Invia un promemoria push a tutti gli utenti che hanno un evento prenotato
- * che inizia tra 23.5h e 24.5h.
+ * che inizia nelle prossime 15-39 ore (= qualsiasi orario di domani).
  */
 export async function GET(req: Request) {
     // Verifica il secret del cron
@@ -16,8 +16,8 @@ export async function GET(req: Request) {
 
     const db = createServiceClient()
     const now = Date.now()
-    const from = new Date(now + 23.5 * 3_600_000).toISOString()
-    const to = new Date(now + 24.5 * 3_600_000).toISOString()
+    const from = new Date(now + 15 * 3_600_000).toISOString()
+    const to = new Date(now + 39 * 3_600_000).toISOString()
 
     // Trova tutti gli eventi che iniziano nella finestra 23.5h–24.5h
     const { data: events } = await db
