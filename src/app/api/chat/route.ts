@@ -5,6 +5,18 @@ import { checkAndDeductCredits } from '@/lib/ai-credits'
 import { checkRateLimit } from '@/lib/rate-limit'
 import { isAiEnabled, autoDisableIfOverBudget } from '@/lib/ai-status'
 
+// ── Client Groq (chat testuale — gratuito) ────────────────────────────────────
+function getGroqClient() {
+    if (!process.env.GROQ_API_KEY) {
+        throw new Error('GROQ_API_KEY non configurato nel file .env.local')
+    }
+    return new OpenAI({
+        apiKey: process.env.GROQ_API_KEY,
+        baseURL: 'https://api.groq.com/openai/v1',
+    })
+}
+
+// ── Client OpenAI (vision con immagini — a pagamento) ─────────────────────────
 function getOpenAIClient() {
     if (!process.env.OPENAI_API_KEY) {
         throw new Error('OPENAI_API_KEY non configurato nel file .env.local')
@@ -48,7 +60,7 @@ export async function POST(req: NextRequest) {
             }
         }
 
-        // Auth check — obbligatorio per usare l'AI
+        // Auth check — obbligatorio
         const supabase = await createClient()
         const { data: { user } } = await supabase.auth.getUser()
 
@@ -59,7 +71,7 @@ export async function POST(req: NextRequest) {
             )
         }
 
-        // Check AI abilitata (admin può disabilitarla manualmente o automaticamente)
+        // Check AI abilitata
         if (!await isAiEnabled()) {
             return NextResponse.json(
                 { success: false, error: 'Il servizio AI è temporaneamente sospeso. Riprova più tardi.' },
@@ -67,8 +79,9 @@ export async function POST(req: NextRequest) {
             )
         }
 
-        // Rate limiting — prevenzione burst abuse
         const action = imageBase64 ? 'vision' : 'chat'
+
+        // Rate limiting
         const rateResult = checkRateLimit(user.id, action)
         if (!rateResult.ok) {
             return NextResponse.json(
@@ -77,20 +90,23 @@ export async function POST(req: NextRequest) {
             )
         }
 
-        // Verifica e scala crediti
-        const creditResult = await checkAndDeductCredits(user.id, action)
-        if (!creditResult.ok) {
-            return NextResponse.json(
-                { success: false, error: creditResult.error, creditsExhausted: true },
-                { status: 402 }
-            )
+        // Crediti: solo per vision (chat è gratuita via Groq)
+        if (action === 'vision') {
+            const creditResult = await checkAndDeductCredits(user.id, action)
+            if (!creditResult.ok) {
+                return NextResponse.json(
+                    { success: false, error: creditResult.error, creditsExhausted: true },
+                    { status: 402 }
+                )
+            }
         }
 
-        const openai = getOpenAIClient()
         let text: string
+        let provider: string
 
         if (imageBase64) {
-            // GPT-4o Vision per analisi immagini/schemi
+            // ── GPT-4o Vision per analisi immagini (OpenAI, a pagamento) ────────
+            const openai = getOpenAIClient()
             const userContent: OpenAI.Chat.ChatCompletionContentPart[] = [
                 {
                     type: 'image_url',
@@ -105,7 +121,6 @@ export async function POST(req: NextRequest) {
                     text: "Analizza questa immagine e descrivi come potrebbe essere realizzata all'uncinetto, o usala come ispirazione per un progetto amigurumi. Sii tecnico e pratico.",
                 })
             }
-
             const completion = await openai.chat.completions.create({
                 model: 'gpt-4o',
                 max_tokens: 800,
@@ -115,10 +130,12 @@ export async function POST(req: NextRequest) {
                 ],
             })
             text = completion.choices[0]?.message?.content ?? 'Nessuna risposta ricevuta.'
+            provider = 'openai-gpt4o-vision'
         } else {
-            // GPT-4o mini per chat testuale
-            const completion = await openai.chat.completions.create({
-                model: 'gpt-4o-mini',
+            // ── Llama 3.3 70B via Groq per chat testuale (gratuito) ─────────────
+            const groq = getGroqClient()
+            const completion = await groq.chat.completions.create({
+                model: 'llama-3.3-70b-versatile',
                 max_tokens: 600,
                 messages: [
                     { role: 'system', content: `${SYSTEM_PROMPT}\nContesto attuale: ${toolType || 'assistente generale'}` },
@@ -126,6 +143,7 @@ export async function POST(req: NextRequest) {
                 ],
             })
             text = completion.choices[0]?.message?.content ?? 'Nessuna risposta ricevuta.'
+            provider = 'groq-llama-3.3-70b'
         }
 
         // Log + auto-disable check — non bloccanti
@@ -134,8 +152,8 @@ export async function POST(req: NextRequest) {
                 await supabase.from('ai_generations').insert({
                     user_id: user.id,
                     tool_type: toolType,
-                    provider: imageBase64 ? 'openai-gpt4o-vision' : 'openai-gpt4o-mini',
-                    cost_usd: imageBase64 ? 0.02 : 0.003,
+                    provider,
+                    cost_usd: imageBase64 ? 0.02 : 0,
                     output_data: { message, response: text },
                 })
             } catch {}
