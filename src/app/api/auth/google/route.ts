@@ -37,6 +37,9 @@ export async function GET(request: NextRequest) {
         maxAge: 600,
         path: '/',
         sameSite: 'lax',
+        // Domain con punto → accessibile su lurumi.it E www.lurumi.it
+        // Necessario perché il cookie viene settato su lurumi.it ma il callback arriva su www.lurumi.it
+        ...(process.env.NODE_ENV === 'production' ? { domain: '.lurumi.it' } : {}),
     })
     return response
 }
