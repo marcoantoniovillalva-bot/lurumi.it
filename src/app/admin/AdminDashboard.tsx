@@ -704,9 +704,13 @@ function SectionEvents({ onBack }: { onBack: () => void }) {
         return () => { supabase.removeChannel(ch); };
     }, [load]);
 
+    const [evtFullscreen, setEvtFullscreen] = useState<string | null>(null);
+
     const handleDelete = async (id: string, title: string) => {
         if (!confirm(`Eliminare "${title}"?`)) return;
-        try { await deleteEvent(id); await load(); } catch (e: any) { alert(e.message); }
+        const result = await deleteEvent(id);
+        if (!result.ok) { alert(result.error); return; }
+        await load();
     };
     const handleToggleActive = async (ev: AdminEvent) => {
         try { await updateEvent(ev.id, { is_active: !ev.is_active }); await load(); } catch (e: any) { alert(e.message); }
@@ -738,7 +742,11 @@ function SectionEvents({ onBack }: { onBack: () => void }) {
                             <div key={ev.id} className="bg-white rounded-[24px] border border-[#EEF0F4] overflow-hidden shadow-sm">
                                 <div className="flex gap-3 p-4">
                                     {ev.image_url ? (
-                                        <img src={ev.image_url} alt={ev.title} className="w-16 h-16 rounded-xl object-cover flex-shrink-0" />
+                                        <img
+                                            src={ev.image_url} alt={ev.title}
+                                            className="w-16 h-16 rounded-xl object-cover flex-shrink-0 cursor-pointer active:scale-95 transition-transform"
+                                            onClick={() => setEvtFullscreen(ev.image_url!)}
+                                        />
                                     ) : (
                                         <div className="w-16 h-16 rounded-xl bg-[#F4EEFF] flex items-center justify-center flex-shrink-0">
                                             <CalendarDays size={24} className="text-[#7B5CF6]" />
@@ -802,6 +810,33 @@ function SectionEvents({ onBack }: { onBack: () => void }) {
             {showForm && (
                 <EventFormModal initial={editEvent} onClose={() => { setShowForm(false); setEditEvent(null); }}
                     onSaved={async () => { setShowForm(false); setEditEvent(null); await load(); }} />
+            )}
+
+            {/* Fullscreen immagine evento */}
+            {evtFullscreen && (
+                <div
+                    className="fixed inset-0 z-50 bg-black/90 flex flex-col items-center justify-center p-4"
+                    onClick={() => setEvtFullscreen(null)}
+                >
+                    <button className="absolute top-4 right-4 w-10 h-10 bg-white/10 rounded-full flex items-center justify-center text-white">
+                        <X size={20} />
+                    </button>
+                    <img
+                        src={evtFullscreen}
+                        alt="Immagine evento"
+                        className="max-w-full max-h-[85vh] rounded-2xl object-contain"
+                        onClick={e => e.stopPropagation()}
+                    />
+                    {(() => {
+                        const ev = events.find(e => e.image_url === evtFullscreen || (e.image_urls ?? []).includes(evtFullscreen!));
+                        return ev ? (
+                            <div className="mt-4 text-center" onClick={e => e.stopPropagation()}>
+                                <p className="text-white font-black text-lg">{ev.title}</p>
+                                {ev.description && <p className="text-white/60 text-sm mt-1 max-w-sm">{ev.description}</p>}
+                            </div>
+                        ) : null;
+                    })()}
+                </div>
             )}
         </div>
     );

@@ -3,8 +3,29 @@ import { Resend } from 'resend'
 export const resend = new Resend(process.env.RESEND_API_KEY)
 
 const FROM = process.env.EMAIL_FROM_NOREPLY ?? 'noreply@lurumi.it'
-// Forza sempre l'URL di produzione nelle email (le immagini devono essere pubblicamente raggiungibili)
+// URL di produzione fisso: le immagini nelle email devono essere pubblicamente raggiungibili
 const BASE_URL = 'https://www.lurumi.it'
+
+// ── Gender detection per nomi italiani ───────────────────────────────────────
+// Euristica semplice: nomi che finiscono in 'a' → femminile, altrimenti maschile/neutro
+function italianGender(firstName?: string): 'f' | 'm' | 'n' {
+  if (!firstName) return 'n'
+  const n = firstName.trim().toLowerCase()
+  // Eccezioni comuni maschili che finiscono in 'a'
+  const maleExceptions = ['andrea', 'luca', 'nicola', 'mattia', 'enea', 'elia', 'beniamino']
+  if (maleExceptions.includes(n)) return 'm'
+  if (n.endsWith('a')) return 'f'
+  if (n.endsWith('o') || n.endsWith('e') || n.endsWith('i')) return 'm'
+  return 'n'
+}
+
+function greetingFor(firstName?: string): { benvenut: string; cara: string } {
+  const g = italianGender(firstName)
+  return {
+    benvenut: g === 'f' ? 'Benvenuta' : g === 'm' ? 'Benvenuto' : 'Benvenuto/a',
+    cara: g === 'f' ? 'cara' : g === 'm' ? 'caro' : 'cara/o',
+  }
+}
 
 // ── Template base ────────────────────────────────────────────────────────────
 function emailWrapper(content: string): string {
@@ -18,14 +39,15 @@ function emailWrapper(content: string): string {
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#FAFAFC;padding:40px 16px;">
   <tr><td align="center">
     <table width="100%" style="max-width:520px;background:#ffffff;border-radius:28px;border:1px solid #EEF0F4;overflow:hidden;">
-      <!-- Header con gradiente -->
+      <!-- Header con gradiente e logo circolare -->
       <tr>
         <td style="background:linear-gradient(135deg,#7B5CF6 0%,#9B7DFF 100%);padding:32px 40px 28px;text-align:center;">
-          <!-- Avatar circolare con isotipo -->
-          <div style="display:inline-block;width:72px;height:72px;border-radius:50%;background:#ffffff;padding:4px;box-shadow:0 4px 16px rgba(0,0,0,0.15);">
-            <img src="${BASE_URL}/images/logo/isotipo.png" alt="Lurumi" width="64" height="64"
-              style="display:block;width:64px;height:64px;border-radius:50%;object-fit:cover;">
-          </div>
+          <table cellpadding="0" cellspacing="0" style="margin:0 auto;">
+            <tr><td style="width:72px;height:72px;border-radius:50%;background:#ffffff;padding:4px;box-shadow:0 4px 16px rgba(0,0,0,0.18);text-align:center;vertical-align:middle;">
+              <img src="${BASE_URL}/images/logo/isotipo.png" alt="Lurumi" width="64" height="64"
+                style="display:block;width:64px;height:64px;border-radius:50%;">
+            </td></tr>
+          </table>
           <p style="margin:10px 0 0;font-size:20px;font-weight:900;color:#ffffff;letter-spacing:-0.3px;">Lurumi</p>
           <p style="margin:2px 0 0;font-size:11px;color:rgba(255,255,255,0.7);font-weight:500;letter-spacing:0.5px;">AI Powered Crafting</p>
         </td>
@@ -40,11 +62,11 @@ function emailWrapper(content: string): string {
       <tr>
         <td style="background:#FAFAFC;border-top:1px solid #EEF0F4;padding:20px 40px;text-align:center;">
           <p style="margin:0;font-size:11px;color:#C0C7D4;font-weight:500;">
-            © 2026 Lurumi · AI Powered Crafting<br>
+            &copy; 2026 Lurumi &middot; AI Powered Crafting<br>
             <a href="${BASE_URL}/privacy" style="color:#7B5CF6;text-decoration:none;">Privacy Policy</a>
-            &nbsp;·&nbsp;
+            &nbsp;&middot;&nbsp;
             <a href="${BASE_URL}/support" style="color:#7B5CF6;text-decoration:none;">Supporto</a>
-            &nbsp;·&nbsp;
+            &nbsp;&middot;&nbsp;
             <a href="${BASE_URL}/profilo" style="color:#9AA2B1;text-decoration:none;">Gestisci preferenze email</a>
           </p>
         </td>
@@ -69,21 +91,23 @@ function primaryButton(label: string, url: string): string {
 // ── Email di benvenuto (inviata dopo primo accesso) ───────────────────────────
 export async function sendWelcomeEmail(to: string, firstName?: string) {
   const name = firstName ?? 'amica'
+  const { benvenut } = greetingFor(firstName)
+
   const html = emailWrapper(`
-    <p style="margin:0 0 6px;font-size:23px;font-weight:900;color:#1C1C1E;line-height:1.2;">Benvenuta su Lurumi, ${name}! 🎉</p>
+    <p style="margin:0 0 6px;font-size:23px;font-weight:900;color:#1C1C1E;line-height:1.2;">${benvenut} su Lurumi, ${name}!</p>
     <p style="margin:0 0 24px;font-size:15px;color:#9AA2B1;font-weight:500;line-height:1.6;">
-      Il tuo account è attivo. Inizia subito a creare i tuoi primi progetti amigurumi con l'aiuto dell'AI.
+      Il tuo account &egrave; attivo. Inizia subito a creare i tuoi primi progetti amigurumi con l&apos;aiuto dell&apos;AI.
     </p>
     <div style="background:#F4EEFF;border-radius:16px;padding:20px 24px;margin-bottom:28px;">
       <p style="margin:0 0 10px;font-size:13px;font-weight:900;color:#7B5CF6;text-transform:uppercase;letter-spacing:0.5px;">Cosa puoi fare con Lurumi</p>
       <p style="margin:0;font-size:14px;color:#1C1C1E;line-height:1.9;">
-        🧶 Crea e organizza i tuoi progetti amigurumi<br>
-        🤖 Genera immagini AI dei tuoi personaggi<br>
-        📖 Sfoglia la libreria di tutorial e schemi<br>
-        🎨 Modifica le immagini con AI (rimozione sfondo, generazione)
+        Crea e organizza i tuoi progetti amigurumi<br>
+        Genera immagini AI dei tuoi personaggi<br>
+        Sfoglia la libreria di tutorial e schemi<br>
+        Modifica le immagini con AI (rimozione sfondo, generazione)
       </p>
     </div>
-    ${primaryButton('Inizia a creare →', BASE_URL)}
+    ${primaryButton('Inizia a creare &rsaquo;', BASE_URL)}
     <p style="margin:24px 0 0;font-size:12px;color:#C0C7D4;text-align:center;line-height:1.6;">
       Hai domande? Scrivici su <a href="${BASE_URL}/support" style="color:#7B5CF6;text-decoration:none;">supporto</a>.
     </p>
@@ -92,17 +116,29 @@ export async function sendWelcomeEmail(to: string, firstName?: string) {
   return resend.emails.send({
     from: `Lurumi <${FROM}>`,
     to,
-    subject: 'Benvenuta su Lurumi! 🎉',
+    subject: `${benvenut} su Lurumi!`,
     html,
   })
 }
 
 // ── Newsletter generica (admin) ───────────────────────────────────────────────
-export async function sendNewsletterEmail(to: string, subject: string, bodyHtml: string) {
+// Supporta il merge tag {{nome}} nel bodyHtml che viene sostituito con il nome del destinatario.
+export async function sendNewsletterEmail(
+  to: string,
+  subject: string,
+  bodyHtml: string,
+  recipientName?: string,
+) {
+  // Sostituisce {{nome}} con il nome del destinatario (o stringa vuota se assente)
+  const personalizedBody = bodyHtml
+    .replace(/\{\{nome\}\}/gi, recipientName ?? '')
+    .replace(/\{\{cara\}\}/gi, recipientName ? greetingFor(recipientName).cara : 'cara/o')
+    .replace(/\{\{benvenut\}\}/gi, recipientName ? greetingFor(recipientName).benvenut : 'Ciao')
+
   const html = emailWrapper(`
-    ${bodyHtml}
+    ${personalizedBody}
     <p style="margin:32px 0 0;font-size:11px;color:#C0C7D4;text-align:center;line-height:1.6;">
-      Ricevi questa email perché sei iscritta alla newsletter di Lurumi.<br>
+      Ricevi questa email perch&eacute; sei iscritta alla newsletter di Lurumi.<br>
       <a href="${BASE_URL}/profilo" style="color:#9AA2B1;text-decoration:none;">Gestisci preferenze</a>
     </p>
   `)
