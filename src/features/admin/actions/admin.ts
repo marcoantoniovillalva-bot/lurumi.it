@@ -63,36 +63,40 @@ export async function updateEvent(id: string, data: Partial<EventFormData> & { i
     if (error) throw new Error(error.message)
 }
 
-export async function deleteEvent(id: string) {
-    const { db } = await assertAdmin()
-    const { count } = await db
-        .from('event_bookings')
-        .select('*', { count: 'exact', head: true })
-        .eq('event_id', id)
-        .eq('status', 'confirmed')
-    if (count && count > 0) {
-        throw new Error(`Ci sono ${count} prenotazioni attive. Cancella prima le prenotazioni.`)
+export async function deleteEvent(id: string): Promise<{ ok: true } | { ok: false; error: string }> {
+    try {
+        const { db } = await assertAdmin()
+        const { count } = await db
+            .from('event_bookings')
+            .select('*', { count: 'exact', head: true })
+            .eq('event_id', id)
+            .eq('status', 'confirmed')
+        if (count && count > 0) {
+            return { ok: false, error: `Ci sono ${count} prenotazioni attive. Cancella prima le prenotazioni.` }
+        }
+
+        const { data: ev } = await db.from('events').select('title').eq('id', id).single()
+        if (ev) {
+            pushToConfirmedBookers(id, {
+                title: 'Lurumi — Evento eliminato',
+                body: `Il corso "${ev.title}" è stato rimosso.`,
+                url: '/eventi',
+                tag: `event-deleted-${id}`,
+            }).catch(() => {})
+        }
+
+        // Elimina prima le righe figlie per evitare conflitto con il trigger sync_event_booking_count:
+        // durante CASCADE delete, il trigger tenta UPDATE sulla riga evento già bloccata.
+        await db.from('event_interests').delete().eq('event_id', id)
+        await db.from('event_bookings').delete().eq('event_id', id)
+
+        const { error } = await db.from('events').delete().eq('id', id)
+        if (error) return { ok: false, error: error.message }
+
+        return { ok: true }
+    } catch (e: any) {
+        return { ok: false, error: e?.message ?? 'Errore sconosciuto durante l\'eliminazione.' }
     }
-
-    const { data: ev } = await db.from('events').select('title').eq('id', id).single()
-    if (ev) {
-        pushToConfirmedBookers(id, {
-            title: 'Lurumi — Evento eliminato',
-            body: `Il corso "${ev.title}" è stato rimosso.`,
-            url: '/eventi',
-            tag: `event-deleted-${id}`,
-        }).catch(() => {})
-    }
-
-    // Elimina prima le righe figlie manualmente per evitare il conflitto tra il trigger
-    // sync_event_booking_count (che fa UPDATE events) e la CASCADE delete dell'evento stesso.
-    // Se la CASCADE scattasse, il trigger cercherebbe di aggiornare una riga che PostgreSQL
-    // ha già bloccato per la cancellazione → "tuple concurrently modified".
-    await db.from('event_interests').delete().eq('event_id', id)
-    await db.from('event_bookings').delete().eq('event_id', id)
-
-    const { error } = await db.from('events').delete().eq('id', id)
-    if (error) throw new Error(error.message)
 }
 
 export async function getEventBookers(eventId: string) {

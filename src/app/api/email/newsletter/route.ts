@@ -54,7 +54,10 @@ export async function POST(req: NextRequest) {
   for (const recipient of recipients) {
     if (!recipient.email) continue
     try {
-      await sendNewsletterEmail(recipient.email, subject, bodyHtml)
+      const firstName = (recipient.user_metadata?.full_name as string | undefined)?.split(' ')[0]
+        || (recipient.user_metadata?.name as string | undefined)?.split(' ')[0]
+        || undefined
+      await sendNewsletterEmail(recipient.email, subject, bodyHtml, firstName)
       sent++
     } catch (e) {
       errors.push(recipient.email)
