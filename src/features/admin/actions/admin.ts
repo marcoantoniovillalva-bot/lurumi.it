@@ -84,6 +84,13 @@ export async function deleteEvent(id: string) {
         }).catch(() => {})
     }
 
+    // Elimina prima le righe figlie manualmente per evitare il conflitto tra il trigger
+    // sync_event_booking_count (che fa UPDATE events) e la CASCADE delete dell'evento stesso.
+    // Se la CASCADE scattasse, il trigger cercherebbe di aggiornare una riga che PostgreSQL
+    // ha già bloccato per la cancellazione → "tuple concurrently modified".
+    await db.from('event_interests').delete().eq('event_id', id)
+    await db.from('event_bookings').delete().eq('event_id', id)
+
     const { error } = await db.from('events').delete().eq('id', id)
     if (error) throw new Error(error.message)
 }
