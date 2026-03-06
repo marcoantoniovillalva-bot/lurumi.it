@@ -2,43 +2,22 @@ import { NextRequest, NextResponse } from 'next/server'
 import OpenAI from 'openai'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 
-// ── InnerTube API (più affidabile dello scraping HTML su server cloud) ──────────
-const INNERTUBE_API_URL = 'https://www.youtube.com/youtubei/v1/player'
-const INNERTUBE_KEY = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8' // chiave pubblica WEB
-
-async function getCaptionTracksFromInnerTube(videoId: string): Promise<any[]> {
-    const body = {
-        videoId,
-        context: {
-            client: {
-                clientName: 'WEB',
-                clientVersion: '2.20241201.00.00',
-                hl: 'it',
-                gl: 'IT',
-            },
-        },
-    }
-
-    const res = await fetch(`${INNERTUBE_API_URL}?key=${INNERTUBE_KEY}`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36',
-            'Origin': 'https://www.youtube.com',
-            'Referer': 'https://www.youtube.com/',
-        },
-        body: JSON.stringify(body),
-    })
-
-    if (!res.ok) return []
-
-    const data = await res.json()
-    const tracks: any[] = data?.captions?.playerCaptionsTracklistRenderer?.captionTracks ?? []
-    return tracks
+const YOUTUBE_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+    'Accept-Language': 'it-IT,it;q=0.9,en;q=0.8',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Cookie': 'CONSENT=YES+cb; SOCS=CAI; GPS=1',
+    'Sec-Fetch-Dest': 'document',
+    'Sec-Fetch-Mode': 'navigate',
+    'Sec-Fetch-Site': 'none',
+    'Cache-Control': 'no-cache',
 }
 
-// ── Fallback: scraping HTML ────────────────────────────────────────────────────
-function extractCaptionTracksFromHtml(html: string): any[] {
+interface TranscriptSegment { text: string; start: number; duration: number }
+
+// ── Estrae captionTracks dall'HTML ────────────────────────────────────────────
+function extractTracksFromHtml(html: string): any[] {
     const startIdx = html.indexOf('"captionTracks":')
     if (startIdx === -1) return []
     const arrStart = html.indexOf('[', startIdx)
@@ -56,20 +35,45 @@ function extractCaptionTracksFromHtml(html: string): any[] {
     try { return JSON.parse(raw) } catch { return [] }
 }
 
-async function getCaptionTracksFallback(videoId: string): Promise<any[]> {
-    const res = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
+// ── Sceglie la traccia migliore ───────────────────────────────────────────────
+function pickBestTrack(tracks: any[]): any {
+    return (
+        tracks.find(t => t.languageCode === 'it' && t.kind !== 'asr') ||
+        tracks.find(t => t.languageCode === 'it') ||
+        tracks.find(t => t.kind === 'asr') ||
+        tracks.find(t => t.languageCode?.startsWith('en')) ||
+        tracks[0]
+    )
+}
+
+// ── Scarica e parsa il timedtext JSON dal server ──────────────────────────────
+async function fetchSegments(baseUrl: string): Promise<TranscriptSegment[]> {
+    const url = baseUrl + '&fmt=json3'
+    const res = await fetch(url, {
         headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36',
-            'Accept-Language': 'it-IT,it;q=0.9,en;q=0.8',
-            'Cookie': 'CONSENT=YES+cb; SOCS=CAI',
+            'User-Agent': YOUTUBE_HEADERS['User-Agent'],
+            'Cookie': YOUTUBE_HEADERS['Cookie'],
         },
     })
     if (!res.ok) return []
-    const html = await res.text()
-    return extractCaptionTracksFromHtml(html)
+    let data: any
+    try { data = await res.json() } catch { return [] }
+    const events: any[] = data?.events ?? []
+    return events
+        .filter(e => e.segs && e.tStartMs !== undefined)
+        .map(e => ({
+            text: (e.segs as any[])
+                .map((s: any) => s.utf8 ?? '').join('')
+                .replace(/\n/g, ' ')
+                .replace(/&amp;/g, '&').replace(/&#39;/g, "'")
+                .replace(/&quot;/g, '"').trim(),
+            start: (e.tStartMs ?? 0) / 1000,
+            duration: (e.dDurationMs ?? 0) / 1000,
+        }))
+        .filter(s => s.text)
 }
 
-// ── GET: restituisce captionTracks al client ───────────────────────────────────
+// ── GET: tutto server-side, restituisce i segmenti direttamente al client ─────
 export async function GET(req: NextRequest) {
     const videoId = req.nextUrl.searchParams.get('videoId')
     if (!videoId) return NextResponse.json({ error: 'videoId mancante' }, { status: 400 })
@@ -79,28 +83,46 @@ export async function GET(req: NextRequest) {
     if (!user) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
 
     try {
-        // Prima prova InnerTube API
-        let rawTracks = await getCaptionTracksFromInnerTube(videoId)
-
-        // Fallback: scraping HTML
-        if (!rawTracks.length) {
-            rawTracks = await getCaptionTracksFallback(videoId)
+        const pageRes = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
+            headers: YOUTUBE_HEADERS,
+        })
+        if (!pageRes.ok) {
+            return NextResponse.json({ error: `YouTube non raggiungibile (${pageRes.status})` }, { status: 502 })
         }
 
+        const html = await pageRes.text()
+        const rawTracks = extractTracksFromHtml(html)
+
         if (!rawTracks.length) {
-            return NextResponse.json({
-                error: 'Questo video non ha sottotitoli disponibili. Attiva i sottotitoli automatici sul video YouTube.',
-            }, { status: 404 })
+            const reason = html.includes('class="g-recaptcha"')
+                ? 'YouTube richiede un captcha. Riprova tra qualche minuto.'
+                : 'Questo video non ha sottotitoli disponibili. Attiva i sottotitoli automatici sul video YouTube.'
+            return NextResponse.json({ error: reason }, { status: 404 })
         }
 
-        const tracks = rawTracks.map((t: any) => ({
-            languageCode: t.languageCode,
-            kind: t.kind,
-            name: t.name?.simpleText ?? t.name?.runs?.[0]?.text ?? '',
-            baseUrl: t.baseUrl,
-        }))
+        const track = pickBestTrack(rawTracks)
+        if (!track?.baseUrl) {
+            return NextResponse.json({ error: 'Nessuna traccia sottotitoli valida trovata.' }, { status: 404 })
+        }
 
-        return NextResponse.json({ success: true, tracks })
+        // Scarica la trascrizione server-side (stesso IP che ha fetchato la pagina)
+        const segments = await fetchSegments(track.baseUrl)
+
+        if (!segments.length) {
+            return NextResponse.json({ error: 'Trascrizione vuota. Il video potrebbe avere i sottotitoli disabilitati.' }, { status: 404 })
+        }
+
+        return NextResponse.json({
+            success: true,
+            segments,
+            languageCode: track.languageCode,
+            kind: track.kind,
+            availableTracks: rawTracks.map((t: any) => ({
+                languageCode: t.languageCode,
+                kind: t.kind,
+                name: t.name?.simpleText ?? t.name?.runs?.[0]?.text ?? '',
+            })),
+        })
     } catch (err: any) {
         console.error('[Transcript GET]', err.message)
         return NextResponse.json({ error: err.message || 'Errore interno' }, { status: 500 })
@@ -108,8 +130,6 @@ export async function GET(req: NextRequest) {
 }
 
 // ── Traduzione via Groq ────────────────────────────────────────────────────────
-interface TranscriptSegment { text: string; start: number; duration: number }
-
 function getGroqClient() {
     if (!process.env.GROQ_API_KEY) throw new Error('GROQ_API_KEY non configurato')
     return new OpenAI({ apiKey: process.env.GROQ_API_KEY, baseURL: 'https://api.groq.com/openai/v1' })
@@ -138,7 +158,7 @@ async function translateChunk(groq: OpenAI, texts: string[]): Promise<string[]> 
     return result
 }
 
-// ── POST: riceve trascrizione dal client → traduce → salva su Supabase ─────────
+// ── POST: riceve segmenti → traduce → salva su Supabase ──────────────────────
 export async function POST(req: NextRequest) {
     try {
         const { tutorialId, transcript, translate = false } = await req.json() as {
