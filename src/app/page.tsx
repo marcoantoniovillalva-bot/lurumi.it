@@ -481,6 +481,42 @@ export default function Home() {
         <SocialBar />
       </div>
 
+      {/* SEO content — visibile ai crawler e screen reader, non agli utenti */}
+      <section className="sr-only" aria-label="Informazioni su Lurumi">
+        <h2>Lurumi — L&apos;app AI per uncinetto, amigurumi e maglia</h2>
+        <p>
+          Lurumi è un&apos;app web progressiva (PWA) pensata per chi ama l&apos;uncinetto, l&apos;amigurumi e la maglia.
+          Grazie all&apos;intelligenza artificiale integrata, puoi gestire i tuoi progetti creativi, contare i giri,
+          generare immagini di ispirazione e ottenere assistenza personalizzata sui pattern.
+        </p>
+        <h3>Funzionalità principali</h3>
+        <ul>
+          <li>Gestione progetti di uncinetto e amigurumi: carica PDF di schemi o immagini, organizza i tuoi lavori attivi.</li>
+          <li>Contatore giri avanzato con contatori secondari personalizzabili per ogni progetto.</li>
+          <li>Assistente AI specializzato in uncinetto, amigurumi e maglia — risponde in italiano a qualsiasi domanda su punti, tecniche e materiali.</li>
+          <li>Generatore immagini AI: crea immagini di ispirazione amigurumi con DALL-E 3 e Flux AI. Carica un&apos;immagine di riferimento per trasformare qualsiasi personaggio in versione amigurumi.</li>
+          <li>Analisi foto con AI: carica una foto del tuo lavoro e ricevi feedback, conteggio punti e suggerimenti.</li>
+          <li>Tutorial YouTube: salva tutorial di uncinetto con trascrizione automatica e traduzione in italiano.</li>
+          <li>Rimozione e generazione sfondo AI per foto professionali dei tuoi lavori finiti.</li>
+          <li>Lettore PDF integrato per schemi di uncinetto e amigurumi.</li>
+          <li>Corsi ed eventi dal vivo: prenota workshop di uncinetto e amigurumi online e in presenza.</li>
+          <li>Funziona offline come app installabile su Android e iOS.</li>
+        </ul>
+        <h3>Per chi è Lurumi?</h3>
+        <p>
+          Lurumi è pensata per hobbiste e appassionate di uncinetto, amigurumi e maglia in Italia.
+          È disponibile gratuitamente con 50 crediti AI al mese, o in versione Premium con 300 crediti al mese.
+          Si installa come app sul telefono senza passare dagli store.
+        </p>
+        <h3>Perché scegliere Lurumi?</h3>
+        <p>
+          A differenza delle app generiche, Lurumi è costruita specificamente per chi fa uncinetto e amigurumi.
+          L&apos;assistente AI conosce le tecniche di uncinetto, i tipi di filato, gli schemi amigurumi e risponde sempre in italiano.
+          Puoi trasformare qualsiasi personaggio — cartone animato, anime o realistico — in un design amigurumi all&apos;uncinetto.
+        </p>
+        <p>Sito ufficiale: https://lurumi.it — Email: info@lurumi.it</p>
+      </section>
+
       <div className="fixed bottom-[calc(80px+env(safe-area-inset-bottom))] right-5 z-50 lg:right-[calc(50%-640px+20px)]">
         <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" accept="application/pdf,image/*" />
         <button
