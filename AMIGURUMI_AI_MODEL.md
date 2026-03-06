@@ -7,235 +7,384 @@
 ## Obiettivo
 
 Creare un modello AI proprietario capace di:
-1. **Generare schemi amigurumi affidabili e tecnicamente corretti** (testo strutturato con istruzioni riga per riga)
-2. **Generare immagini che corrispondano ESATTAMENTE allo schema prodotto** (non generiche, ma coerenti con forma, proporzioni e colori dello schema)
-3. Tutto questo in modo **economico, legale in Italia/EU, con piena proprietà del modello**
+1. **Generare schemi amigurumi affidabili e tecnicamente corretti** (istruzioni giro per giro, stitch count verificati)
+2. **Generare immagini che corrispondano ESATTAMENTE allo schema** (forma, proporzioni, colori coerenti)
+3. Piena proprietà del modello, legale in Italia/EU, economico
 
 ---
 
-## Analisi del Problema
+## Strategia Dati (Decisione Chiave)
 
-### Perché nessuna AI attuale lo fa bene
+### Principio: Qualità prima di quantità
 
-- I modelli generativi (GPT, Claude, Gemini) generano pattern plausibili ma con **errori strutturali**: conteggi di punti sbagliati, diminuzioni che non chiudono la forma, proporzioni impossibili
-- Non esiste allineamento tra testo schema e immagine: un'AI genera l'immagine indipendentemente dallo schema
-- Il linguaggio degli schemi amigurumi è **semi-formale e specialistico**: mix di abbreviazioni (sc, inc, dec, MR, sl st), numerazione circolare, assembly notes
+> "Meglio 200 schemi perfetti che 5000 generati dall'AI e sbagliati"
 
-### Soluzione in 2 componenti
+**Ordine di affidabilità dei dati:**
+1. Schemi creati direttamente da Erika (admin esperta) — fonte ground truth
+2. Schemi geometrici semplici documentati (sfera, cilindro, ovale, cono) — matematicamente verificabili
+3. Schemi utenti validati dall'admin con correzioni
+4. Schemi utenti approvati senza modifiche (solo per utenti avanzati fidati)
 
-```
-Componente A: LLM fine-tuned → genera schema testuale corretto
-Componente B: Diffusion model fine-tuned → genera immagine CONDIZIONATA allo schema
-                                           (non generica, ma legata alle specifiche del pattern)
-```
+**NO a dati sintetici generati da AI** come seed — partire sempre da schemi reali verificati
 
 ---
 
-## Architettura Tecnica Consigliata
+## Analisi della Struttura Dati Già Presente in Lurumi
 
-### Componente A — Generazione Schema (LLM)
+### Cosa esiste già nell'app che è prezioso per il training
 
-**Modello base raccomandato: Mistral 7B v0.3**
-- Licenza: Apache 2.0 → piena proprietà commerciale del fine-tune
-- 7B parametri: ottimo rapporto qualità/costo per testo strutturato
-- Alternative: LLaMA 3 8B (Meta custom license, commerciale OK), Phi-3 Mini (MIT)
+Guardando il codice (`useProjectStore.ts`, tabella `projects` su Supabase):
 
-**Metodo di training: QLoRA (Quantized Low-Rank Adaptation)**
-- Riduce la VRAM necessaria da 40GB a ~8-12GB
-- Costo: ~$50-150 per run iniziale su RunPod (GPU A100 ~$2/ora, ~25-75h)
-- Tool: Hugging Face `transformers` + `peft` + `trl` (SFTTrainer)
-- Nessuna condivisione pesi con terzi
+```
+Project {
+  title: string               ← nome del pezzo
+  counter: number             ← giro totale raggiunto
+  secs: RoundCounter[]        ← DATI PIU' PREZIOSI (vedi sotto)
+  notesHtml: string           ← note libere dell'utente
+  images: ProjectImage[]      ← foto del lavoro in corso / finito
+  timer: number               ← tempo impiegato
+}
 
-**Formato dati training (JSONL):**
-```json
-{
-  "instruction": "Genera uno schema amigurumi per un gatto seduto, altezza 15cm, lana worsted weight",
-  "output": "MATERIALI:\n- Lana beige 50g\n- Lana nera 10g (dettagli)\n- Ferri n.3\n- Occhi di sicurezza 9mm\n\nTESTA:\nMagic Ring, 6sc (6)\nRound 1: inc x6 (12)\nRound 2: *sc, inc* x6 (18)\n..."
+RoundCounter {
+  id: string
+  name: string                ← "Testa", "Corpo", "Braccio sinistro"...
+  value: number               ← numero giri/punti contati
+  imageId?: string            ← foto associata a quella parte
 }
 ```
 
-### Componente B — Generazione Immagine Allineata
+**I `secs` (contatori secondari) sono già una struttura dati semi-strutturata di schema amigurumi:**
+Un utente che traccia "Testa: 35 giri" + "Corpo: 28" + "Braccio: 15" con foto allegate sta già descrivendo la struttura anatomica di un amigurumi in modo quantitativo.
 
-**Approccio: Flux.1-dev fine-tuned con ControlNet custom**
-
-Il segreto dell'allineamento schema-immagine è **condizionare la generazione su features estratte dallo schema**:
-
-```
-Schema testo → Parser → Feature vector (forma, colori, proporzioni, parti)
-                              ↓
-Feature vector + prompt → Flux fine-tuned → Immagine coerente
-```
-
-**Feature vector estratto dallo schema:**
-- Forma globale (sferica, cilindrica, ovale)
-- Numero di parti (testa, corpo, arti, accessori)
-- Palette colori (estratta dalle istruzioni di cambio colore)
-- Proporzioni (stitch count comparativo tra parti)
-- Texture yarn (weight, tipo punto)
-
-**Alternativa più semplice (fase 1):**
-Usare GPT-4o per estrarre le feature dallo schema → passarle come prompt ultra-dettagliato a Flux o SDXL fine-tuned su dataset amigurumi
-
-**Tool per fine-tuning immagini:**
-- `diffusers` (Hugging Face) per SDXL/Flux LoRA
-- DreamBooth / LoRA con ~500-2000 immagini amigurumi taggate
-- Piattaforma: RunPod o Replicate custom model
+**Il problema attuale:** questi dati sono sparsi, non validati, e mancano delle istruzioni giro-per-giro (solo il totale, non il dettaglio di ogni round).
 
 ---
 
-## Piano di Raccolta Dati (LEGALE in Italia/EU)
+## Architettura del Sistema di Raccolta Dati
 
-### Fonti legali disponibili
+### Flusso proposto
 
-| Fonte | Legale? | Note |
-|-------|---------|------|
-| Schemi creati da te/team | SI | Fonte primaria, nessun problema |
-| Schemi utenti Lurumi (con consenso) | SI | Richiede clausola ToS esplicita |
-| Ravelry scraping | NO | Termini di servizio vietano scraping |
-| Etsy scraping | NO | ToS proibisce, copyright individuale |
-| Creative Commons (CC0, CC-BY) | SI | Verificare singola licenza |
-| Schemi pubblici pre-1926 | SI | Dominio pubblico (ma amigurumi è recente) |
-| Sintetici generati da LLM + validati | SI | Approccio raccomandato per scalare |
+```
+[Erika crea schemi] ─────────────────────────────────────► [Dataset validato]
+                                                                    │
+[Utente lavora su progetto]                                         │
+    │                                                               │
+    ├─ Riempie secs con nomi parti + valori                        │
+    ├─ Associa foto a ogni parte                                   │
+    ├─ Scrive note (istruzioni)                                    │
+    │                                                               │
+    └─ [Bottone "Contribuisci schema"] ──► [Coda validazione] ──► [Admin valida/corregge] ──►┘
+                                              (Supabase)
+```
 
-### Strategia raccolta dati via Lurumi
+### 3 Modalità di Contribuzione
 
-**Azione richiesta nel codice Lurumi:**
+**Modalità A — Schema Semplice (già quasi implementabile)**
+L'utente invia il progetto esistente con:
+- Titolo, note, secs (parti + giri), foto associate
+- Serve solo aggiungere un bottone "Condividi per training AI" nel progetto
 
-1. **Consenso esplicito in ToS** — aggiungere clausola:
-   > "I pattern e schemi da te creati o salvati nell'app potranno essere utilizzati in forma anonimizzata per migliorare i servizi AI di Lurumi"
+**Modalità B — Schema Strutturato (nuovo tool nell'app)**
+Un editor dedicato dove l'utente inserisce:
+- Ogni giro con la sua formula: `Giro 1: sc x6 (6)`, `Giro 2: inc x6 (12)`...
+- Materiali, hook size, colori
+- Foto del risultato finale e WIP
+- Questo è il dato di training più ricco
 
-2. **Annotation tool nell'app** — sezione admin per:
-   - Visualizzare schemi utenti anonimi
-   - Validarli/correggerli
-   - Etichettarli con metadati (tipo animale, difficoltà, dimensioni)
+**Modalità C — Erika (Admin) crea direttamente**
+Erika usa il tool Schema Strutturato con accesso admin che bypassa la coda:
+- I suoi schemi entrano direttamente nel dataset come ground truth
+- Partenza: forme geometriche pure (sfera 6cm, cilindro 4x6cm, cono...)
+- Progressione: animali semplici → medi → complessi
 
-3. **Generazione sintetica** — usare GPT-4o per generare ~5000 schemi sintetici diversi come seed dataset iniziale, poi validare quelli migliori
+---
 
-**Quantità dati necessaria (stima):**
-- Fase 1 (prototipo): 500-1000 schemi di qualità
-- Fase 2 (modello solido): 5000-10000 schemi
-- Fase 3 (eccellenza): 20000+ con diversity massima
+## Piano di Sviluppo nell'App (Cosa Costruire)
+
+### Step 1 — Tabelle DB per Training Data
+
+```sql
+CREATE TABLE training_patterns (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES profiles(id),
+  project_id UUID REFERENCES projects(id),     -- progetto Lurumi originale (opzionale)
+  title TEXT NOT NULL,
+  difficulty TEXT CHECK (difficulty IN ('beginner','intermediate','advanced')),
+  category TEXT,                                -- 'geometric', 'animal', 'character', ...
+  yarn_weight TEXT,                             -- 'fingering','dk','worsted','bulky'
+  hook_size TEXT,
+  finished_size_cm TEXT,
+  parts JSONB NOT NULL,                        -- array di parti con istruzioni giro-per-giro
+  images JSONB DEFAULT '[]',                   -- URL foto risultato finale + WIP
+  status TEXT DEFAULT 'pending'                -- 'pending', 'validated', 'rejected', 'ground_truth'
+    CHECK (status IN ('pending','validated','rejected','ground_truth')),
+  admin_notes TEXT,
+  submitted_at TIMESTAMPTZ DEFAULT NOW(),
+  validated_at TIMESTAMPTZ,
+  validated_by UUID REFERENCES profiles(id)
+);
+
+-- Struttura di parts (JSONB):
+-- [
+--   {
+--     "name": "Testa",
+--     "color": "beige",
+--     "rounds": [
+--       {"round": 1, "instruction": "MR, 6sc", "stitch_count": 6},
+--       {"round": 2, "instruction": "inc x6", "stitch_count": 12},
+--       {"round": 3, "instruction": "*sc, inc* x6", "stitch_count": 18}
+--     ],
+--     "image_url": "..."
+--   }
+-- ]
+```
+
+### Step 2 — Tool "Schema Creator" (Editor nell'app)
+
+**Dove metterlo:** nuova tab nel progetto, oppure sezione `/pattern-creator` accessibile dal menu
+
+**UI:**
+```
+[Titolo schema] [Difficoltà ▼] [Categoria ▼]
+[Peso filato ▼] [Ferri] [Dimensione finita]
+
+PARTI:
++ Aggiungi parte
+
+┌─ Testa ─────────────────────────── [foto] ─┐
+│ Giro 1: [MR, 6sc              ] → 6 punti  │
+│ Giro 2: [inc x6               ] → 12 punti │
+│ + Aggiungi giro                             │
+└─────────────────────────────────────────────┘
+
+┌─ Corpo ─────────────────────────── [foto] ─┐
+│ ...                                         │
+└─────────────────────────────────────────────┘
+
+[Aggiungi parte] [Anteprima] [Contribuisci al training AI ✓]
+```
+
+**Logica di validazione automatica (da fare):**
+- Controlla che stitch_count sia coerente (inc aumenta di 1, dec diminuisce)
+- Avvisa se un giro di chiusura non torna a 6
+- Suggerisce il conteggio corretto se sbagliato
+
+### Step 3 — Contribuzione da Progetto Esistente
+
+Nel progetto esistente, se l'utente ha compilato `secs` con nomi parti + immagini, mostrare:
+
+```
+💡 Hai tracciato 4 parti con foto — vuoi contribuire questo schema
+   al training AI? L'admin lo verificherà prima di usarlo.
+   [Sì, contribuisci] [No grazie]
+```
+
+Questo crea un pre-schema automatico dai dati `secs` già presenti, che l'admin poi completa con i dettagli giro-per-giro.
+
+### Step 4 — Coda Validazione Admin
+
+Nel pannello `/admin`, nuova sezione "Training Dataset":
+```
+CODA VALIDAZIONE (12 in attesa)
+┌──────────────────────────────────────────┐
+│ "Orsetto beige" — @utente123 — 3 parti   │
+│ [Visualizza] [Approva] [Correggi] [Rifiuta] │
+├──────────────────────────────────────────┤
+│ "Gatto grigio" — @utente456 — 5 parti    │
+│ [Visualizza] [Approva] [Correggi] [Rifiuta] │
+└──────────────────────────────────────────┘
+
+DATASET VALIDATO (47 schemi)
+Ground truth (Erika): 23
+Validati da utenti: 24
+Pronti per training: 47
+```
+
+**Funzione "Correggi":** apre lo schema contributor con i dati precompilati e permette all'admin di modificare giro per giro prima di approvare.
+
+---
+
+## Strategia Progressiva (Geometrico → Complesso)
+
+### Livello 1 — Forme Geometriche Pure (partenza)
+Matematicamente verificabili, nessuna ambiguità:
+
+| Forma | Formula standard | Variabili |
+|-------|-----------------|-----------|
+| Sfera | MR6 → +6/giro → plateau → -6/giro | diametro (cm) |
+| Cilindro | MR6 → +6/giro → plateau → nessuna riduzione | diametro × altezza |
+| Ovale | catena N → giro intorno → +N/estremità | asse lungo × corto |
+| Cono | MR6 → +6 ogni X giri | altezza, angolo |
+| Teardrop | sfera modificata con riduzione asimmetrica | proporzioni |
+
+Questi sono i mattoni di tutti gli amigurumi. Con 20-30 varianti di ogni forma = ~150 schemi base matematicamente corretti al 100%.
+
+### Livello 2 — Animali Semplici (2-3 parti, forme note)
+- Pallina con occhi (sfera + occhi)
+- Pesce (ovale + pinne piatte)
+- Orsetto semplice (sfera testa + ovale corpo + 4 sfere piccole)
+
+### Livello 3 — Animali Medi (4-6 parti, proporzioni)
+- Gatto seduto, coniglio, pulcino
+
+### Livello 4 — Personaggi Complessi (7+ parti, dettagli)
+- Umanoidi, accessori, abbigliamento
+
+---
+
+## Allineamento Schema → Immagine
+
+### Perché è il problema più difficile
+
+Un'immagine di un amigurumi "sfera 35 punti" dovrebbe mostrare esattamente quella forma, non una sfera generica. Il modello deve capire che:
+- 35 punti plateau = diametro ~6cm con lana worsted DK
+- Le proporzioni relative delle parti determinano la forma del risultato
+
+### Soluzione: Feature Vector da Schema
+
+```
+Schema (testo strutturato)
+    │
+    ▼
+Parser deterministico
+    │
+    ▼
+Feature Vector:
+{
+  "parts": [
+    {"name": "head", "shape": "sphere", "diameter_cm": 6.5, "color": "beige"},
+    {"name": "body", "shape": "oval", "width_cm": 5, "height_cm": 7, "color": "beige"},
+    {"name": "ear", "shape": "flat_circle", "diameter_cm": 2, "color": "beige", "count": 2}
+  ],
+  "proportions": {"head_to_body": 0.9},   // testa quasi grande quanto il corpo
+  "style": "classic_amigurumi"
+}
+    │
+    ▼
+Prompt generazione immagine ultra-specifico:
+"Amigurumi cat. Head: beige sphere 6.5cm diameter.
+ Body: beige oval 5x7cm. Two flat circle ears 2cm.
+ Head-to-body ratio 0.9 (head slightly smaller than body).
+ Classic kawaii style, yarn texture, studio lighting."
+    │
+    ▼
+Flux fine-tuned → immagine coerente
+```
+
+Il parser (deterministico, non AI) calcola le dimensioni fisiche reali a partire dal numero di punti usando formule standard del crochet (gauge).
+
+---
+
+## Consenso Utenti e Privacy
+
+### Clausola ToS da aggiungere (testo suggerito)
+
+> "Contribuzione volontaria al training AI: se scegli di condividere i tuoi schemi tramite la funzione apposita, il contenuto tecnico (istruzioni, conteggi, foto dell'opera) sarà utilizzato in forma anonimizzata esclusivamente per addestrare modelli AI sviluppati da Lurumi. Non condivideremo mai questi dati con terze parti. Puoi richiederne la rimozione in qualsiasi momento."
+
+### Cosa NON raccogliere mai automaticamente
+- Dati senza consenso esplicito (nessun harvesting silenzioso)
+- Foto di volti degli utenti
+- Dati personali associabili all'opera
 
 ---
 
 ## Conformità Legale Italia/EU
 
-### Copyright e Data Mining
-
-- **Direttiva EU 2019/790 (DSM), Art. 4**: permette text/data mining anche per scopi commerciali SE il titolare del copyright non ha espressamente riservato tale diritto ("opt-out machine readable")
-- **Legge italiana 633/1941** (aggiornata): recepisce la direttiva DSM
-- **In pratica**: siti come Ravelry che hanno `disallow` nel robots.txt o ToS anti-scraping = opt-out → NON usabili
-- **Soluzione sicura**: dati propri + sintetici + CC0
-
-### EU AI Act (in vigore 2024-2025)
-
-Il sistema rientra in **rischio limitato** (non alto rischio):
-- Obblighi: trasparenza verso utenti che interagiscono con AI
-- Documentare il training dataset (già fatto con questo file)
-- Nessun obbligo di audit esterno per questo caso d'uso
-
-### Proprietà Intellettuale del Modello
-
-**Per garantire piena proprietà:**
-- Usare modelli base con licenza Apache 2.0 o MIT (Mistral, Phi-3)
-- NON usare OpenAI fine-tuning API (OpenAI si riserva diritti di uso)
-- NON usare Google Vertex AI fine-tuning senza leggere i ToS
-- Training in autonomia su cloud (RunPod, Lambda Labs, vast.ai) = pesi 100% tuoi
-- Registrare i pesi del modello su Hugging Face in repo PRIVATO
-- Documentare il processo di training (timestamp, dataset, iperparametri)
-
-**I pesi fine-tuned sono di tua proprietà** perché:
-1. Mistral Apache 2.0 lo permette esplicitamente
-2. I dati di training sono tuoi
-3. Il training è eseguito su infrastruttura che non rivendica diritti
+| Aspetto | Status | Note |
+|---------|--------|------|
+| GDPR | OK con consenso esplicito | Aggiungere clausola ToS + opt-in chiaro |
+| Copyright dati training | OK | Solo dati propri + consenso utenti |
+| EU AI Act | Rischio limitato | Trasparenza verso utenti che interagiscono con AI |
+| Proprietà modello | Piena | Mistral Apache 2.0, training autonomo |
 
 ---
 
-## Roadmap di Sviluppo
+## Architettura Tecnica Finale
 
-### Fase 0 — Infrastruttura dati (1-2 mesi, costo: ~€0)
-- [ ] Aggiungere clausola ToS consenso dati in Lurumi
-- [ ] Creare formato schema standardizzato (JSON schema definition)
-- [ ] Costruire annotation tool nell'admin di Lurumi
-- [ ] Generare 1000 schemi sintetici con GPT-4o e validarli manualmente
+### Componente A — LLM Pattern Generator
 
-### Fase 1 — Prototipo LLM (1 mese, costo: ~€100-300)
+- **Base:** Mistral 7B v0.3 (Apache 2.0)
+- **Metodo:** QLoRA fine-tuning
+- **Input:** `{category, difficulty, parts_description, yarn_weight, finished_size}`
+- **Output:** schema completo giro-per-giro in formato JSON strutturato
+- **Training:** RunPod A100, ~50h, ~€125 per prima run
+
+### Componente B — Image Generator Allineato
+
+- **Base:** Flux.1-dev LoRA fine-tuned su dataset amigurumi
+- **Input:** feature vector estratto dallo schema (parser deterministico)
+- **Output:** immagine coerente con forma/proporzioni/colori schema
+- **Training:** dopo aver raccolto ≥200 coppie schema+immagine validate
+
+### Componente C — Parser Schema → Feature Vector (deterministico, no AI)
+
+- Calcola dimensioni fisiche da stitch count + gauge yarn
+- Identifica forma geometrica dominante per ogni parte
+- Genera proporzioni relative tra le parti
+- Produce prompt immagine ultra-specifico
+
+---
+
+## Roadmap Aggiornata
+
+### Fase 0 — Fondamenta (1-2 mesi, costo: €0)
+- [ ] Aggiungere clausola ToS consenso dati
+- [ ] Creare tabella `training_patterns` su Supabase
+- [ ] Erika crea 20-30 schemi forme geometriche pure (ground truth)
+- [ ] Erika crea 10-15 amigurumi semplici (livello 2)
+
+### Fase 1 — Tool nell'App (2-3 mesi, costo: dev time)
+- [ ] Schema Creator: editor giro-per-giro con foto per parte
+- [ ] Bottone "Contribuisci" nei progetti esistenti (da secs compilate)
+- [ ] Coda validazione admin nel pannello `/admin`
+- [ ] Funzione "Correggi schema" per admin
+- [ ] Target: 100 schemi validati (50 Erika + 50 utenti)
+
+### Fase 2 — Training LLM (1 mese, costo: ~€150-300)
 - [ ] Preparare dataset JSONL da schemi validati
-- [ ] Fine-tune Mistral 7B con QLoRA su RunPod
-- [ ] Valutazione: stitch count accuracy, round closure, assembly completeness
-- [ ] Integrare endpoint nel backend Lurumi come funzionalità beta
+- [ ] Fine-tune Mistral 7B con QLoRA
+- [ ] Valutazione: stitch count accuracy, round closure check
+- [ ] Beta nell'app: "Genera schema" (sostituisce prompt generico)
 
-### Fase 2 — Allineamento immagine (2-3 mesi, costo: ~€300-800)
-- [ ] Raccogliere 500+ immagini amigurumi con schema associato
-- [ ] Fine-tune SDXL LoRA su dataset amigurumi
+### Fase 3 — Training Immagini + Allineamento (2-3 mesi, costo: ~€300-500)
+- [ ] Raccogliere ≥200 coppie schema+immagine validate
+- [ ] Fine-tune Flux LoRA su dataset amigurumi
 - [ ] Costruire parser schema → feature vector
-- [ ] Pipeline: schema → features → prompt condizionato → immagine
-- [ ] Valutazione: coerenza forma/colori immagine con schema
+- [ ] Pipeline end-to-end: richiesta → schema → feature → immagine
 
-### Fase 3 — Produzione (ongoing)
-- [ ] A/B test modello custom vs API commerciali
-- [ ] Flywheel: utenti Lurumi generano schemi → validati → reinseriti nel training
-- [ ] Hosting modello: Replicate custom model o self-hosted su VPS GPU
-
----
-
-## Stack Tecnologico
-
-```
-Training:
-- Python 3.11
-- transformers, peft, trl, bitsandbytes (QLoRA)
-- datasets (Hugging Face)
-- wandb (monitoring training)
-
-Infrastruttura training:
-- RunPod (A100 80GB: ~$2.50/h) oppure vast.ai (più economico)
-- Storage: Hugging Face Hub (repo privato) + Supabase Storage backup
-
-Serving (dopo training):
-- Replicate custom model (se vuoi API semplice)
-- vLLM self-hosted (massima efficienza, costo fisso)
-- Integrazione in Lurumi: API route Next.js → chiamata al modello
-
-Dati:
-- Supabase: tabella `training_patterns` (id, content, metadata, validated, source)
-- Supabase: tabella `training_images` (id, url, pattern_id, tags)
-```
+### Fase 4 — Produzione e Flywheel
+- [ ] Hosting modello (Replicate custom o VPS GPU)
+- [ ] Gli utenti usano il modello → validano output → reinserito nel training
+- [ ] Ogni nuovo schema validato migliora il modello successivo
 
 ---
 
-## Costi Stimati Totali
+## Costi Stimati
 
-| Voce | Costo stimato |
-|------|---------------|
-| Generazione dati sintetici (GPT-4o, 5000 schemi) | ~€50-100 |
-| Training LLM Fase 1 (RunPod, ~50h A100) | ~€125 |
-| Training immagini Fase 2 (RunPod, ~100h) | ~€250 |
-| Storage e infrastruttura | ~€20/mese |
-| **Totale lancio** | **~€500-600** |
-| Ongoing (inference self-hosted) | ~€30-80/mese |
-
----
-
-## Domande Aperte / Da Decidere
-
-1. **Vuoi che gli utenti Lurumi possano usare il modello custom direttamente nell'app?** (sostituisce le chiamate a Replicate/OpenAI)
-2. **Vuoi monetizzare il modello anche esternamente** (API, licenza a terzi) o solo interno a Lurumi?
-3. **Qual è il budget iniziale disponibile?** (orienta se partire con dataset sintetico piccolo o investire subito)
-4. **Hai GPU locale?** (RTX 3090/4090 permetterebbe training senza cloud)
-
----
-
-## File Correlati nel Progetto
-
-- `src/app/api/generate-image/route.ts` — attuale generazione immagini (Replicate + OpenAI)
-- `src/app/admin/AdminDashboard.tsx` — pannello admin (dove aggiungere annotation tool)
-- `scripts/setup-db.mjs` — script migrazioni DB (aggiungere tabelle training)
+| Voce | Costo |
+|------|-------|
+| Erika crea 50 schemi ground truth | Tempo Erika (no costo diretto) |
+| Dev tool Schema Creator + Admin | Dev time |
+| Training LLM Fase 2 (RunPod ~75h A100) | ~€190 |
+| Training immagini Fase 3 (RunPod ~100h) | ~€250 |
+| Storage + infrastruttura | ~€20/mese |
+| **Totale monetario lancio** | **~€460-600** |
 
 ---
 
 ## Note Sessioni
 
-### 2026-03-06
-- File creato. Analisi iniziale completata.
-- Prossimi passi: decidere budget, aggiungere clausola ToS, creare formato schema standard
+### 2026-03-06 — Sessione 1
+Decisioni prese:
+- NO a dati sintetici AI come seed, SI a schemi reali verificati
+- Partenza da Erika (ground truth) + forme geometriche pure
+- Utenti contribuiscono → admin valida (coda) → dataset
+- I `secs` esistenti nei progetti Lurumi sono già dati semi-strutturati preziosi
+- Progressione geometrico → semplice → complesso → avanzato
+- Allineamento schema-immagine via parser deterministico (stitch count → dimensioni fisiche → feature vector → prompt immagine condizionato)
+
+Prossimi passi da implementare nel codice:
+1. Tabella `training_patterns` in setup-db.mjs
+2. Schema Creator UI nell'app
+3. Bottone "Contribuisci" nei progetti con secs
+4. Sezione coda validazione nell'admin dashboard
