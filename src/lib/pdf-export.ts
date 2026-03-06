@@ -121,7 +121,53 @@ export async function generatePatternPdf(
         }
     }
 
-    // ── Pagina 2: Contatori secondari (secs) ────────────────────────────────
+    // ── Pagina 2: Immagini non associate ────────────────────────────────────
+    // Immagini che non sono la copertina e non sono associate a nessun contatore secondario
+    const associatedImageIds = new Set([
+        ...(project.coverImageId ? [project.coverImageId] : []),
+        ...(project.secs ?? []).filter(s => s.imageId).map(s => s.imageId as string),
+    ])
+    const galleryImages = (project.images ?? [])
+        .map((img, idx) => ({ img, idx }))
+        .filter(({ img }) => !associatedImageIds.has(img.id))
+
+    if (galleryImages.length > 0) {
+        let galPage = addPage()
+        let y = H - MARGIN
+
+        galPage.drawText('Immagini del progetto', {
+            x: MARGIN, y, size: 20, font: fontBold, color: DARK,
+        })
+        y -= 14
+        galPage.drawLine({ start: { x: MARGIN, y }, end: { x: W - MARGIN, y }, thickness: 1, color: LIGHT })
+        y -= 28
+
+        for (const { idx } of galleryImages) {
+            const url = imageUrls[idx]
+            if (!url) continue
+            const imgData = await fetchImageAsBytes(url)
+            if (!imgData) continue
+            try {
+                const embedded = imgData.isPng
+                    ? await pdfDoc.embedPng(imgData.bytes)
+                    : await pdfDoc.embedJpg(imgData.bytes)
+                const maxH = Math.min(y - 80, 300)
+                const maxW = CONTENT_W
+                const scale = Math.min(maxW / embedded.width, maxH / embedded.height, 1)
+                const iW = embedded.width * scale
+                const iH = embedded.height * scale
+                if (y - iH < 60) {
+                    galPage = addPage()
+                    y = H - MARGIN
+                }
+                const iX = MARGIN + (CONTENT_W - iW) / 2
+                galPage.drawImage(embedded, { x: iX, y: y - iH, width: iW, height: iH })
+                y -= iH + 20
+            } catch {}
+        }
+    }
+
+    // ── Pagina 3: Contatori secondari (secs) ────────────────────────────────
     if (project.secs && project.secs.length > 0) {
         let secsPage = addPage()
         let y = H - MARGIN
@@ -135,32 +181,41 @@ export async function generatePatternPdf(
         y -= 28
 
         for (const sec of project.secs) {
-            if (y < 120) {
-                secsPage = addPage()
-                y = H - MARGIN
-            }
-
             // Trova immagine associata
             const secImgIdx = sec.imageId ? (project.images ?? []).findIndex(i => i.id === sec.imageId) : -1
             const secImgUrl = secImgIdx >= 0 ? imageUrls[secImgIdx] : null
 
+            // Calcola altezza immagine associata (se presente)
+            let secImgEmbedded = null
+            let secImgH = 0
+            let secImgW = 0
             if (secImgUrl) {
                 const imgData = await fetchImageAsBytes(secImgUrl)
                 if (imgData) {
                     try {
-                        const embedded = imgData.isPng
+                        secImgEmbedded = imgData.isPng
                             ? await pdfDoc.embedPng(imgData.bytes)
                             : await pdfDoc.embedJpg(imgData.bytes)
-                        const thumbH = 60
-                        const thumbW = (embedded.width / embedded.height) * thumbH
-                        secsPage.drawImage(embedded, {
-                            x: W - MARGIN - Math.min(thumbW, 80),
-                            y: y - thumbH + 14,
-                            width: Math.min(thumbW, 80),
-                            height: thumbH,
-                        })
+                        const maxH = 200
+                        const maxW = CONTENT_W
+                        const scale = Math.min(maxW / secImgEmbedded.width, maxH / secImgEmbedded.height, 1)
+                        secImgW = secImgEmbedded.width * scale
+                        secImgH = secImgEmbedded.height * scale
                     } catch {}
                 }
+            }
+
+            const blockH = (secImgH > 0 ? secImgH + 12 : 0) + 18 + 10 + 22 + 30
+            if (y < blockH + 60) {
+                secsPage = addPage()
+                y = H - MARGIN
+            }
+
+            // Immagine sopra il contatore
+            if (secImgEmbedded && secImgH > 0) {
+                const iX = MARGIN + (CONTENT_W - secImgW) / 2
+                secsPage.drawImage(secImgEmbedded, { x: iX, y: y - secImgH, width: secImgW, height: secImgH })
+                y -= secImgH + 12
             }
 
             // Nome parte

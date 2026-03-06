@@ -5,7 +5,7 @@ import {
     ArrowLeft, Minus, Plus, RotateCcw, Timer, Share2,
     ChevronLeft, ChevronRight, StickyNote, Trash2,
     Plus as PlusIcon, Camera, Save, Maximize2, Archive, Pencil,
-    GripVertical, ChevronUp, ChevronDown, FileDown, ExternalLink, X
+    GripVertical, ChevronUp, ChevronDown, FileDown, X
 } from "lucide-react";
 import { useProjectStore, Project, RoundCounter as RoundCounterType, ProjectImage } from "@/features/projects/store/useProjectStore";
 import { luDB } from "@/lib/db";
@@ -546,13 +546,6 @@ export default function ProjectDetail() {
                         title="Esporta PDF editabile"
                     >
                         <FileDown size={20} />
-                    </button>
-                    <button
-                        onClick={() => window.open('https://www.canva.com/create', '_blank')}
-                        className="w-10 h-10 flex items-center justify-center bg-white border border-[#EEF0F4] rounded-xl text-[#9AA2B1] active:scale-95 transition-transform shadow-sm"
-                        title="Apri Canva (importa il PDF con File → Importa)"
-                    >
-                        <ExternalLink size={18} />
                     </button>
                 </div>
             </div>
