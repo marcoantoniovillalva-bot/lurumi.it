@@ -2,43 +2,74 @@ import { NextRequest, NextResponse } from 'next/server'
 import OpenAI from 'openai'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 
-// ── Bracket-counter parser per estrarre captionTracks dalla pagina YouTube ────
-// Più affidabile di regex perché gestisce oggetti JSON annidati arbitrariamente.
-function extractCaptionTracks(html: string): any[] {
+// ── InnerTube API (più affidabile dello scraping HTML su server cloud) ──────────
+const INNERTUBE_API_URL = 'https://www.youtube.com/youtubei/v1/player'
+const INNERTUBE_KEY = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8' // chiave pubblica WEB
+
+async function getCaptionTracksFromInnerTube(videoId: string): Promise<any[]> {
+    const body = {
+        videoId,
+        context: {
+            client: {
+                clientName: 'WEB',
+                clientVersion: '2.20241201.00.00',
+                hl: 'it',
+                gl: 'IT',
+            },
+        },
+    }
+
+    const res = await fetch(`${INNERTUBE_API_URL}?key=${INNERTUBE_KEY}`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36',
+            'Origin': 'https://www.youtube.com',
+            'Referer': 'https://www.youtube.com/',
+        },
+        body: JSON.stringify(body),
+    })
+
+    if (!res.ok) return []
+
+    const data = await res.json()
+    const tracks: any[] = data?.captions?.playerCaptionsTracklistRenderer?.captionTracks ?? []
+    return tracks
+}
+
+// ── Fallback: scraping HTML ────────────────────────────────────────────────────
+function extractCaptionTracksFromHtml(html: string): any[] {
     const startIdx = html.indexOf('"captionTracks":')
     if (startIdx === -1) return []
-
     const arrStart = html.indexOf('[', startIdx)
     if (arrStart === -1) return []
-
-    let depth = 0
-    let i = arrStart
+    let depth = 0, i = arrStart
     while (i < html.length) {
         const ch = html[i]
         if (ch === '[' || ch === '{') depth++
-        else if (ch === ']' || ch === '}') {
-            depth--
-            if (depth === 0) break
-        }
+        else if (ch === ']' || ch === '}') { depth--; if (depth === 0) break }
         i++
     }
-
-    const raw = html
-        .slice(arrStart, i + 1)
-        .replace(/\\u0026/g, '&')
-        .replace(/\\u003d/g, '=')
-        .replace(/\\u003c/g, '<')
-        .replace(/\\u003e/g, '>')
-
-    try {
-        return JSON.parse(raw)
-    } catch {
-        return []
-    }
+    const raw = html.slice(arrStart, i + 1)
+        .replace(/\\u0026/g, '&').replace(/\\u003d/g, '=')
+        .replace(/\\u003c/g, '<').replace(/\\u003e/g, '>')
+    try { return JSON.parse(raw) } catch { return [] }
 }
 
-// ── GET: server fetch della pagina YouTube → restituisce captionTracks al client ──
-// Il client poi scarica il timedtext direttamente dal browser (dove ha i cookie YouTube).
+async function getCaptionTracksFallback(videoId: string): Promise<any[]> {
+    const res = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
+        headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36',
+            'Accept-Language': 'it-IT,it;q=0.9,en;q=0.8',
+            'Cookie': 'CONSENT=YES+cb; SOCS=CAI',
+        },
+    })
+    if (!res.ok) return []
+    const html = await res.text()
+    return extractCaptionTracksFromHtml(html)
+}
+
+// ── GET: restituisce captionTracks al client ───────────────────────────────────
 export async function GET(req: NextRequest) {
     const videoId = req.nextUrl.searchParams.get('videoId')
     if (!videoId) return NextResponse.json({ error: 'videoId mancante' }, { status: 400 })
@@ -48,33 +79,24 @@ export async function GET(req: NextRequest) {
     if (!user) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
 
     try {
-        const pageRes = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-                'Accept-Language': 'it-IT,it;q=0.9,en;q=0.8',
-                'Cookie': 'CONSENT=YES+cb; SOCS=CAI',
-            },
-        })
+        // Prima prova InnerTube API
+        let rawTracks = await getCaptionTracksFromInnerTube(videoId)
 
-        if (!pageRes.ok) {
-            return NextResponse.json({ error: `YouTube non raggiungibile (${pageRes.status})` }, { status: 502 })
+        // Fallback: scraping HTML
+        if (!rawTracks.length) {
+            rawTracks = await getCaptionTracksFallback(videoId)
         }
 
-        const html = await pageRes.text()
-        const captionTracks = extractCaptionTracks(html)
-
-        if (!captionTracks.length) {
-            const reason = html.includes('class="g-recaptcha"')
-                ? 'YouTube richiede un captcha. Riprova tra qualche minuto.'
-                : 'Questo video non ha sottotitoli disponibili. Attiva i sottotitoli automatici sul video YouTube.'
-            return NextResponse.json({ error: reason }, { status: 404 })
+        if (!rawTracks.length) {
+            return NextResponse.json({
+                error: 'Questo video non ha sottotitoli disponibili. Attiva i sottotitoli automatici sul video YouTube.',
+            }, { status: 404 })
         }
 
-        // Ritorna solo i campi necessari (baseUrl + languageCode + kind)
-        const tracks = captionTracks.map((t: any) => ({
+        const tracks = rawTracks.map((t: any) => ({
             languageCode: t.languageCode,
             kind: t.kind,
-            name: t.name?.simpleText ?? '',
+            name: t.name?.simpleText ?? t.name?.runs?.[0]?.text ?? '',
             baseUrl: t.baseUrl,
         }))
 
