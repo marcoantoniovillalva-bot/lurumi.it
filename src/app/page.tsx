@@ -249,6 +249,10 @@ export default function Home() {
   };
 
   const [cardExporting, setCardExporting] = useState<string | null>(null);
+  const [canShareFiles, setCanShareFiles] = useState(false);
+  useEffect(() => {
+    setCanShareFiles(typeof navigator !== 'undefined' && !!navigator.canShare);
+  }, []);
 
   // Carica le imageUrls per un progetto dalla IDB / Supabase
   const loadImageUrls = async (project: Project): Promise<string[]> => {
@@ -554,14 +558,16 @@ export default function Home() {
                         <Archive size={15} className="text-[#7B5CF6]" />
                         {cardExporting === project.id ? 'Generando…' : 'Scarica ZIP'}
                       </button>
-                      <button
-                        onClick={() => handleShareWithCanva(project)}
-                        disabled={cardExporting === project.id}
-                        className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm font-bold text-[#1C1C1E] hover:bg-[#F4F4F8] rounded-xl disabled:opacity-50"
-                      >
-                        <ExternalLink size={15} className="text-[#7B5CF6]" />
-                        {cardExporting === project.id ? 'Generando…' : 'Condividi con Canva'}
-                      </button>
+                      {canShareFiles && (
+                        <button
+                          onClick={() => handleShareWithCanva(project)}
+                          disabled={cardExporting === project.id}
+                          className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm font-bold text-[#1C1C1E] hover:bg-[#F4F4F8] rounded-xl disabled:opacity-50"
+                        >
+                          <ExternalLink size={15} className="text-[#7B5CF6]" />
+                          {cardExporting === project.id ? 'Generando…' : 'Condividi con Canva'}
+                        </button>
+                      )}
                       <div className="h-px bg-[#F4F4F8] my-1" />
                       <button
                         onClick={() => handleDelete(project.id)}
