@@ -63,7 +63,7 @@ export default function TutorialDetail() {
     // Transcript state
     const [transcriptOpen, setTranscriptOpen] = useState(false);
     const [transcriptView, setTranscriptView] = useState<'original' | 'translated'>('original');
-    const [transcriptLoading, setTranscriptLoading] = useState(false);
+    const [transcriptAction, setTranscriptAction] = useState<'original' | 'translate' | null>(null);
     const [transcriptError, setTranscriptError] = useState('');
     const [transcriptData, setTranscriptData] = useState<TranscriptData | null>(tutorial?.transcriptData ?? null);
     const [currentVideoTime, setCurrentVideoTime] = useState(0);
@@ -232,58 +232,18 @@ export default function TutorialDetail() {
 
     const generateTranscript = async (translate: boolean) => {
         if (!user || !tutorial.videoId) return;
-        setTranscriptLoading(true);
+        setTranscriptAction(translate ? 'translate' : 'original');
         setTranscriptError('');
         try {
-            // Step 1: server fetch la pagina YouTube ed estrae i captionTracks
+            // Step 1: server scarica la trascrizione completa (tutto server-side)
             const trackRes = await fetch(`/api/tutorials/transcript?videoId=${tutorial.videoId}`);
             const trackData = await trackRes.json();
             if (!trackData.success) throw new Error(trackData.error || 'Impossibile trovare i sottotitoli');
 
-            const tracks: Array<{ languageCode: string; kind?: string; baseUrl: string }> = trackData.tracks;
-            const track =
-                tracks.find(t => t.languageCode === 'it' && t.kind !== 'asr') ||
-                tracks.find(t => t.languageCode === 'it') ||
-                tracks.find(t => t.kind === 'asr') ||
-                tracks.find(t => t.languageCode === 'en') ||
-                tracks[0];
+            const segments = trackData.segments;
+            if (!segments?.length) throw new Error('Trascrizione vuota. Verifica che il video abbia i sottotitoli attivi.');
 
-            if (!track) throw new Error('Nessuna traccia sottotitoli disponibile');
-
-            // Step 2: il BROWSER scarica il timedtext usando il proprio TLS fingerprint Chrome
-            // Proviamo prima senza credentials (meno restrittivo), poi con credentials come fallback
-            const fetchTimedtext = async (creds: RequestCredentials): Promise<any[]> => {
-                const url = track.baseUrl + '&fmt=json3';
-                const res = await fetch(url, { credentials: creds });
-                if (!res.ok) return [];
-                const text = await res.text();
-                if (!text || text.length < 10) return [];
-                try {
-                    const data = JSON.parse(text);
-                    return data?.events ?? [];
-                } catch { return []; }
-            };
-
-            let events = await fetchTimedtext('omit');
-            if (!events.length) events = await fetchTimedtext('include');
-
-            const segments = events
-                .filter((e: any) => e.segs && e.tStartMs !== undefined)
-                .map((e: any) => ({
-                    text: (e.segs as any[])
-                        .map((s: any) => s.utf8 ?? '')
-                        .join('')
-                        .replace(/\n/g, ' ')
-                        .replace(/&amp;/g, '&').replace(/&#39;/g, "'")
-                        .replace(/&quot;/g, '"').trim(),
-                    start: (e.tStartMs ?? 0) / 1000,
-                    duration: (e.dDurationMs ?? 0) / 1000,
-                }))
-                .filter((s: any) => s.text);
-
-            if (!segments.length) throw new Error('Trascrizione non disponibile. Apri il video su YouTube, verifica che abbia i sottotitoli attivi, poi riprova.');
-
-            // Step 3: server salva + traduce via Groq
+            // Step 2: server salva + traduce via Groq se richiesto
             const saveRes = await fetch('/api/tutorials/transcript', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -303,7 +263,7 @@ export default function TutorialDetail() {
         } catch (err: any) {
             setTranscriptError(err.message || 'Errore nella generazione della trascrizione');
         } finally {
-            setTranscriptLoading(false);
+            setTranscriptAction(null);
         }
     };
 
@@ -437,18 +397,18 @@ export default function TutorialDetail() {
                                         <>
                                             <button
                                                 onClick={() => generateTranscript(false)}
-                                                disabled={transcriptLoading}
+                                                disabled={transcriptAction !== null}
                                                 className="flex items-center justify-center gap-2 h-11 bg-[#FAFAFC] border border-[#EEF0F4] rounded-xl font-bold text-sm text-[#1C1C1E] disabled:opacity-50 active:scale-95 transition-transform"
                                             >
-                                                {transcriptLoading ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />}
+                                                {transcriptAction === 'original' ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />}
                                                 Solo trascrizione originale
                                             </button>
                                             <button
                                                 onClick={() => generateTranscript(true)}
-                                                disabled={transcriptLoading}
+                                                disabled={transcriptAction !== null}
                                                 className="flex items-center justify-center gap-2 h-11 bg-[#7B5CF6] text-white rounded-xl font-bold text-sm shadow-md disabled:opacity-50 active:scale-95 transition-transform"
                                             >
-                                                {transcriptLoading ? <Loader2 size={16} className="animate-spin" /> : <Languages size={16} />}
+                                                {transcriptAction === 'translate' ? <Loader2 size={16} className="animate-spin" /> : <Languages size={16} />}
                                                 Genera + Traduzione Italiana
                                             </button>
                                         </>
@@ -485,10 +445,10 @@ export default function TutorialDetail() {
                                         {!transcriptData.has_translation && user && (
                                             <button
                                                 onClick={() => generateTranscript(true)}
-                                                disabled={transcriptLoading}
+                                                disabled={transcriptAction !== null}
                                                 className="flex items-center gap-1.5 text-[#7B5CF6] font-bold text-xs mb-4 disabled:opacity-50"
                                             >
-                                                {transcriptLoading ? <Loader2 size={12} className="animate-spin" /> : <Languages size={12} />}
+                                                {transcriptAction === 'translate' ? <Loader2 size={12} className="animate-spin" /> : <Languages size={12} />}
                                                 Aggiungi traduzione italiana
                                             </button>
                                         )}
