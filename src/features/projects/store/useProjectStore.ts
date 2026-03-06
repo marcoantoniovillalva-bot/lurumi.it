@@ -60,6 +60,8 @@ export interface Tutorial {
     secs: RoundCounter[]
     notesHtml: string
     transcriptData?: TranscriptData | null
+    images?: ProjectImage[]
+    coverImageId?: string
 }
 
 interface ProjectState {
@@ -155,7 +157,10 @@ export const useProjectStore = create<ProjectState>()(
                     images: (p.images ?? []).map(img => ({ id: img.id })),
                     blob: undefined,
                 })),
-                tutorials: state.tutorials,
+                tutorials: state.tutorials.map(t => ({
+                    ...t,
+                    images: (t.images ?? []).map(img => ({ id: img.id })),
+                })),
             }),
         }
     )

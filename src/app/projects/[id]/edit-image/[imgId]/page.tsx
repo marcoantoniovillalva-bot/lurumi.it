@@ -200,7 +200,10 @@ export default function EditImagePage() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ imageBase64: base64 }),
             });
-            const data = await response.json();
+            let data: any;
+            try { data = await response.json(); } catch {
+                throw new Error('Risposta del server non valida. Il servizio potrebbe essere temporaneamente sovraccarico — riprova tra qualche secondo.');
+            }
             if (!data.success) {
                 setError(data.error || 'Errore rimozione sfondo.');
                 return;

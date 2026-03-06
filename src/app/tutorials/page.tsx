@@ -1,12 +1,13 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { Search, ListFilter, Plus, X, Youtube, MoreVertical, Pencil, Trash2, Share2, Check, ExternalLink } from "lucide-react";
+import { Search, ListFilter, Plus, X, Youtube, MoreVertical, Pencil, Trash2, FileDown, Archive, ExternalLink, Check } from "lucide-react";
 import { useProjectStore, Tutorial } from "@/features/projects/store/useProjectStore";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useCharacterTheme } from "@/hooks/useCharacterTheme";
+import { luDB } from "@/lib/db";
 
 export default function TutorialsPage() {
     const { tutorials, addTutorial, deleteTutorial, updateTutorial } = useProjectStore();
@@ -61,6 +62,8 @@ export default function TutorialsPage() {
                     secs: t.secs ?? [],
                     notesHtml: t.notes_html ?? '',
                     transcriptData: t.transcript_data ?? undefined,
+                    images: (t.images ?? []).map((img: any) => ({ id: typeof img === 'string' ? img : img.id })),
+                    coverImageId: t.cover_image_id ?? undefined,
                 });
             })
             .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'tutorials' }, (payload) => {
@@ -163,19 +166,126 @@ export default function TutorialsPage() {
         }
     };
 
-    const handleShare = (tutorial: Tutorial) => {
-        if (navigator.share) {
-            navigator.share({ title: tutorial.title, url: tutorial.url });
-        } else {
-            navigator.clipboard.writeText(tutorial.url);
-            alert('Link copiato!');
-        }
-        setMenuId(null);
-    };
-
     const handleOpenYouTube = (url: string) => {
         window.open(url, '_blank');
         setMenuId(null);
+    };
+
+    const [cardExporting, setCardExporting] = useState<string | null>(null);
+    const [canShareFiles, setCanShareFiles] = useState(false);
+    useEffect(() => {
+        setCanShareFiles(typeof navigator !== 'undefined' && !!navigator.canShare);
+    }, []);
+
+    const loadTutorialImageUrls = async (tutorial: Tutorial): Promise<string[]> => {
+        const imgs = tutorial.images ?? [];
+        const urls: string[] = [];
+        const sb = user ? createClient() : null;
+        for (const img of imgs) {
+            const record = await luDB.getFile(img.id);
+            if (record?.blob) {
+                urls.push(URL.createObjectURL(record.blob));
+            } else if (sb && user) {
+                const { data: blob } = await sb.storage.from('project-files').download(`${user.id}/tutorials/${tutorial.id}/${img.id}`);
+                if (blob) {
+                    await luDB.saveFile({ id: img.id, blob });
+                    urls.push(URL.createObjectURL(blob));
+                }
+            }
+        }
+        return urls;
+    };
+
+    const handleCardExportPdf = async (tutorial: Tutorial) => {
+        setMenuId(null);
+        setCardExporting(tutorial.id);
+        try {
+            const imageUrls = await loadTutorialImageUrls(tutorial);
+            const { generatePatternPdf } = await import('@/lib/pdf-export');
+            const pdfInput = { ...tutorial, type: 'tutorial' as const };
+            const pdfBytes = await generatePatternPdf(pdfInput, imageUrls);
+            const blob = new Blob([pdfBytes.buffer as ArrayBuffer], { type: 'application/pdf' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${tutorial.title.replace(/[^a-zA-Z0-9]/g, '-')}.pdf`;
+            a.click();
+            URL.revokeObjectURL(url);
+            imageUrls.forEach(u => u.startsWith('blob:') && URL.revokeObjectURL(u));
+        } catch (e) {
+            console.error('[PDF Export]', e);
+            alert('Errore durante la generazione del PDF.');
+        } finally {
+            setCardExporting(null);
+        }
+    };
+
+    const handleCardExportZip = async (tutorial: Tutorial) => {
+        setMenuId(null);
+        setCardExporting(tutorial.id);
+        try {
+            const { zipSync, strToU8 } = await import('fflate');
+            const infoLines = [
+                `Tutorial: ${tutorial.title}`,
+                `YouTube: ${tutorial.url}`,
+                `Giri: ${tutorial.counter}`,
+                tutorial.secs.length > 0 ? `Giri secondari: ${tutorial.secs.map(s => `${s.name}: ${s.value}`).join(', ')}` : '',
+                tutorial.notesHtml ? `Note: ${tutorial.notesHtml}` : '',
+                '',
+                'Creato con lurumi.it',
+            ].filter(Boolean).join('\n');
+            const files: Record<string, Uint8Array> = { 'info.txt': strToU8(infoLines) };
+            if (tutorial.images?.length) {
+                for (let i = 0; i < tutorial.images.length; i++) {
+                    const imgRecord = await luDB.getFile(tutorial.images[i].id);
+                    if (imgRecord?.blob) {
+                        files[`immagine-${i + 1}.jpg`] = new Uint8Array(await imgRecord.blob.arrayBuffer());
+                    }
+                }
+            }
+            const zipped = zipSync(files);
+            const blob = new Blob([zipped.buffer as ArrayBuffer], { type: 'application/zip' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${tutorial.title.replace(/[^a-zA-Z0-9]/g, '-')}.zip`;
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch (e) {
+            console.error('[ZIP Export]', e);
+            alert('Errore durante la generazione dello ZIP.');
+        } finally {
+            setCardExporting(null);
+        }
+    };
+
+    const handleShareWithCanva = async (tutorial: Tutorial) => {
+        setMenuId(null);
+        setCardExporting(tutorial.id);
+        try {
+            const imageUrls = await loadTutorialImageUrls(tutorial);
+            const { generatePatternPdf } = await import('@/lib/pdf-export');
+            const pdfInput = { ...tutorial, type: 'tutorial' as const };
+            const pdfBytes = await generatePatternPdf(pdfInput, imageUrls);
+            const pdfFile = new File(
+                [pdfBytes.buffer as ArrayBuffer],
+                `${tutorial.title.replace(/[^a-zA-Z0-9]/g, '-')}.pdf`,
+                { type: 'application/pdf' }
+            );
+            imageUrls.forEach(u => u.startsWith('blob:') && URL.revokeObjectURL(u));
+            if (navigator.canShare?.({ files: [pdfFile] })) {
+                await navigator.share({ files: [pdfFile], title: tutorial.title });
+            } else {
+                const url = URL.createObjectURL(pdfFile);
+                const a = document.createElement('a');
+                a.href = url; a.download = pdfFile.name; a.click();
+                URL.revokeObjectURL(url);
+            }
+        } catch (e: any) {
+            if (e?.name !== 'AbortError') { console.error('[Share Canva]', e); alert('Errore durante la condivisione.'); }
+        } finally {
+            setCardExporting(null);
+        }
     };
 
     const sortLabels: Record<string, string> = { recent: 'Recenti', oldest: 'Meno recenti', alpha: 'A → Z' };
@@ -312,12 +422,31 @@ export default function TutorialsPage() {
                                                 Apri su YouTube
                                             </button>
                                             <button
-                                                onClick={() => handleShare(t)}
-                                                className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm font-bold text-[#1C1C1E] hover:bg-[#F4F4F8] rounded-xl"
+                                                onClick={() => handleCardExportPdf(t)}
+                                                disabled={cardExporting === t.id}
+                                                className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm font-bold text-[#1C1C1E] hover:bg-[#F4F4F8] rounded-xl disabled:opacity-50"
                                             >
-                                                <Share2 size={15} className="text-[#7B5CF6]" />
-                                                Condividi
+                                                <FileDown size={15} className="text-[#7B5CF6]" />
+                                                {cardExporting === t.id ? 'Generando…' : 'Scarica PDF'}
                                             </button>
+                                            <button
+                                                onClick={() => handleCardExportZip(t)}
+                                                disabled={cardExporting === t.id}
+                                                className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm font-bold text-[#1C1C1E] hover:bg-[#F4F4F8] rounded-xl disabled:opacity-50"
+                                            >
+                                                <Archive size={15} className="text-[#7B5CF6]" />
+                                                {cardExporting === t.id ? 'Generando…' : 'Scarica ZIP'}
+                                            </button>
+                                            {canShareFiles && (
+                                                <button
+                                                    onClick={() => handleShareWithCanva(t)}
+                                                    disabled={cardExporting === t.id}
+                                                    className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm font-bold text-[#1C1C1E] hover:bg-[#F4F4F8] rounded-xl disabled:opacity-50"
+                                                >
+                                                    <ExternalLink size={15} className="text-[#7B5CF6]" />
+                                                    {cardExporting === t.id ? 'Generando…' : 'Condividi con Canva'}
+                                                </button>
+                                            )}
                                             <div className="h-px bg-[#F4F4F8] my-1" />
                                             <button
                                                 onClick={() => handleDelete(t.id)}

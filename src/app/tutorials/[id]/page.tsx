@@ -7,7 +7,6 @@ import {
     Plus,
     RotateCcw,
     Timer,
-    Share2,
     Youtube,
     StickyNote,
     Plus as PlusIcon,
@@ -20,13 +19,23 @@ import {
     GripVertical,
     Copy,
     Check,
+    Camera,
+    Archive,
+    FileDown,
+    Maximize2,
+    Trash2,
+    ChevronLeft,
+    ChevronRight,
 } from "lucide-react";
-import { useProjectStore, Tutorial, RoundCounter as RoundCounterType, TranscriptSegment, TranscriptData } from "@/features/projects/store/useProjectStore";
+import { useProjectStore, Tutorial, RoundCounter as RoundCounterType, TranscriptSegment, TranscriptData, ProjectImage } from "@/features/projects/store/useProjectStore";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { RoundCounter } from "@/features/projects/components/RoundCounter";
+import { CounterImagePicker } from "@/features/projects/components/CounterImagePicker";
+import { FullscreenViewer } from "@/components/FullscreenViewer";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { luDB } from "@/lib/db";
 
 export default function TutorialDetail() {
     const { id } = useParams();
@@ -47,6 +56,21 @@ export default function TutorialDetail() {
     };
 
     const syncSecs = (newSecs: RoundCounterType[]) => syncTutorial({ secs: newSecs });
+    const syncImages = (newImages: ProjectImage[], coverImageId?: string) => {
+        const fields: Record<string, unknown> = { images: newImages.map(img => ({ id: img.id })) };
+        if (coverImageId !== undefined) fields.cover_image_id = coverImageId;
+        syncTutorial(fields);
+    };
+
+    // Image state
+    const [imageUrls, setImageUrls] = useState<string[]>([]);
+    const [currentImgPage, setCurrentImgPage] = useState(1);
+    const [fullscreen, setFullscreen] = useState(false);
+    const [showCounterImagePicker, setShowCounterImagePicker] = useState(false);
+    const [pickerTargetSecId, setPickerTargetSecId] = useState<string | null>(null);
+    const [exportingPdf, setExportingPdf] = useState(false);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const blobUrlsRef = useRef<string[]>([]);
 
     const [isTimerRunning, setIsTimerRunning] = useState(false);
     const [elapsedTime, setElapsedTime] = useState(0);
@@ -84,6 +108,34 @@ export default function TutorialDetail() {
         setNotes(tutorial.notesHtml || "");
     }, [tutorial?.id]);
 
+    // Carica immagini tutorial da IDB / Supabase Storage
+    useEffect(() => {
+        if (!tutorial) return;
+        const load = async () => {
+            const imgs = tutorial.images ?? [];
+            const urls: string[] = [];
+            const sb = user ? createClient() : null;
+            for (const img of imgs) {
+                const record = await luDB.getFile(img.id);
+                if (record?.blob) {
+                    urls.push(URL.createObjectURL(record.blob));
+                } else if (sb && user) {
+                    const { data: blob } = await sb.storage.from('project-files').download(`${user.id}/tutorials/${id}/${img.id}`);
+                    if (blob) {
+                        await luDB.saveFile({ id: img.id, blob });
+                        urls.push(URL.createObjectURL(blob));
+                    }
+                }
+            }
+            blobUrlsRef.current.forEach(u => URL.revokeObjectURL(u));
+            blobUrlsRef.current = urls.filter(u => u.startsWith('blob:'));
+            setImageUrls(urls);
+            setCurrentImgPage(p => Math.min(p, Math.max(1, urls.length)));
+        };
+        load();
+        return () => { blobUrlsRef.current.forEach(u => URL.revokeObjectURL(u)); blobUrlsRef.current = []; };
+    }, [id, tutorial?.images?.length, user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
     // Keep refs in sync for Realtime callback (avoids stale closures)
     useEffect(() => { isTimerRunningRef.current = isTimerRunning; }, [isTimerRunning]);
     useEffect(() => { isEditingNotesRef.current = isEditingNotes; }, [isEditingNotes]);
@@ -105,6 +157,8 @@ export default function TutorialDetail() {
                 const updates: Partial<Tutorial> = {
                     counter: remote.counter ?? 0,
                     secs: remote.secs ?? [],
+                    images: (remote.images ?? []).map((img: any) => ({ id: typeof img === 'string' ? img : img.id })),
+                    coverImageId: remote.cover_image_id ?? undefined,
                 };
                 if (!isTimerRunningRef.current) {
                     updates.timer = remote.timer_seconds ?? 0;
@@ -234,6 +288,87 @@ export default function TutorialDetail() {
         if (hasLoadedRef.current) return null; // redirect in corso
         return <div className="p-10 text-center">Tutorial non trovato</div>;
     }
+
+    // ── Image handlers ───────────────────────────────────────────────────────
+    const handleAddImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        e.target.value = '';
+        const imgId = Math.random().toString(36).slice(2, 9);
+        const objectUrl = URL.createObjectURL(file);
+        const newImages = [...(tutorial.images ?? []), { id: imgId }];
+        await luDB.saveFile({ id: imgId, blob: file });
+        updateTutorial(tutorial.id, { images: newImages });
+        setImageUrls(prev => { const next = [...prev, objectUrl]; setCurrentImgPage(next.length); return next; });
+        if (user) {
+            const sb = createClient();
+            sb.storage.from('project-files').upload(`${user.id}/tutorials/${tutorial.id}/${imgId}`, file, { upsert: true })
+                .then(({ error }) => { if (error) console.warn('Tutorial image upload failed:', error.message); });
+            sb.from('tutorials').update({ images: newImages.map(img => ({ id: img.id })) })
+                .eq('id', tutorial.id).eq('user_id', user.id)
+                .then(({ error }) => { if (error) console.warn('Tutorial images DB sync failed:', error.message); });
+        }
+    };
+
+    const handleDeleteCurrentImage = async () => {
+        const imgs = tutorial.images ?? [];
+        if (!imgs.length) return;
+        if (!confirm('Eliminare questa immagine?')) return;
+        const imgId = imgs[currentImgPage - 1]?.id;
+        if (imgId) luDB.deleteFile(imgId).catch(() => {});
+        const updatedImages = imgs.filter((_, i) => i !== currentImgPage - 1);
+        updateTutorial(tutorial.id, { images: updatedImages });
+        setImageUrls(prev => { const next = prev.filter((_, i) => i !== currentImgPage - 1); setCurrentImgPage(p => Math.max(1, Math.min(next.length, p))); return next; });
+        syncImages(updatedImages);
+    };
+
+    const handleExportPdf = async () => {
+        setExportingPdf(true);
+        try {
+            const { generatePatternPdf } = await import('@/lib/pdf-export');
+            const pdfBytes = await generatePatternPdf({ ...tutorial, type: 'tutorial' }, imageUrls);
+            const blob = new Blob([pdfBytes.buffer as ArrayBuffer], { type: 'application/pdf' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${tutorial.title.replace(/[^a-zA-Z0-9]/g, '-')}.pdf`;
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch (e) {
+            console.error('[PDF Export]', e);
+            alert('Errore durante la generazione del PDF. Riprova.');
+        } finally {
+            setExportingPdf(false);
+        }
+    };
+
+    const handleExportZip = async () => {
+        const { zipSync, strToU8 } = await import('fflate');
+        const files: Record<string, Uint8Array> = {
+            'info.txt': strToU8([
+                `Tutorial: ${tutorial.title}`,
+                `YouTube: ${tutorial.url}`,
+                `Giri: ${tutorial.counter}`,
+                tutorial.secs.length > 0 ? `Giri secondari: ${tutorial.secs.map(s => `${s.name}: ${s.value}`).join(', ')}` : '',
+                tutorial.notesHtml ? `Note: ${tutorial.notesHtml}` : '',
+                '', 'Creato con lurumi.it',
+            ].filter(Boolean).join('\n')),
+        };
+        if (tutorial.images?.length) {
+            for (let i = 0; i < tutorial.images.length; i++) {
+                const rec = await luDB.getFile(tutorial.images[i].id);
+                if (rec?.blob) files[`immagine-${i + 1}.jpg`] = new Uint8Array(await rec.blob.arrayBuffer());
+            }
+        }
+        const zipped = zipSync(files);
+        const blob = new Blob([zipped.buffer as ArrayBuffer], { type: 'application/zip' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${tutorial.title.replace(/[^a-zA-Z0-9]/g, '-')}.zip`;
+        a.click();
+        URL.revokeObjectURL(url);
+    };
 
     const moveCounter = (from: number, to: number) => {
         const newSecs = [...tutorial.secs];
@@ -373,20 +508,28 @@ export default function TutorialDetail() {
                             <RotateCcw size={13} strokeWidth={3} />
                         </button>
                     </div>
-                    <button
-                        onClick={() => {
-                            if (navigator.share) {
-                                navigator.share({ title: tutorial.title, url: tutorial.url }).catch(() => {});
-                            } else {
-                                navigator.clipboard.writeText(tutorial.url);
-                                alert('Link copiato!');
-                            }
-                        }}
-                        className="w-10 h-10 flex items-center justify-center bg-white border border-[#EEF0F4] rounded-xl text-[#7B5CF6] shadow-sm active:scale-95 transition-transform"
-                        title="Condividi tutorial"
-                    >
-                        <Share2 size={20} />
-                    </button>
+                    <input type="file" ref={fileInputRef} onChange={handleAddImage} className="hidden" accept="image/*" />
+                    <div className="flex flex-col items-center gap-0.5">
+                        <button
+                            onClick={handleExportZip}
+                            className="w-10 h-10 flex items-center justify-center bg-white border border-[#EEF0F4] rounded-xl text-[#7B5CF6] active:scale-95 transition-transform shadow-sm"
+                            title="Esporta ZIP"
+                        >
+                            <Archive size={20} />
+                        </button>
+                        <span className="text-[9px] font-black uppercase tracking-widest text-[#7B5CF6]">zip</span>
+                    </div>
+                    <div className="flex flex-col items-center gap-0.5">
+                        <button
+                            onClick={handleExportPdf}
+                            disabled={exportingPdf}
+                            className="w-10 h-10 flex items-center justify-center bg-white border border-[#EEF0F4] rounded-xl text-[#7B5CF6] active:scale-95 transition-transform shadow-sm disabled:opacity-50"
+                            title="Esporta PDF"
+                        >
+                            <FileDown size={20} />
+                        </button>
+                        <span className="text-[9px] font-black uppercase tracking-widest text-[#7B5CF6]">pdf</span>
+                    </div>
                 </div>
             </div>
 
@@ -413,6 +556,97 @@ export default function TutorialDetail() {
                     <div className="w-full h-full flex items-center justify-center text-white/60 text-sm font-bold">
                         Video non disponibile
                     </div>
+                )}
+            </div>
+
+            {/* FullscreenViewer */}
+            {fullscreen && imageUrls.length > 0 && (
+                <FullscreenViewer
+                    type="images"
+                    images={imageUrls}
+                    pdfDoc={null}
+                    initialPage={currentImgPage}
+                    onClose={() => setFullscreen(false)}
+                />
+            )}
+
+            {/* Galleria Immagini */}
+            <div className="mb-8">
+                <div className="flex items-center justify-between mb-3">
+                    <h2 className="text-lg font-black text-[#1C1C1E]">Immagini</h2>
+                    <button
+                        onClick={() => fileInputRef.current?.click()}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-[#7B5CF6]/10 text-[#7B5CF6] rounded-xl font-black text-xs active:scale-95 transition-transform"
+                    >
+                        <Camera size={14} strokeWidth={3} /> AGGIUNGI
+                    </button>
+                </div>
+                {imageUrls.length > 0 ? (
+                    <div className="bg-white rounded-2xl border border-[#EEF0F4] shadow-sm overflow-hidden">
+                        <div className="relative">
+                            <img
+                                src={imageUrls[currentImgPage - 1]}
+                                alt={`Immagine ${currentImgPage}`}
+                                className="w-full object-contain max-h-72 cursor-zoom-in"
+                                onClick={() => setFullscreen(true)}
+                            />
+                            {imageUrls.length > 1 && (
+                                <div className="absolute inset-x-0 bottom-2 flex items-center justify-center gap-2">
+                                    <button
+                                        onClick={() => setCurrentImgPage(p => Math.max(1, p - 1))}
+                                        disabled={currentImgPage === 1}
+                                        className="w-8 h-8 flex items-center justify-center bg-black/50 text-white rounded-full disabled:opacity-30"
+                                    >
+                                        <ChevronLeft size={16} />
+                                    </button>
+                                    <span className="text-white text-xs font-bold bg-black/50 px-2 py-0.5 rounded-full">
+                                        {currentImgPage}/{imageUrls.length}
+                                    </span>
+                                    <button
+                                        onClick={() => setCurrentImgPage(p => Math.min(imageUrls.length, p + 1))}
+                                        disabled={currentImgPage === imageUrls.length}
+                                        className="w-8 h-8 flex items-center justify-center bg-black/50 text-white rounded-full disabled:opacity-30"
+                                    >
+                                        <ChevronRight size={16} />
+                                    </button>
+                                </div>
+                            )}
+                            <button
+                                onClick={() => setFullscreen(true)}
+                                className="absolute top-2 right-2 w-8 h-8 flex items-center justify-center bg-black/50 text-white rounded-lg"
+                            >
+                                <Maximize2 size={14} />
+                            </button>
+                        </div>
+                        <div className="flex items-center justify-between px-4 py-2 border-t border-[#EEF0F4]">
+                            <button
+                                onClick={() => {
+                                    const imgs = tutorial.images ?? [];
+                                    const imgId = imgs[currentImgPage - 1]?.id;
+                                    if (!imgId) return;
+                                    updateTutorial(tutorial.id, { coverImageId: imgId });
+                                    syncImages(imgs, imgId);
+                                }}
+                                className={`text-xs font-bold px-2 py-1 rounded-lg transition-colors ${tutorial.coverImageId === (tutorial.images ?? [])[currentImgPage - 1]?.id ? 'bg-[#7B5CF6] text-white' : 'bg-[#F4EEFF] text-[#7B5CF6]'}`}
+                            >
+                                {tutorial.coverImageId === (tutorial.images ?? [])[currentImgPage - 1]?.id ? '★ Copertina' : 'Imposta copertina'}
+                            </button>
+                            <button
+                                onClick={handleDeleteCurrentImage}
+                                className="w-8 h-8 flex items-center justify-center bg-red-50 text-red-500 rounded-lg"
+                            >
+                                <Trash2 size={14} />
+                            </button>
+                        </div>
+                    </div>
+                ) : (
+                    <button
+                        onClick={() => fileInputRef.current?.click()}
+                        className="w-full h-28 flex flex-col items-center justify-center gap-2 bg-[#FAFAFC] rounded-2xl border-2 border-dashed border-[#EEF0F4] text-[#9AA2B1] active:scale-[0.98] transition-transform"
+                    >
+                        <Camera size={28} className="text-[#D9CAFF]" />
+                        <span className="text-sm font-bold">Aggiungi immagini al tutorial</span>
+                    </button>
                 )}
             </div>
 
@@ -690,9 +924,15 @@ export default function TutorialDetail() {
                                         updateTutorial(tutorial.id, { secs: updated });
                                         syncSecs(updated);
                                     }}
-                                    onAssociateImage={() => {}}
-                                    onRemoveImage={() => {}}
-                                    hideImageOption={true}
+                                    imageId={sec.imageId}
+                                    imageUrl={sec.imageId ? imageUrls[(tutorial.images ?? []).findIndex(i => i.id === sec.imageId)] : undefined}
+                                    onAssociateImage={(sid) => { setPickerTargetSecId(sid); setShowCounterImagePicker(true); }}
+                                    onRemoveImage={(sid) => {
+                                        const updated = tutorial.secs.map(s => s.id === sid ? { ...s, imageId: undefined } : s);
+                                        updateTutorial(tutorial.id, { secs: updated });
+                                        syncSecs(updated);
+                                    }}
+                                    hideImageOption={imageUrls.length === 0}
                                 />
                             </div>
                         </div>
@@ -744,6 +984,30 @@ export default function TutorialDetail() {
                         </div>
                     </div>
                 </div>
+            )}
+
+            {/* CounterImagePicker */}
+            {showCounterImagePicker && pickerTargetSecId && (
+                <CounterImagePicker
+                    imageUrls={imageUrls}
+                    imageIds={(tutorial.images ?? []).map(i => i.id)}
+                    currentImageId={tutorial.secs.find(s => s.id === pickerTargetSecId)?.imageId}
+                    onSelect={(imageId) => {
+                        const updated = tutorial.secs.map(s => s.id === pickerTargetSecId ? { ...s, imageId } : s);
+                        updateTutorial(tutorial.id, { secs: updated });
+                        syncSecs(updated);
+                        setShowCounterImagePicker(false);
+                        setPickerTargetSecId(null);
+                    }}
+                    onRemove={() => {
+                        const updated = tutorial.secs.map(s => s.id === pickerTargetSecId ? { ...s, imageId: undefined } : s);
+                        updateTutorial(tutorial.id, { secs: updated });
+                        syncSecs(updated);
+                        setShowCounterImagePicker(false);
+                        setPickerTargetSecId(null);
+                    }}
+                    onClose={() => { setShowCounterImagePicker(false); setPickerTargetSecId(null); }}
+                />
             )}
 
             {/* Notes — Annota Progressi */}

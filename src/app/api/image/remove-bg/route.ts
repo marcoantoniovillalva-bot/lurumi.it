@@ -5,6 +5,9 @@ import { checkAndDeductCredits } from '@/lib/ai-credits'
 import { checkRateLimit } from '@/lib/rate-limit'
 import { isAiEnabled, autoDisableIfOverBudget } from '@/lib/ai-status'
 
+export const maxDuration = 60 // Replicate può impiegare fino a 60s
+export const runtime = 'nodejs'
+
 function getReplicateClient() {
     if (!process.env.REPLICATE_API_TOKEN) throw new Error('REPLICATE_API_TOKEN non configurato')
     return new Replicate({ auth: process.env.REPLICATE_API_TOKEN })

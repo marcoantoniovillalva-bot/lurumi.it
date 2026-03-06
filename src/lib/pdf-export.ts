@@ -1,5 +1,14 @@
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib'
-import type { Project } from '@/features/projects/store/useProjectStore'
+
+export interface PdfProjectInput {
+    title: string
+    timer?: number
+    type?: string
+    coverImageId?: string
+    images?: { id: string }[]
+    secs: { id: string; name: string; value: number; imageId?: string }[]
+    notesHtml?: string
+}
 
 const PURPLE = rgb(0.482, 0.361, 0.965)  // #7B5CF6
 const DARK   = rgb(0.11, 0.11, 0.118)    // #1C1C1E
@@ -45,7 +54,7 @@ async function fetchImageAsBytes(url: string): Promise<{ bytes: Uint8Array; isPn
 }
 
 export async function generatePatternPdf(
-    project: Project,
+    project: PdfProjectInput,
     imageUrls: (string | null)[]
 ): Promise<Uint8Array> {
     const pdfDoc = await PDFDocument.create()
@@ -85,7 +94,7 @@ export async function generatePatternPdf(
     coverY -= 30
 
     // Tipo
-    const typeLabel = project.type === 'pdf' ? 'Pattern PDF' : 'Galleria Immagini'
+    const typeLabel = project.type === 'pdf' ? 'Pattern PDF' : project.type === 'tutorial' ? 'Tutorial' : 'Galleria Immagini'
     coverPage.drawText(typeLabel.toUpperCase(), {
         x: MARGIN, y: coverY, size: 10, font: fontBold, color: MUTED,
     })
