@@ -13,16 +13,16 @@ export async function GET() {
 
     const codeVerifier = 'debug-verifier-placeholder'
     const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url')
-    const scope = encodeURIComponent('asset:read asset:write')
+    const scope = encodeURIComponent('asset:read asset:write app:read app:write design:content:read design:content:write')
 
     const authUrl = 'https://www.canva.com/api/oauth/authorize' +
-        `?code_challenge=${encodeURIComponent(codeChallenge)}` +
-        `&code_challenge_method=S256` +
+        `?code_challenge_method=s256` +
         `&response_type=code` +
         `&client_id=${encodeURIComponent(clientId)}` +
-        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
         `&scope=${scope}` +
-        `&state=debug-state`
+        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+        `&state=debug-state` +
+        `&code_challenge=${encodeURIComponent(codeChallenge)}`
 
     return NextResponse.json({
         authUrl,
@@ -30,7 +30,7 @@ export async function GET() {
             client_id: clientId,
             redirect_uri: redirectUri,
             scope: decodeURIComponent(scope),
-            code_challenge_method: 'S256',
+            code_challenge_method: 's256',
             response_type: 'code',
         },
         checklist: [

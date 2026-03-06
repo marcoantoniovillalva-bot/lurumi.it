@@ -19,21 +19,20 @@ export async function GET() {
     // State per CSRF protection
     const state = crypto.randomBytes(16).toString('hex')
 
-    // Scope: solo asset:read+asset:write (scopri dai Canva Developer docs).
-    // Canva usa %3A per i due punti e %20 per gli spazi nella loro documentazione.
-    // design:content:* richiede permessi extra nell'app Canva — rimossi per evitare rejected client.
-    const scope = encodeURIComponent('asset:read asset:write')
+    // Scopes abilitati nel portale Canva: app:read/write, asset:read/write, design:content:read/write
+    const scope = encodeURIComponent('asset:read asset:write app:read app:write design:content:read design:content:write')
 
-    // Rispettiamo esattamente l'ordine dei parametri dalla documentazione ufficiale Canva:
-    // https://www.canva.com/developers/docs/connect/authentication/
+    // Ordine parametri e formato IDENTICO al template mostrato dal portale Canva Developer:
+    // code_challenge_method=s256 (minuscolo — Canva non usa S256 standard RFC)
+    // code_challenge va in FONDO come mostrato dal portale
     const authUrl = 'https://www.canva.com/api/oauth/authorize' +
-        `?code_challenge=${encodeURIComponent(codeChallenge)}` +
-        `&code_challenge_method=S256` +
+        `?code_challenge_method=s256` +
         `&response_type=code` +
         `&client_id=${encodeURIComponent(clientId)}` +
-        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
         `&scope=${scope}` +
-        `&state=${state}`
+        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+        `&state=${state}` +
+        `&code_challenge=${encodeURIComponent(codeChallenge)}`
 
     console.log('[Canva Auth] Redirect URL:', authUrl)
     console.log('[Canva Auth] client_id:', clientId)

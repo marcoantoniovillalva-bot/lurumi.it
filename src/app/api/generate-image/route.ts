@@ -123,17 +123,64 @@ export async function POST(req: NextRequest) {
             provider = 'openai-dalle3'
             costUsd = 0.08
         } else if (referenceImageBase64) {
-            // flux-dev con immagine di riferimento (Replicate)
-            // HD = più inference steps per qualità superiore mantenendo la somiglianza
+            // Usa GPT-4o Vision per analizzare l'immagine di riferimento
+            // poi flux-dev per generare nel stile richiesto dall'utente
+            const openai = getOpenAIClient()
+
+            // Estrai la parte base64 pura (rimuovi eventuale data URL prefix)
+            const base64Data = referenceImageBase64.includes(',')
+                ? referenceImageBase64.split(',')[1]
+                : referenceImageBase64
+            const mimeMatch = referenceImageBase64.match(/^data:(image\/\w+);base64,/)
+            const mimeType = (mimeMatch?.[1] ?? 'image/jpeg') as 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif'
+
+            const visionRes = await openai.chat.completions.create({
+                model: 'gpt-4o',
+                max_tokens: 300,
+                messages: [
+                    {
+                        role: 'system',
+                        content: 'Describe the subject in this image concisely in English. Focus on: physical features (hair color/style, eye color, skin tone, face shape, age range), distinctive traits, clothing colors, accessories. Be specific but brief. No greetings, no preamble.',
+                    },
+                    {
+                        role: 'user',
+                        content: [
+                            { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Data}`, detail: 'low' } },
+                        ],
+                    },
+                ],
+            })
+            const subjectDescription = visionRes.choices[0]?.message?.content?.trim() ?? ''
+
+            // Rileva lo stile richiesto e costruisci il prompt appropriato
+            const lowerPrompt = prompt.toLowerCase()
+            const isAmigurumi = /amigurumi|crochet|uncinetto|pupazzetto|peluche|stuffed|knit/i.test(lowerPrompt)
+            const isManga = /manga|anime|cartoon|illustrazione|disegno|illustrated/i.test(lowerPrompt)
+
+            let stylePrefix: string
+            let styleSuffix: string
+            if (isAmigurumi) {
+                stylePrefix = `Amigurumi crochet doll of: ${subjectDescription}.`
+                styleSuffix = 'Cute kawaii amigurumi stuffed toy, hand-crocheted yarn texture, visible crochet stitches, round simplified chibi features, soft plush toy aesthetic. Clean studio background, soft lighting.'
+            } else if (isManga) {
+                stylePrefix = `Manga/anime illustration of: ${subjectDescription}.`
+                styleSuffix = 'Japanese manga art style, clean line art, anime character design, expressive eyes, detailed shading. Clean background.'
+            } else {
+                // Stile generico: rispetta il prompt dell'utente come guida principale
+                stylePrefix = `${subjectDescription}.`
+                styleSuffix = 'High quality, detailed, professional lighting.'
+            }
+
+            const enrichedRefPrompt = `${stylePrefix} ${prompt}. ${styleSuffix}`
+
             const replicate = getReplicateClient()
-            const enrichedRefPrompt = `Amigurumi crochet doll version of the subject in the reference image. ${prompt}. Cute kawaii amigurumi stuffed toy, hand-crocheted yarn texture, visible crochet stitches, round simplified chibi features, soft plush toy aesthetic, maintain color palette and recognizable traits from reference. Clean studio background, soft lighting.`
             const output = await replicate.run(
                 'black-forest-labs/flux-dev' as any,
                 {
                     input: {
                         prompt: enrichedRefPrompt,
                         image: referenceImageBase64,
-                        prompt_strength: 0.78,
+                        prompt_strength: isAmigurumi ? 0.90 : 0.82,
                         aspect_ratio: aspectRatio,
                         output_format: 'webp',
                         num_outputs: 1,
@@ -143,7 +190,7 @@ export async function POST(req: NextRequest) {
             )
             imageUrl = await extractReplicateUrl(output)
             provider = hd ? 'replicate-flux-dev-hd' : 'replicate-flux-dev'
-            costUsd = hd ? 0.035 : 0.025
+            costUsd = hd ? 0.040 : 0.030
         } else {
             // flux-schnell fast (Replicate) — solo testo
             const replicate = getReplicateClient()
