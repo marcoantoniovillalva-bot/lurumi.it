@@ -26,6 +26,7 @@ import {
     Trash2,
     ChevronLeft,
     ChevronRight,
+    X,
 } from "lucide-react";
 import { useProjectStore, Tutorial, RoundCounter as RoundCounterType, TranscriptSegment, TranscriptData, ProjectImage } from "@/features/projects/store/useProjectStore";
 import { useParams, useRouter } from "next/navigation";
@@ -68,6 +69,9 @@ export default function TutorialDetail() {
     const [fullscreen, setFullscreen] = useState(false);
     const [showCounterImagePicker, setShowCounterImagePicker] = useState(false);
     const [pickerTargetSecId, setPickerTargetSecId] = useState<string | null>(null);
+    const [showImageManager, setShowImageManager] = useState(false);
+    const [imgDragIdx, setImgDragIdx] = useState<number | null>(null);
+    const [imgOverIdx, setImgOverIdx] = useState<number | null>(null);
     const [exportingPdf, setExportingPdf] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const blobUrlsRef = useRef<string[]>([]);
@@ -322,11 +326,34 @@ export default function TutorialDetail() {
         syncImages(updatedImages);
     };
 
+    const moveImage = (from: number, to: number) => {
+        const newImages = [...(tutorial.images ?? [])];
+        const [removed] = newImages.splice(from, 1);
+        newImages.splice(to, 0, removed);
+        const newUrls = [...imageUrls];
+        const [removedUrl] = newUrls.splice(from, 1);
+        newUrls.splice(to, 0, removedUrl);
+        updateTutorial(tutorial.id, { images: newImages });
+        setImageUrls(newUrls);
+        setCurrentImgPage(p => p === from + 1 ? to + 1 : p);
+        syncImages(newImages, tutorial.coverImageId);
+    };
+
     const handleExportPdf = async () => {
         setExportingPdf(true);
         try {
             const { generatePatternPdf } = await import('@/lib/pdf-export');
-            const pdfBytes = await generatePatternPdf({ ...tutorial, type: 'tutorial' }, imageUrls);
+            const pdfInput = {
+                title: tutorial.title,
+                timer: tutorial.timer,
+                type: 'tutorial',
+                url: tutorial.url,
+                coverImageId: tutorial.coverImageId,
+                images: (tutorial.images ?? []).map(img => ({ id: img.id })),
+                secs: (tutorial.secs ?? []).map(s => ({ id: s.id, name: s.name, value: s.value, imageId: s.imageId })),
+                notesHtml: tutorial.notesHtml,
+            };
+            const pdfBytes = await generatePatternPdf(pdfInput, imageUrls);
             const blob = new Blob([pdfBytes.buffer as ArrayBuffer], { type: 'application/pdf' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -481,6 +508,15 @@ export default function TutorialDetail() {
 
     return (
         <div className="max-w-2xl mx-auto px-4 pt-6 pb-20">
+            {fullscreen && imageUrls.length > 0 && (
+                <FullscreenViewer
+                    type="images"
+                    images={imageUrls}
+                    initialPage={currentImgPage}
+                    onClose={() => setFullscreen(false)}
+                />
+            )}
+
             <div className="flex items-center justify-between mb-6">
                 <Link href="/tutorials" className="w-10 h-10 flex items-center justify-center bg-white border border-[#EEF0F4] rounded-xl text-[#9AA2B1]">
                     <ArrowLeft size={20} />
@@ -556,97 +592,6 @@ export default function TutorialDetail() {
                     <div className="w-full h-full flex items-center justify-center text-white/60 text-sm font-bold">
                         Video non disponibile
                     </div>
-                )}
-            </div>
-
-            {/* FullscreenViewer */}
-            {fullscreen && imageUrls.length > 0 && (
-                <FullscreenViewer
-                    type="images"
-                    images={imageUrls}
-                    pdfDoc={null}
-                    initialPage={currentImgPage}
-                    onClose={() => setFullscreen(false)}
-                />
-            )}
-
-            {/* Galleria Immagini */}
-            <div className="mb-8">
-                <div className="flex items-center justify-between mb-3">
-                    <h2 className="text-lg font-black text-[#1C1C1E]">Immagini</h2>
-                    <button
-                        onClick={() => fileInputRef.current?.click()}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-[#7B5CF6]/10 text-[#7B5CF6] rounded-xl font-black text-xs active:scale-95 transition-transform"
-                    >
-                        <Camera size={14} strokeWidth={3} /> AGGIUNGI
-                    </button>
-                </div>
-                {imageUrls.length > 0 ? (
-                    <div className="bg-white rounded-2xl border border-[#EEF0F4] shadow-sm overflow-hidden">
-                        <div className="relative">
-                            <img
-                                src={imageUrls[currentImgPage - 1]}
-                                alt={`Immagine ${currentImgPage}`}
-                                className="w-full object-contain max-h-72 cursor-zoom-in"
-                                onClick={() => setFullscreen(true)}
-                            />
-                            {imageUrls.length > 1 && (
-                                <div className="absolute inset-x-0 bottom-2 flex items-center justify-center gap-2">
-                                    <button
-                                        onClick={() => setCurrentImgPage(p => Math.max(1, p - 1))}
-                                        disabled={currentImgPage === 1}
-                                        className="w-8 h-8 flex items-center justify-center bg-black/50 text-white rounded-full disabled:opacity-30"
-                                    >
-                                        <ChevronLeft size={16} />
-                                    </button>
-                                    <span className="text-white text-xs font-bold bg-black/50 px-2 py-0.5 rounded-full">
-                                        {currentImgPage}/{imageUrls.length}
-                                    </span>
-                                    <button
-                                        onClick={() => setCurrentImgPage(p => Math.min(imageUrls.length, p + 1))}
-                                        disabled={currentImgPage === imageUrls.length}
-                                        className="w-8 h-8 flex items-center justify-center bg-black/50 text-white rounded-full disabled:opacity-30"
-                                    >
-                                        <ChevronRight size={16} />
-                                    </button>
-                                </div>
-                            )}
-                            <button
-                                onClick={() => setFullscreen(true)}
-                                className="absolute top-2 right-2 w-8 h-8 flex items-center justify-center bg-black/50 text-white rounded-lg"
-                            >
-                                <Maximize2 size={14} />
-                            </button>
-                        </div>
-                        <div className="flex items-center justify-between px-4 py-2 border-t border-[#EEF0F4]">
-                            <button
-                                onClick={() => {
-                                    const imgs = tutorial.images ?? [];
-                                    const imgId = imgs[currentImgPage - 1]?.id;
-                                    if (!imgId) return;
-                                    updateTutorial(tutorial.id, { coverImageId: imgId });
-                                    syncImages(imgs, imgId);
-                                }}
-                                className={`text-xs font-bold px-2 py-1 rounded-lg transition-colors ${tutorial.coverImageId === (tutorial.images ?? [])[currentImgPage - 1]?.id ? 'bg-[#7B5CF6] text-white' : 'bg-[#F4EEFF] text-[#7B5CF6]'}`}
-                            >
-                                {tutorial.coverImageId === (tutorial.images ?? [])[currentImgPage - 1]?.id ? '★ Copertina' : 'Imposta copertina'}
-                            </button>
-                            <button
-                                onClick={handleDeleteCurrentImage}
-                                className="w-8 h-8 flex items-center justify-center bg-red-50 text-red-500 rounded-lg"
-                            >
-                                <Trash2 size={14} />
-                            </button>
-                        </div>
-                    </div>
-                ) : (
-                    <button
-                        onClick={() => fileInputRef.current?.click()}
-                        className="w-full h-28 flex flex-col items-center justify-center gap-2 bg-[#FAFAFC] rounded-2xl border-2 border-dashed border-[#EEF0F4] text-[#9AA2B1] active:scale-[0.98] transition-transform"
-                    >
-                        <Camera size={28} className="text-[#D9CAFF]" />
-                        <span className="text-sm font-bold">Aggiungi immagini al tutorial</span>
-                    </button>
                 )}
             </div>
 
@@ -837,6 +782,118 @@ export default function TutorialDetail() {
                 </div>
             </div>
 
+            {/* Gallery / Immagini */}
+            <div className="bg-white rounded-[32px] border border-[#EEF0F4] overflow-hidden shadow-sm mb-8">
+                {/* Toolbar */}
+                <div className="p-3 bg-white border-b border-[#EEF0F4] flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                        <span className="text-sm font-black text-[#1C1C1E]">Immagini</span>
+                        {imageUrls.length > 0 && (
+                            <span className="text-[13px] font-black text-[#1C1C1E] bg-[#FAFAFC] px-3 py-1.5 rounded-lg border border-[#EEF0F4]">
+                                {currentImgPage} / {imageUrls.length}
+                            </span>
+                        )}
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                        <button
+                            onClick={() => setCurrentImgPage(p => Math.max(1, p - 1))}
+                            disabled={imageUrls.length <= 1}
+                            className="w-9 h-9 flex items-center justify-center bg-[#FAFAFC] rounded-lg text-[#1C1C1E] active:scale-90 transition-all disabled:opacity-30"
+                        >
+                            <ChevronLeft size={20} strokeWidth={3} />
+                        </button>
+                        <button
+                            onClick={() => setCurrentImgPage(p => Math.min(imageUrls.length, p + 1))}
+                            disabled={imageUrls.length <= 1}
+                            className="w-9 h-9 flex items-center justify-center bg-[#FAFAFC] rounded-lg text-[#1C1C1E] active:scale-90 transition-all disabled:opacity-30"
+                        >
+                            <ChevronRight size={20} strokeWidth={3} />
+                        </button>
+                        <button
+                            onClick={() => fileInputRef.current?.click()}
+                            className="w-9 h-9 flex items-center justify-center bg-[#F4EEFF] text-[#7B5CF6] rounded-lg"
+                            title="Aggiungi immagine"
+                        >
+                            <Plus size={18} strokeWidth={3} />
+                        </button>
+                        {imageUrls.length > 0 && (
+                            <button
+                                onClick={handleDeleteCurrentImage}
+                                className="w-9 h-9 flex items-center justify-center bg-red-50 text-red-500 rounded-lg"
+                                title="Elimina immagine"
+                            >
+                                <Trash2 size={18} strokeWidth={3} />
+                            </button>
+                        )}
+                        {imageUrls.length > 1 && (
+                            <button
+                                onClick={() => setShowImageManager(true)}
+                                className="w-9 h-9 flex items-center justify-center bg-[#F4EEFF] text-[#7B5CF6] rounded-lg"
+                                title="Gestisci immagini"
+                            >
+                                <GripVertical size={18} />
+                            </button>
+                        )}
+                        {imageUrls.length > 0 && (
+                            <button
+                                onClick={() => setFullscreen(true)}
+                                className="w-9 h-9 flex items-center justify-center bg-[#FAFAFC] text-[#9AA2B1] hover:text-[#7B5CF6] rounded-lg transition-colors"
+                                title="Schermo intero"
+                            >
+                                <Maximize2 size={18} />
+                            </button>
+                        )}
+                    </div>
+                </div>
+
+                {/* Viewer */}
+                <div
+                    className="bg-[#FAFAFC] flex justify-center relative min-h-[180px]"
+                    onDoubleClick={() => imageUrls.length > 0 && setFullscreen(true)}
+                >
+                    {imageUrls.length > 0 ? (
+                        <div className="w-full flex items-center justify-center p-4">
+                            <img
+                                src={imageUrls[currentImgPage - 1]}
+                                alt="Tutorial"
+                                className="max-w-full max-h-[380px] object-contain shadow-2xl rounded-2xl"
+                            />
+                        </div>
+                    ) : (
+                        <div className="text-center p-12">
+                            <div className="w-16 h-16 bg-[#F4EEFF] rounded-2xl flex items-center justify-center mx-auto mb-4 text-[#7B5CF6]">
+                                <Camera size={32} />
+                            </div>
+                            <p className="text-[#9AA2B1] font-bold text-sm">Nessuna immagine</p>
+                            <button
+                                onClick={() => fileInputRef.current?.click()}
+                                className="mt-3 text-xs font-bold text-[#7B5CF6]"
+                            >
+                                + Aggiungi
+                            </button>
+                        </div>
+                    )}
+                    {/* Cover badge */}
+                    {tutorial.coverImageId && (tutorial.images ?? [])[currentImgPage - 1]?.id === tutorial.coverImageId && (
+                        <div className="absolute top-3 left-3 bg-amber-400 text-amber-900 text-[10px] font-black px-2 py-0.5 rounded-full pointer-events-none">⭐ Copertina</div>
+                    )}
+                    {/* Set / remove cover button */}
+                    {imageUrls.length > 0 && (
+                        <button
+                            onClick={() => {
+                                const imgId = (tutorial.images ?? [])[currentImgPage - 1]?.id;
+                                const newCoverId = tutorial.coverImageId === imgId ? undefined : imgId;
+                                updateTutorial(tutorial.id, { coverImageId: newCoverId });
+                                syncImages(tutorial.images ?? [], newCoverId);
+                            }}
+                            className="absolute top-3 right-3 text-[10px] font-black px-2 py-0.5 rounded-full bg-white/80 border border-[#EEF0F4] text-[#9AA2B1] hover:text-amber-500 hover:border-amber-300 transition-colors"
+                        >
+                            {tutorial.coverImageId === (tutorial.images ?? [])[currentImgPage - 1]?.id ? '★ Rimuovi copertina' : '☆ Imposta copertina'}
+                        </button>
+                    )}
+                </div>
+            </div>
+
             {/* Rounds / Secondary Counters */}
             <div className="mb-10">
                 <div className="flex items-center justify-between mb-4">
@@ -1008,6 +1065,119 @@ export default function TutorialDetail() {
                     }}
                     onClose={() => { setShowCounterImagePicker(false); setPickerTargetSecId(null); }}
                 />
+            )}
+
+            {/* Image Manager Modal */}
+            {showImageManager && (
+                <div className="fixed inset-0 z-[10000] flex items-end md:items-center justify-center bg-black/50" onClick={() => setShowImageManager(false)}>
+                    <div
+                        className="w-full max-w-2xl bg-white rounded-t-[32px] md:rounded-[32px] shadow-2xl animate-in slide-in-from-bottom md:slide-in-from-bottom-0 duration-300 flex flex-col max-h-[85vh]"
+                        onClick={e => e.stopPropagation()}
+                    >
+                        <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#EEF0F4] shrink-0">
+                            <div>
+                                <h3 className="text-xl font-black text-[#1C1C1E]">Gestisci Immagini</h3>
+                                <p className="text-xs text-[#9AA2B1] font-medium mt-0.5">⭐ Copertina · Usa ↑↓ per riordinare</p>
+                            </div>
+                            <button
+                                onClick={() => setShowImageManager(false)}
+                                className="w-9 h-9 flex items-center justify-center rounded-xl bg-[#FAFAFC] border border-[#EEF0F4] text-[#9AA2B1]"
+                            >
+                                <X size={18} />
+                            </button>
+                        </div>
+
+                        <div className="overflow-y-auto flex-1 px-4 py-3">
+                            {(tutorial.images ?? []).map((img, i) => {
+                                const url = imageUrls[i];
+                                const isCover = tutorial.coverImageId
+                                    ? img.id === tutorial.coverImageId
+                                    : i === 0;
+                                const isDragging = imgDragIdx === i;
+                                const isOver = imgOverIdx === i && imgDragIdx !== i;
+                                return (
+                                    <div
+                                        key={img.id}
+                                        className={`flex items-center gap-3 p-2.5 rounded-2xl mb-2 border transition-all select-none
+                                            ${isOver ? 'border-[#7B5CF6] bg-[#F4EEFF]' : isDragging ? 'opacity-40 border-dashed border-[#7B5CF6]' : 'border-transparent hover:border-[#EEF0F4] hover:bg-[#FAFAFC]'}`}
+                                    >
+                                        <div className="w-8 h-16 flex items-center justify-center shrink-0 rounded-xl bg-[#FAFAFC] border border-[#EEF0F4] cursor-grab active:cursor-grabbing touch-none"
+                                            onPointerDown={(e) => { e.preventDefault(); setImgDragIdx(i); }}
+                                            onPointerMove={(e) => {
+                                                if (imgDragIdx === null) return;
+                                                const el = document.elementFromPoint(e.clientX, e.clientY);
+                                                const row = el?.closest('[data-img-idx]');
+                                                if (row) setImgOverIdx(Number(row.getAttribute('data-img-idx')));
+                                            }}
+                                            onPointerUp={() => {
+                                                if (imgDragIdx !== null && imgOverIdx !== null && imgDragIdx !== imgOverIdx) {
+                                                    moveImage(imgDragIdx, imgOverIdx);
+                                                }
+                                                setImgDragIdx(null); setImgOverIdx(null);
+                                            }}
+                                            title="Trascina per riordinare"
+                                        >
+                                            <GripVertical size={16} className="text-[#9AA2B1]" />
+                                        </div>
+
+                                        <div className="w-16 h-16 rounded-xl overflow-hidden bg-[#FAFAFC] border border-[#EEF0F4] shrink-0 relative" data-img-idx={i}>
+                                            {url && <img src={url} alt="" className="w-full h-full object-cover" draggable={false} />}
+                                            {isCover && (
+                                                <div className="absolute top-1 right-1 w-5 h-5 bg-amber-400 rounded-full flex items-center justify-center shadow-sm">
+                                                    <span className="text-[10px]">⭐</span>
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-sm font-bold text-[#1C1C1E]">
+                                                Immagine {i + 1}
+                                                {isCover && <span className="ml-2 text-amber-500 text-xs font-black">COPERTINA</span>}
+                                            </p>
+                                            {!isCover && (
+                                                <button
+                                                    onClick={() => {
+                                                        updateTutorial(tutorial.id, { coverImageId: img.id });
+                                                        syncImages(tutorial.images ?? [], img.id);
+                                                    }}
+                                                    className="text-xs text-[#9AA2B1] hover:text-amber-500 font-bold mt-0.5 transition-colors"
+                                                >
+                                                    ⭐ Imposta come copertina
+                                                </button>
+                                            )}
+                                        </div>
+
+                                        <div className="flex flex-col gap-1 shrink-0">
+                                            <button
+                                                onClick={() => i > 0 && moveImage(i, i - 1)}
+                                                disabled={i === 0}
+                                                className="w-8 h-8 flex items-center justify-center rounded-lg bg-[#FAFAFC] border border-[#EEF0F4] text-[#7B5CF6] disabled:opacity-25 active:scale-90 transition-all"
+                                            >
+                                                <ChevronUp size={15} strokeWidth={3} />
+                                            </button>
+                                            <button
+                                                onClick={() => i < (tutorial.images ?? []).length - 1 && moveImage(i, i + 1)}
+                                                disabled={i === (tutorial.images ?? []).length - 1}
+                                                className="w-8 h-8 flex items-center justify-center rounded-lg bg-[#FAFAFC] border border-[#EEF0F4] text-[#7B5CF6] disabled:opacity-25 active:scale-90 transition-all"
+                                            >
+                                                <ChevronDown size={15} strokeWidth={3} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+
+                        <div className="px-6 pb-6 pt-3 shrink-0">
+                            <button
+                                onClick={() => setShowImageManager(false)}
+                                className="w-full h-12 bg-[#7B5CF6] text-white rounded-2xl font-bold shadow-lg"
+                            >
+                                Fatto
+                            </button>
+                        </div>
+                    </div>
+                </div>
             )}
 
             {/* Notes — Annota Progressi */}

@@ -4,6 +4,7 @@ export interface PdfProjectInput {
     title: string
     timer?: number
     type?: string
+    url?: string          // link YouTube (tutorial) o altro link esterno
     coverImageId?: string
     images?: { id: string }[]
     secs: { id: string; name: string; value: number; imageId?: string }[]
@@ -109,7 +110,24 @@ export async function generatePatternPdf(
         coverPage.drawText(`Tempo: ${formatTime(project.timer)}`, {
             x: MARGIN, y: coverY, size: 11, font: fontNormal, color: MUTED,
         })
-        coverY -= 24
+        coverY -= 20
+    }
+
+    // Link YouTube / URL esterno (solo se presente)
+    if (project.url) {
+        const urlLabel = 'Tutorial: '
+        const urlText = project.url.length > 60 ? project.url.slice(0, 57) + '...' : project.url
+        const labelW = fontBold.widthOfTextAtSize(urlLabel, 9)
+        const linkW  = fontNormal.widthOfTextAtSize(urlText, 9)
+        coverPage.drawText(urlLabel, { x: MARGIN, y: coverY, size: 9, font: fontBold, color: MUTED })
+        coverPage.drawText(urlText,  { x: MARGIN + labelW, y: coverY, size: 9, font: fontNormal, color: PURPLE })
+        // Sottolineatura per indicare link cliccabile
+        coverPage.drawLine({
+            start: { x: MARGIN + labelW, y: coverY - 1 },
+            end:   { x: MARGIN + labelW + linkW, y: coverY - 1 },
+            thickness: 0.5, color: PURPLE,
+        })
+        coverY -= 20
     }
 
     // Immagine di copertina
