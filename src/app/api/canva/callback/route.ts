@@ -15,10 +15,9 @@ export async function GET(request: NextRequest) {
 
     const clientId = process.env.CANVA_CLIENT_ID
     const clientSecret = process.env.CANVA_CLIENT_SECRET
-    const redirectUri = process.env.CANVA_REDIRECT_URI ?? 'https://lurumi.it/api/canva/callback'
     const codeVerifier = request.cookies.get('canva_cv')?.value
 
-    console.log('[Canva Callback] env check:', { hasClientId: !!clientId, hasSecret: !!clientSecret, hasVerifier: !!codeVerifier, redirectUri })
+    console.log('[Canva Callback] env check:', { hasClientId: !!clientId, hasSecret: !!clientSecret, hasVerifier: !!codeVerifier })
 
     if (!clientId || !clientSecret || !codeVerifier) {
         const reason = !clientId ? 'no_client_id' : !clientSecret ? 'no_client_secret' : 'no_cookie'
@@ -26,14 +25,13 @@ export async function GET(request: NextRequest) {
         return NextResponse.redirect(new URL(`/profilo?canva=error&reason=${reason}`, request.url))
     }
 
-    // Exchange code for token
+    // Exchange code for token — no redirect_uri (non inclusa nella auth request)
     const tokenRes = await fetch('https://api.canva.com/rest/v1/oauth/token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
             grant_type: 'authorization_code',
             code,
-            redirect_uri: redirectUri,
             client_id: clientId,
             client_secret: clientSecret,
             code_verifier: codeVerifier,

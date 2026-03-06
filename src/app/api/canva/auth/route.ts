@@ -16,33 +16,21 @@ export async function GET() {
         .update(codeVerifier)
         .digest('base64url')
 
-    // State per CSRF protection
-    const state = crypto.randomBytes(16).toString('hex')
-
-    // Scopes: codifica SOLO gli spazi come %20, lascia i due punti letterali
-    // (il portale Canva mostra esplicitamente colons non codificati nel template URL)
+    // Scope: solo spazi codificati come %20, colons letterali (come da template portale Canva)
     const scope = 'asset:read asset:write app:read app:write design:content:read design:content:write'.replace(/ /g, '%20')
 
-    // Ordine parametri e formato IDENTICO al template mostrato dal portale Canva Developer:
-    // code_challenge_method=s256 (minuscolo — Canva non usa S256 standard RFC)
-    // code_challenge va in FONDO come mostrato dal portale
+    // URL IDENTICA al template del portale Canva — nessun parametro extra (no redirect_uri, no state)
+    // Il portale usa URL 1 (https://lurumi.it/api/canva/callback) come redirect di default
     const authUrl = 'https://www.canva.com/api/oauth/authorize' +
         `?code_challenge_method=s256` +
         `&response_type=code` +
-        `&client_id=${encodeURIComponent(clientId)}` +
+        `&client_id=${clientId}` +
         `&scope=${scope}` +
-        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-        `&state=${state}` +
-        `&code_challenge=${encodeURIComponent(codeChallenge)}`
+        `&code_challenge=${codeChallenge}`
 
-    console.log('[Canva Auth] Redirect URL:', authUrl)
-    console.log('[Canva Auth] client_id:', clientId)
-    console.log('[Canva Auth] redirect_uri:', redirectUri)
-    console.log('[Canva Auth] scope:', decodeURIComponent(scope))
+    console.log('[Canva Auth] URL:', authUrl)
 
-    // Store verifier and state in a short-lived cookie so callback can use it
     const response = NextResponse.redirect(authUrl)
     response.cookies.set('canva_cv', codeVerifier, { httpOnly: true, maxAge: 600, path: '/' })
-    response.cookies.set('canva_state', state, { httpOnly: true, maxAge: 600, path: '/' })
     return response
 }
