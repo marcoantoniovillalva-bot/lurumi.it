@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useRef, useState, useEffect } from "react";
-import { Search, ListFilter, Plus, MoreVertical, Pencil, Trash2, Share2, Check, X } from "lucide-react";
+import { Search, ListFilter, Plus, MoreVertical, Pencil, Trash2, FileDown, Archive, ExternalLink, Check, X } from "lucide-react";
 import { useProjectStore, Project } from "@/features/projects/store/useProjectStore";
 import { luDB } from "@/lib/db";
 import Link from "next/link";
@@ -248,14 +248,125 @@ export default function Home() {
     }
   };
 
-  const handleShare = (project: Project) => {
-    if (navigator.share) {
-      navigator.share({ title: project.title, text: `Progetto Lurumi: ${project.title}` });
-    } else {
-      navigator.clipboard.writeText(project.title);
-      alert('Nome progetto copiato!');
+  const [cardExporting, setCardExporting] = useState<string | null>(null);
+
+  // Carica le imageUrls per un progetto dalla IDB / Supabase
+  const loadImageUrls = async (project: Project): Promise<string[]> => {
+    if (project.type !== 'images') return [];
+    const imgs = project.images ?? [];
+    const urls: string[] = [];
+    const supabase = user ? createClient() : null;
+    for (const img of imgs) {
+      const record = await luDB.getFile(img.id);
+      if (record?.blob) {
+        urls.push(URL.createObjectURL(record.blob));
+      } else if (supabase && user) {
+        const storagePath = img.id === project.id
+          ? `${user.id}/${project.id}/main`
+          : `${user.id}/${project.id}/${img.id}`;
+        const { data: blob } = await supabase.storage.from('project-files').download(storagePath);
+        if (blob) {
+          await luDB.saveFile({ id: img.id, blob });
+          urls.push(URL.createObjectURL(blob));
+        }
+      }
     }
+    return urls;
+  };
+
+  const handleCardExportPdf = async (project: Project) => {
     setMenuId(null);
+    setCardExporting(project.id);
+    try {
+      const imageUrls = await loadImageUrls(project);
+      const { generatePatternPdf } = await import('@/lib/pdf-export');
+      const pdfBytes = await generatePatternPdf(project, imageUrls);
+      const blob = new Blob([pdfBytes.buffer as ArrayBuffer], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${project.title.replace(/[^a-zA-Z0-9]/g, '-')}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+      imageUrls.forEach(u => u.startsWith('blob:') && URL.revokeObjectURL(u));
+    } catch (e) {
+      console.error('[PDF Export]', e);
+      alert('Errore durante la generazione del PDF.');
+    } finally {
+      setCardExporting(null);
+    }
+  };
+
+  const handleCardExportZip = async (project: Project) => {
+    setMenuId(null);
+    setCardExporting(project.id);
+    try {
+      const { zipSync, strToU8 } = await import('fflate');
+      const files: Record<string, Uint8Array> = {
+        'info.txt': strToU8(`Progetto: ${project.title}\nCreato con lurumi.it`),
+      };
+      const record = await luDB.getFile(project.id);
+      if (record?.blob) {
+        const buf = await record.blob.arrayBuffer();
+        files[`progetto.${project.type === 'pdf' ? 'pdf' : 'jpg'}`] = new Uint8Array(buf);
+      }
+      if (project.images?.length) {
+        for (let i = 0; i < project.images.length; i++) {
+          const imgRecord = await luDB.getFile(project.images[i].id);
+          if (imgRecord?.blob) {
+            files[`immagine-${i + 1}.jpg`] = new Uint8Array(await imgRecord.blob.arrayBuffer());
+          }
+        }
+      }
+      const zipped = zipSync(files);
+      const blob = new Blob([zipped.buffer as ArrayBuffer], { type: 'application/zip' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${project.title.replace(/[^a-zA-Z0-9]/g, '-')}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error('[ZIP Export]', e);
+      alert('Errore durante la generazione dello ZIP.');
+    } finally {
+      setCardExporting(null);
+    }
+  };
+
+  const handleShareWithCanva = async (project: Project) => {
+    setMenuId(null);
+    setCardExporting(project.id);
+    try {
+      const imageUrls = await loadImageUrls(project);
+      const { generatePatternPdf } = await import('@/lib/pdf-export');
+      const pdfBytes = await generatePatternPdf(project, imageUrls);
+      const pdfFile = new File(
+        [pdfBytes.buffer as ArrayBuffer],
+        `${project.title.replace(/[^a-zA-Z0-9]/g, '-')}.pdf`,
+        { type: 'application/pdf' }
+      );
+      imageUrls.forEach(u => u.startsWith('blob:') && URL.revokeObjectURL(u));
+      if (navigator.canShare?.({ files: [pdfFile] })) {
+        await navigator.share({ files: [pdfFile], title: project.title });
+      } else {
+        // Fallback: scarica il PDF
+        const url = URL.createObjectURL(pdfFile);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = pdfFile.name;
+        a.click();
+        URL.revokeObjectURL(url);
+        alert('Condivisione file non supportata su questo dispositivo. Il PDF è stato scaricato.');
+      }
+    } catch (e: any) {
+      if (e?.name !== 'AbortError') {
+        console.error('[Share Canva]', e);
+        alert('Errore durante la condivisione.');
+      }
+    } finally {
+      setCardExporting(null);
+    }
   };
 
   const sortLabels: Record<string, string> = { recent: 'Recenti', oldest: 'Meno recenti', alpha: 'A → Z' };
@@ -428,11 +539,28 @@ export default function Home() {
                         Rinomina
                       </button>
                       <button
-                        onClick={() => handleShare(project)}
-                        className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm font-bold text-[#1C1C1E] hover:bg-[#F4F4F8] rounded-xl"
+                        onClick={() => handleCardExportPdf(project)}
+                        disabled={cardExporting === project.id}
+                        className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm font-bold text-[#1C1C1E] hover:bg-[#F4F4F8] rounded-xl disabled:opacity-50"
                       >
-                        <Share2 size={15} className="text-[#7B5CF6]" />
-                        Condividi
+                        <FileDown size={15} className="text-[#7B5CF6]" />
+                        {cardExporting === project.id ? 'Generando…' : 'Scarica PDF'}
+                      </button>
+                      <button
+                        onClick={() => handleCardExportZip(project)}
+                        disabled={cardExporting === project.id}
+                        className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm font-bold text-[#1C1C1E] hover:bg-[#F4F4F8] rounded-xl disabled:opacity-50"
+                      >
+                        <Archive size={15} className="text-[#7B5CF6]" />
+                        {cardExporting === project.id ? 'Generando…' : 'Scarica ZIP'}
+                      </button>
+                      <button
+                        onClick={() => handleShareWithCanva(project)}
+                        disabled={cardExporting === project.id}
+                        className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm font-bold text-[#1C1C1E] hover:bg-[#F4F4F8] rounded-xl disabled:opacity-50"
+                      >
+                        <ExternalLink size={15} className="text-[#7B5CF6]" />
+                        {cardExporting === project.id ? 'Generando…' : 'Condividi con Canva'}
                       </button>
                       <div className="h-px bg-[#F4F4F8] my-1" />
                       <button
