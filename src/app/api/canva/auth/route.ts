@@ -21,8 +21,8 @@ export async function GET() {
         '?response_type=code' +
         `&client_id=${encodeURIComponent(clientId)}` +
         `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-        `&scope=${encodeURIComponent('asset:read asset:write')}` +
-        `&code_challenge_method=S256` +
+        `&scope=${encodeURIComponent('asset:read asset:write design:content:read design:content:write')}` +
+        `&code_challenge_method=s256` +
         `&code_challenge=${encodeURIComponent(codeChallenge)}`
 
     // Store verifier in a short-lived cookie so callback can use it
