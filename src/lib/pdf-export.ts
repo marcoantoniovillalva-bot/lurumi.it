@@ -121,15 +121,22 @@ export async function generatePatternPdf(
         }
     }
 
+    // IDs delle immagini usate dai contatori secondari
+    const counterImageIds = new Set(
+        (project.secs ?? []).filter(s => s.imageId).map(s => s.imageId as string)
+    )
+
+    // Indice e ID dell'immagine di copertina effettiva
+    const coverImgRealIdx = project.coverImageId
+        ? (project.images ?? []).findIndex(i => i.id === project.coverImageId)
+        : 0
+    const coverImgRealId = (project.images ?? [])[coverImgRealIdx >= 0 ? coverImgRealIdx : 0]?.id
+
     // ── Pagina 2: Immagini non associate ────────────────────────────────────
-    // Immagini che non sono la copertina e non sono associate a nessun contatore secondario
-    const associatedImageIds = new Set([
-        ...(project.coverImageId ? [project.coverImageId] : []),
-        ...(project.secs ?? []).filter(s => s.imageId).map(s => s.imageId as string),
-    ])
+    // Tutte le immagini che non sono né la copertina né associate a un contatore
     const galleryImages = (project.images ?? [])
         .map((img, idx) => ({ img, idx }))
-        .filter(({ img }) => !associatedImageIds.has(img.id))
+        .filter(({ img }) => img.id !== coverImgRealId && !counterImageIds.has(img.id))
 
     if (galleryImages.length > 0) {
         let galPage = addPage()
@@ -151,17 +158,15 @@ export async function generatePatternPdf(
                 const embedded = imgData.isPng
                     ? await pdfDoc.embedPng(imgData.bytes)
                     : await pdfDoc.embedJpg(imgData.bytes)
-                const maxH = Math.min(y - 80, 300)
-                const maxW = CONTENT_W
-                const scale = Math.min(maxW / embedded.width, maxH / embedded.height, 1)
+                const maxH = 300
+                const scale = Math.min(CONTENT_W / embedded.width, maxH / embedded.height, 1)
                 const iW = embedded.width * scale
                 const iH = embedded.height * scale
-                if (y - iH < 60) {
+                if (y - iH < 80) {
                     galPage = addPage()
                     y = H - MARGIN
                 }
-                const iX = MARGIN + (CONTENT_W - iW) / 2
-                galPage.drawImage(embedded, { x: iX, y: y - iH, width: iW, height: iH })
+                galPage.drawImage(embedded, { x: MARGIN + (CONTENT_W - iW) / 2, y: y - iH, width: iW, height: iH })
                 y -= iH + 20
             } catch {}
         }
@@ -176,19 +181,24 @@ export async function generatePatternPdf(
             x: MARGIN, y, size: 20, font: fontBold, color: DARK,
         })
         y -= 14
-
         secsPage.drawLine({ start: { x: MARGIN, y }, end: { x: W - MARGIN, y }, thickness: 1, color: LIGHT })
         y -= 28
 
         for (const sec of project.secs) {
-            // Trova immagine associata
-            const secImgIdx = sec.imageId ? (project.images ?? []).findIndex(i => i.id === sec.imageId) : -1
-            const secImgUrl = secImgIdx >= 0 ? imageUrls[secImgIdx] : null
+            const secImgIdx = sec.imageId
+                ? (project.images ?? []).findIndex(i => i.id === sec.imageId)
+                : -1
+            const secImgUrl = secImgIdx >= 0 ? (imageUrls[secImgIdx] ?? null) : null
 
-            // Calcola altezza immagine associata (se presente)
-            let secImgEmbedded = null
+            // Se l'immagine associata è anche la copertina → mostrala piccola (100px),
+            // altrimenti mostrarla normale (200px)
+            const isCoverDuplicate = sec.imageId === coverImgRealId
+            const maxImgH = isCoverDuplicate ? 100 : 200
+
+            let secImgEmbedded: Awaited<ReturnType<typeof pdfDoc.embedPng>> | null = null
             let secImgH = 0
             let secImgW = 0
+
             if (secImgUrl) {
                 const imgData = await fetchImageAsBytes(secImgUrl)
                 if (imgData) {
@@ -196,42 +206,42 @@ export async function generatePatternPdf(
                         secImgEmbedded = imgData.isPng
                             ? await pdfDoc.embedPng(imgData.bytes)
                             : await pdfDoc.embedJpg(imgData.bytes)
-                        const maxH = 200
-                        const maxW = CONTENT_W
-                        const scale = Math.min(maxW / secImgEmbedded.width, maxH / secImgEmbedded.height, 1)
+                        const scale = Math.min(CONTENT_W / secImgEmbedded.width, maxImgH / secImgEmbedded.height, 1)
                         secImgW = secImgEmbedded.width * scale
                         secImgH = secImgEmbedded.height * scale
                     } catch {}
                 }
             }
 
-            const blockH = (secImgH > 0 ? secImgH + 12 : 0) + 18 + 10 + 22 + 30
+            const blockH = (secImgH > 0 ? secImgH + 12 : 0) + 18 + 18 + 10 + 24
             if (y < blockH + 60) {
                 secsPage = addPage()
                 y = H - MARGIN
             }
 
-            // Immagine sopra il contatore
+            // Immagine sopra i dati del contatore
             if (secImgEmbedded && secImgH > 0) {
-                const iX = MARGIN + (CONTENT_W - secImgW) / 2
-                secsPage.drawImage(secImgEmbedded, { x: iX, y: y - secImgH, width: secImgW, height: secImgH })
+                secsPage.drawImage(secImgEmbedded, {
+                    x: MARGIN + (CONTENT_W - secImgW) / 2,
+                    y: y - secImgH,
+                    width: secImgW,
+                    height: secImgH,
+                })
                 y -= secImgH + 12
             }
 
-            // Nome parte
             secsPage.drawText(sec.name || 'Parte', {
                 x: MARGIN, y, size: 13, font: fontBold, color: DARK,
             })
             y -= 18
 
-            // Valore giri
             secsPage.drawText(`${sec.value} giri`, {
                 x: MARGIN, y, size: 11, font: fontNormal, color: PURPLE,
             })
             y -= 10
 
             secsPage.drawLine({ start: { x: MARGIN, y }, end: { x: W - MARGIN, y }, thickness: 0.4, color: LIGHT })
-            y -= 22
+            y -= 24
         }
     }
 
