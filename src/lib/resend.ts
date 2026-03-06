@@ -1,4 +1,5 @@
 import { Resend } from 'resend'
+import { detectGender } from '@/lib/gender-detect'
 
 export const resend = new Resend(process.env.RESEND_API_KEY)
 
@@ -6,25 +7,16 @@ const FROM = process.env.EMAIL_FROM_NOREPLY ?? 'noreply@lurumi.it'
 // URL di produzione fisso: le immagini nelle email devono essere pubblicamente raggiungibili
 const BASE_URL = 'https://www.lurumi.it'
 
-// ── Gender detection per nomi italiani ───────────────────────────────────────
-// Euristica semplice: nomi che finiscono in 'a' → femminile, altrimenti maschile/neutro
-function italianGender(firstName?: string): 'f' | 'm' | 'n' {
-  if (!firstName) return 'n'
-  const n = firstName.trim().toLowerCase()
-  // Eccezioni comuni maschili che finiscono in 'a'
-  const maleExceptions = ['andrea', 'luca', 'nicola', 'mattia', 'enea', 'elia', 'beniamino']
-  if (maleExceptions.includes(n)) return 'm'
-  if (n.endsWith('a')) return 'f'
-  if (n.endsWith('o') || n.endsWith('e') || n.endsWith('i')) return 'm'
-  return 'n'
-}
-
-function greetingFor(firstName?: string): { benvenut: string; cara: string } {
-  const g = italianGender(firstName)
+function greetingFromGender(g: 'f' | 'm' | 'n'): { benvenut: string; cara: string } {
   return {
     benvenut: g === 'f' ? 'Benvenuta' : g === 'm' ? 'Benvenuto' : 'Benvenuto/a',
     cara: g === 'f' ? 'cara' : g === 'm' ? 'caro' : 'cara/o',
   }
+}
+
+async function greetingFor(firstName?: string, gender?: string): Promise<{ benvenut: string; cara: string }> {
+  const g = (gender as 'f' | 'm' | 'n' | undefined) ?? await detectGender(firstName)
+  return greetingFromGender(g)
 }
 
 // ── Template base ────────────────────────────────────────────────────────────
@@ -89,9 +81,9 @@ function primaryButton(label: string, url: string): string {
 }
 
 // ── Email di benvenuto (inviata dopo primo accesso) ───────────────────────────
-export async function sendWelcomeEmail(to: string, firstName?: string) {
+export async function sendWelcomeEmail(to: string, firstName?: string, gender?: string) {
   const name = firstName ?? 'amica'
-  const { benvenut } = greetingFor(firstName)
+  const { benvenut } = await greetingFor(firstName, gender)
 
   const html = emailWrapper(`
     <p style="margin:0 0 6px;font-size:23px;font-weight:900;color:#1C1C1E;line-height:1.2;">${benvenut} su Lurumi, ${name}!</p>
@@ -128,12 +120,14 @@ export async function sendNewsletterEmail(
   subject: string,
   bodyHtml: string,
   recipientName?: string,
+  gender?: string,
 ) {
+  const { benvenut, cara } = await greetingFor(recipientName, gender)
   // Sostituisce {{nome}} con il nome del destinatario (o stringa vuota se assente)
   const personalizedBody = bodyHtml
     .replace(/\{\{nome\}\}/gi, recipientName ?? '')
-    .replace(/\{\{cara\}\}/gi, recipientName ? greetingFor(recipientName).cara : 'cara/o')
-    .replace(/\{\{benvenut\}\}/gi, recipientName ? greetingFor(recipientName).benvenut : 'Ciao')
+    .replace(/\{\{cara\}\}/gi, cara)
+    .replace(/\{\{benvenut\}\}/gi, benvenut)
 
   const html = emailWrapper(`
     ${personalizedBody}

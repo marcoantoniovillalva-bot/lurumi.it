@@ -2,6 +2,7 @@
 
 import { createServiceClient } from '@/lib/supabase/server'
 import { pushToAdmins } from '@/lib/webpush'
+import { enrollUserInSequence } from '@/lib/email-triggers'
 
 export async function submitBugReport(
     userId: string | null,
@@ -28,6 +29,11 @@ export async function submitBugReport(
         url: '/admin',
         tag: 'bug-report',
     }).catch(() => {})
+
+    // Enrollment sequenza bug_reported
+    if (userId && userEmail) {
+        enrollUserInSequence(userId, userEmail, 'bug_reported').catch(() => {})
+    }
 
     return data?.id ?? null
 }

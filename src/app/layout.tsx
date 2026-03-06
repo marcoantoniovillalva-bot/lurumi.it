@@ -19,19 +19,21 @@ const dmSans = DM_Sans({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3010'),
+  metadataBase: new URL('https://lurumi.it'),
   title: {
     default: "Lurumi — AI per uncinetto, amigurumi e maglia",
     template: "%s — Lurumi",
   },
   description: "Lurumi è la tua compagna AI per l'uncinetto, amigurumi e maglia. Gestisci progetti, conta i giri, usa strumenti AI e segui corsi dal vivo.",
-  keywords: ["uncinetto", "amigurumi", "maglia", "AI", "crochet", "pattern", "giri", "contatore", "corsi uncinetto"],
+  keywords: ["uncinetto", "amigurumi", "maglia", "AI", "crochet", "pattern", "giri", "contatore", "corsi uncinetto", "hobby creativo", "filet", "lavoro a maglia", "ricamo", "handmade", "fai da te", "tutorial uncinetto", "schema amigurumi"],
   authors: [{ name: "Lurumi", url: "https://lurumi.it" }],
   creator: "Lurumi",
+  publisher: "Lurumi",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
+    title: "Lurumi",
   },
   icons: {
     icon: [
@@ -42,17 +44,32 @@ export const metadata: Metadata = {
   },
   openGraph: {
     type: "website",
+    url: "https://lurumi.it",
     locale: "it_IT",
     siteName: "Lurumi",
     title: "Lurumi — AI per uncinetto, amigurumi e maglia",
-    description: "Gestisci i tuoi progetti di uncinetto con l'aiuto dell'AI. Conta i giri, segui pattern, crea amigurumi.",
-    images: [{ url: "/images/logo/isologo-horizontal.png", width: 960, height: 320, alt: "Lurumi logo" }],
+    description: "Lurumi è la tua compagna AI per l'uncinetto, amigurumi e maglia. Gestisci progetti, conta i giri, usa strumenti AI e segui corsi dal vivo.",
+    images: [{ url: "https://lurumi.it/images/logo/isologo-horizontal.png", width: 1920, height: 1080, alt: "Lurumi — AI per uncinetto e amigurumi" }],
   },
   twitter: {
     card: "summary_large_image",
     title: "Lurumi — AI per uncinetto, amigurumi e maglia",
-    description: "Gestisci i tuoi progetti di uncinetto con l'aiuto dell'AI.",
-    images: ["/images/logo/isologo-horizontal.png"],
+    description: "Lurumi è la tua compagna AI per l'uncinetto, amigurumi e maglia.",
+    images: ["https://lurumi.it/images/logo/isologo-horizontal.png"],
+  },
+  alternates: {
+    canonical: "https://lurumi.it",
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      "max-video-preview": -1,
+      "max-image-preview": "large",
+      "max-snippet": -1,
+    },
   },
 };
 
@@ -75,28 +92,77 @@ export default async function RootLayout({
   const cookieChar = cookieStore.get('lurumi_char')?.value
   const initialChar = VALID_CHARS.includes(cookieChar ?? '') ? cookieChar! : 'luly'
 
-  const jsonLd = {
-    "@context": "https://schema.org",
-    "@type": "SoftwareApplication",
-    "name": "Lurumi",
-    "applicationCategory": "LifestyleApplication",
-    "operatingSystem": "Web, iOS, Android",
-    "offers": {
-      "@type": "Offer",
-      "price": "0",
-      "priceCurrency": "EUR",
+  const jsonLd = [
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "Lurumi",
+      "applicationCategory": "LifestyleApplication",
+      "operatingSystem": "Web, iOS, Android",
+      "offers": [
+        { "@type": "Offer", "price": "0", "priceCurrency": "EUR", "name": "Piano Gratuito" },
+        { "@type": "Offer", "price": "4.99", "priceCurrency": "EUR", "billingPeriod": "P1M", "name": "Piano Premium" },
+      ],
+      "description": "Lurumi è la compagna AI per uncinetto, amigurumi e maglia. Gestisci i tuoi progetti creativi, conta i giri con contatori avanzati, usa strumenti AI per creare immagini e ottenere aiuto con i pattern, segui tutorial YouTube con trascrizione automatica in italiano, prenota corsi dal vivo.",
+      "url": "https://lurumi.it",
+      "inLanguage": "it",
+      "image": "https://lurumi.it/images/logo/isologo-horizontal.png",
+      "screenshot": "https://lurumi.it/images/logo/isologo-horizontal.png",
+      "featureList": [
+        "Assistente AI per uncinetto e amigurumi",
+        "Generazione immagini AI con DALL-E 3",
+        "Analisi foto lavori a maglia con AI",
+        "Contatore di giri avanzato per progetti",
+        "Gestore progetti di uncinetto",
+        "Trascrizione e traduzione tutorial YouTube",
+        "Rimozione sfondo AI per foto prodotti",
+        "Prenotazione corsi e workshop dal vivo",
+        "Visualizzatore PDF per schemi di uncinetto"
+      ],
     },
-    "description": "App AI per uncinetto, amigurumi e maglia. Gestisci progetti, conta i giri, segui pattern e corsi dal vivo.",
-    "url": "https://lurumi.it",
-    "inLanguage": "it",
-  }
+    {
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      "name": "Lurumi",
+      "url": "https://lurumi.it",
+      "logo": "https://lurumi.it/images/logo/isotipo.png",
+      "sameAs": [],
+      "contactPoint": {
+        "@type": "ContactPoint",
+        "contactType": "customer support",
+        "email": "info@lurumi.it",
+        "availableLanguage": "Italian",
+      },
+    },
+    {
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      "name": "Lurumi",
+      "url": "https://lurumi.it",
+      "description": "App AI per uncinetto, amigurumi e maglia. Gestisci progetti, conta i giri, segui pattern e corsi dal vivo.",
+      "inLanguage": "it",
+      "potentialAction": {
+        "@type": "SearchAction",
+        "target": "https://lurumi.it/tutorials?q={search_term_string}",
+        "query-input": "required name=search_term_string",
+      },
+    },
+  ]
 
   return (
     <html lang="it">
       <head>
         <script
           type="application/ld+json"
-          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd[0]) }}
+        />
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd[1]) }}
+        />
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd[2]) }}
         />
       </head>
       <body className={`${inter.variable} ${dmSans.variable} antialiased`}>

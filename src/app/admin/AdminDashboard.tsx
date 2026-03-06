@@ -5,8 +5,9 @@ import {
     Shield, BarChart2, Plus, Edit2, Trash2,
     ChevronDown, ChevronUp, ExternalLink, X, Save, ToggleLeft, ToggleRight,
     CalendarDays, ArrowLeft, Users, UserCheck, Clock, MessageSquare, Send, Bug,
-    ChevronRight as ChevRight, BookOpen, FileText, GripVertical, Mail,
+    ChevronRight as ChevRight, BookOpen, FileText, GripVertical, Mail, Sparkles,
 } from "lucide-react";
+import { FullscreenViewer } from "@/components/FullscreenViewer";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -22,6 +23,13 @@ import {
     getAdminLibraryItems, createLibraryItem, updateLibraryItem, deleteLibraryItem,
     LibraryItem, LibrarySection, LibraryFormData,
 } from "@/features/admin/actions/library";
+import {
+    getCampaigns, createCampaign, updateCampaign, deleteCampaign, approveCampaign, sendCampaignNow,
+    getSequences, createSequence, updateSequence, deleteSequence, toggleSequenceActive,
+    getSequenceSteps, createSequenceStep, updateSequenceStep, deleteSequenceStep, sendManualSequenceToAll,
+    getEmailLogs, getReceivedEmails, markEmailRead, getAudienceCounts,
+    EmailCampaign, EmailSequence, EmailSequenceStep, EmailSendLog, ReceivedEmail,
+} from "@/features/admin/actions/email";
 
 /* ─── Types ─────────────────────────────────────────────── */
 interface Stats {
@@ -150,7 +158,45 @@ function EventFormModal({ initial, onClose, onSaved }: {
     const [previews, setPreviews] = useState<string[]>(initUrls);
     const [saving, setSaving] = useState(false);
     const [err, setErr] = useState('');
+    const [improvingField, setImprovingField] = useState<'title' | 'description' | null>(null);
+    const [analyzingImage, setAnalyzingImage] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
+
+    const analyzeImage = async () => {
+        const url = previews[0];
+        if (!url) return;
+        setAnalyzingImage(true);
+        try {
+            const res = await fetch('/api/ai/analyze-image', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ imageUrl: url, context: 'event' }),
+            });
+            const data = await res.json();
+            if (data.success) {
+                setForm(f => ({
+                    ...f,
+                    title: data.title || f.title,
+                    description: data.description || f.description,
+                }));
+            } else { alert(data.error || 'Errore analisi immagine'); }
+        } catch (e: any) { alert(e.message); } finally { setAnalyzingImage(false); }
+    };
+
+    const improveText = async (field: 'title' | 'description') => {
+        const text = field === 'title' ? form.title : form.description;
+        if (!text.trim()) return;
+        setImprovingField(field);
+        try {
+            const res = await fetch('/api/ai/improve-text', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text, type: field }),
+            });
+            const data = await res.json();
+            if (data.success) setForm(f => ({ ...f, [field]: data.text }));
+        } catch {}
+        setImprovingField(null);
+    };
 
     const handleAddImages = (e: React.ChangeEvent<HTMLInputElement>) => {
         const files = Array.from(e.target.files ?? []); if (!files.length) return;
@@ -201,7 +247,16 @@ function EventFormModal({ initial, onClose, onSaved }: {
                 {err && <p className="text-red-500 text-sm font-bold mb-4 bg-red-50 p-3 rounded-xl">{err}</p>}
                 {/* Multi-image */}
                 <div className="mb-4">
-                    <label className="text-xs font-black text-[#9AA2B1] uppercase tracking-wider block mb-2">Immagini ({previews.length}/{MAX_IMAGES})</label>
+                    <div className="flex items-center justify-between mb-2">
+                        <label className="text-xs font-black text-[#9AA2B1] uppercase tracking-wider">Immagini ({previews.length}/{MAX_IMAGES})</label>
+                        {previews.length > 0 && (
+                            <button type="button" onClick={analyzeImage} disabled={analyzingImage}
+                                className="flex items-center gap-1 text-[#7B5CF6] text-[11px] font-bold disabled:opacity-40 hover:text-[#9B7DFF] transition-colors">
+                                <Sparkles size={12} className={analyzingImage ? 'animate-pulse' : ''} />
+                                {analyzingImage ? 'Analizzando...' : 'Analizza con AI'}
+                            </button>
+                        )}
+                    </div>
                     <div className="flex flex-wrap gap-2">
                         {previews.map((src, i) => (
                             <div key={i} className="relative w-20 h-20 rounded-xl overflow-hidden border border-[#EEF0F4]">
@@ -220,11 +275,25 @@ function EventFormModal({ initial, onClose, onSaved }: {
                 </div>
                 <div className="space-y-4">
                     <div>
-                        <label className="text-xs font-black text-[#9AA2B1] uppercase tracking-wider block mb-1">Titolo *</label>
+                        <div className="flex items-center justify-between mb-1">
+                            <label className="text-xs font-black text-[#9AA2B1] uppercase tracking-wider">Titolo *</label>
+                            <button type="button" onClick={() => improveText('title')} disabled={improvingField === 'title' || !form.title.trim()}
+                                className="flex items-center gap-1 text-[#7B5CF6] text-[11px] font-bold disabled:opacity-40 hover:text-[#9B7DFF] transition-colors">
+                                <Sparkles size={12} className={improvingField === 'title' ? 'animate-pulse' : ''} />
+                                {improvingField === 'title' ? 'Migliorando...' : 'Migliora con AI'}
+                            </button>
+                        </div>
                         <input value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} className="w-full h-12 px-4 bg-[#FAFAFC] border border-[#E6DAFF] rounded-xl outline-none focus:border-[#7B5CF6] font-medium" />
                     </div>
                     <div>
-                        <label className="text-xs font-black text-[#9AA2B1] uppercase tracking-wider block mb-1">Descrizione</label>
+                        <div className="flex items-center justify-between mb-1">
+                            <label className="text-xs font-black text-[#9AA2B1] uppercase tracking-wider">Descrizione</label>
+                            <button type="button" onClick={() => improveText('description')} disabled={improvingField === 'description' || !form.description.trim()}
+                                className="flex items-center gap-1 text-[#7B5CF6] text-[11px] font-bold disabled:opacity-40 hover:text-[#9B7DFF] transition-colors">
+                                <Sparkles size={12} className={improvingField === 'description' ? 'animate-pulse' : ''} />
+                                {improvingField === 'description' ? 'Migliorando...' : 'Migliora con AI'}
+                            </button>
+                        </div>
                         <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} rows={3} className="w-full px-4 py-3 bg-[#FAFAFC] border border-[#E6DAFF] rounded-xl outline-none focus:border-[#7B5CF6] font-medium resize-none" />
                     </div>
                     <div className="grid grid-cols-2 gap-3">
@@ -704,7 +773,7 @@ function SectionEvents({ onBack }: { onBack: () => void }) {
         return () => { supabase.removeChannel(ch); };
     }, [load]);
 
-    const [evtFullscreen, setEvtFullscreen] = useState<string | null>(null);
+    const [evtFullscreenImages, setEvtFullscreenImages] = useState<string[] | null>(null);
 
     const handleDelete = async (id: string, title: string) => {
         if (!confirm(`Eliminare "${title}"?`)) return;
@@ -745,7 +814,7 @@ function SectionEvents({ onBack }: { onBack: () => void }) {
                                         <img
                                             src={ev.image_url} alt={ev.title}
                                             className="w-16 h-16 rounded-xl object-cover flex-shrink-0 cursor-pointer active:scale-95 transition-transform"
-                                            onClick={() => setEvtFullscreen(ev.image_url!)}
+                                            onClick={() => setEvtFullscreenImages(ev.image_urls?.length ? ev.image_urls : [ev.image_url!])}
                                         />
                                     ) : (
                                         <div className="w-16 h-16 rounded-xl bg-[#F4EEFF] flex items-center justify-center flex-shrink-0">
@@ -812,31 +881,12 @@ function SectionEvents({ onBack }: { onBack: () => void }) {
                     onSaved={async () => { setShowForm(false); setEditEvent(null); await load(); }} />
             )}
 
-            {/* Fullscreen immagine evento */}
-            {evtFullscreen && (
-                <div
-                    className="fixed inset-0 z-50 bg-black/90 flex flex-col items-center justify-center p-4"
-                    onClick={() => setEvtFullscreen(null)}
-                >
-                    <button className="absolute top-4 right-4 w-10 h-10 bg-white/10 rounded-full flex items-center justify-center text-white">
-                        <X size={20} />
-                    </button>
-                    <img
-                        src={evtFullscreen}
-                        alt="Immagine evento"
-                        className="max-w-full max-h-[85vh] rounded-2xl object-contain"
-                        onClick={e => e.stopPropagation()}
-                    />
-                    {(() => {
-                        const ev = events.find(e => e.image_url === evtFullscreen || (e.image_urls ?? []).includes(evtFullscreen!));
-                        return ev ? (
-                            <div className="mt-4 text-center" onClick={e => e.stopPropagation()}>
-                                <p className="text-white font-black text-lg">{ev.title}</p>
-                                {ev.description && <p className="text-white/60 text-sm mt-1 max-w-sm">{ev.description}</p>}
-                            </div>
-                        ) : null;
-                    })()}
-                </div>
+            {evtFullscreenImages && (
+                <FullscreenViewer
+                    type="images"
+                    images={evtFullscreenImages}
+                    onClose={() => setEvtFullscreenImages(null)}
+                />
             )}
         </div>
     );
@@ -1413,8 +1463,46 @@ function LibraryFormModal({ initial, onClose, onSaved }: {
     const [sections, setSections] = useState<LibrarySection[]>(initial?.sections ?? []);
     const [saving, setSaving] = useState(false);
     const [err, setErr] = useState('');
+    const [improvingLibField, setImprovingLibField] = useState<'title' | 'description' | null>(null);
+    const [analyzingLibImage, setAnalyzingLibImage] = useState(false);
     const coverInputRef = useRef<HTMLInputElement>(null);
     const pdfInputRef = useRef<HTMLInputElement>(null);
+
+    const analyzeLibImage = async () => {
+        const url = coverPreviews[0];
+        if (!url) return;
+        setAnalyzingLibImage(true);
+        try {
+            const res = await fetch('/api/ai/analyze-image', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ imageUrl: url, context: 'library' }),
+            });
+            const data = await res.json();
+            if (data.success) {
+                setForm(f => ({
+                    ...f,
+                    title: data.title || f.title,
+                    description: data.description || f.description,
+                }));
+            } else { alert(data.error || 'Errore analisi immagine'); }
+        } catch (e: any) { alert(e.message); } finally { setAnalyzingLibImage(false); }
+    };
+
+    const improveLibText = async (field: 'title' | 'description') => {
+        const text = field === 'title' ? form.title : form.description;
+        if (!text.trim()) return;
+        setImprovingLibField(field);
+        try {
+            const res = await fetch('/api/ai/improve-text', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text, type: field, context: `Tipo: ${form.item_type}` }),
+            });
+            const data = await res.json();
+            if (data.success) setForm(f => ({ ...f, [field]: data.text }));
+        } catch {}
+        setImprovingLibField(null);
+    };
 
     const handleAddCovers = (e: React.ChangeEvent<HTMLInputElement>) => {
         const files = Array.from(e.target.files ?? []); e.target.value = '';
@@ -1531,7 +1619,16 @@ function LibraryFormModal({ initial, onClose, onSaved }: {
 
                 {/* Covers */}
                 <div className="mb-4">
-                    <label className="text-xs font-black text-[#9AA2B1] uppercase tracking-wider block mb-2">Copertine ({coverPreviews.length}/{MAX_COVERS})</label>
+                    <div className="flex items-center justify-between mb-2">
+                        <label className="text-xs font-black text-[#9AA2B1] uppercase tracking-wider">Copertine ({coverPreviews.length}/{MAX_COVERS})</label>
+                        {coverPreviews.length > 0 && (
+                            <button type="button" onClick={analyzeLibImage} disabled={analyzingLibImage}
+                                className="flex items-center gap-1 text-[#7B5CF6] text-[11px] font-bold disabled:opacity-40 hover:text-[#9B7DFF] transition-colors">
+                                <Sparkles size={12} className={analyzingLibImage ? 'animate-pulse' : ''} />
+                                {analyzingLibImage ? 'Analizzando...' : 'Analizza con AI'}
+                            </button>
+                        )}
+                    </div>
                     <div className="flex flex-wrap gap-2">
                         {coverPreviews.map((src, i) => (
                             <div key={i} className="relative w-20 h-28 rounded-xl overflow-hidden border border-[#EEF0F4]">
@@ -1551,11 +1648,25 @@ function LibraryFormModal({ initial, onClose, onSaved }: {
 
                 <div className="space-y-4">
                     <div>
-                        <label className="text-xs font-black text-[#9AA2B1] uppercase tracking-wider block mb-1">Titolo *</label>
+                        <div className="flex items-center justify-between mb-1">
+                            <label className="text-xs font-black text-[#9AA2B1] uppercase tracking-wider">Titolo *</label>
+                            <button type="button" onClick={() => improveLibText('title')} disabled={improvingLibField === 'title' || !form.title.trim()}
+                                className="flex items-center gap-1 text-[#7B5CF6] text-[11px] font-bold disabled:opacity-40 hover:text-[#9B7DFF] transition-colors">
+                                <Sparkles size={12} className={improvingLibField === 'title' ? 'animate-pulse' : ''} />
+                                {improvingLibField === 'title' ? 'Migliorando...' : 'Migliora con AI'}
+                            </button>
+                        </div>
                         <input value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} className="w-full h-12 px-4 bg-[#FAFAFC] border border-[#E6DAFF] rounded-xl outline-none focus:border-[#7B5CF6] font-medium" />
                     </div>
                     <div>
-                        <label className="text-xs font-black text-[#9AA2B1] uppercase tracking-wider block mb-1">Descrizione</label>
+                        <div className="flex items-center justify-between mb-1">
+                            <label className="text-xs font-black text-[#9AA2B1] uppercase tracking-wider">Descrizione</label>
+                            <button type="button" onClick={() => improveLibText('description')} disabled={improvingLibField === 'description' || !form.description.trim()}
+                                className="flex items-center gap-1 text-[#7B5CF6] text-[11px] font-bold disabled:opacity-40 hover:text-[#9B7DFF] transition-colors">
+                                <Sparkles size={12} className={improvingLibField === 'description' ? 'animate-pulse' : ''} />
+                                {improvingLibField === 'description' ? 'Migliorando...' : 'Migliora con AI'}
+                            </button>
+                        </div>
                         <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} rows={2} className="w-full px-4 py-3 bg-[#FAFAFC] border border-[#E6DAFF] rounded-xl outline-none focus:border-[#7B5CF6] font-medium resize-none" />
                     </div>
                     <div className="grid grid-cols-3 gap-3">
@@ -1827,6 +1938,760 @@ function SectionLibrary({ onBack }: { onBack: () => void }) {
    MAIN DASHBOARD
    ═══════════════════════════════════════════════════════════ */
 // ── Sezione Newsletter ──────────────────────────────────────────────────────
+/* ─── Email Marketing — sezione completa ────────────────────── */
+
+const TRIGGER_LABELS: Record<string, string> = {
+    first_login: '🎉 Primo accesso',
+    event_booked: '📅 Prenotazione evento',
+    premium_purchased: '💎 Piano Premium',
+    inactive_14d: '😴 Inattivo 14 giorni',
+    never_booked_7d: '🎯 Mai prenotato (7gg)',
+    bug_reported: '🐛 Bug segnalato',
+    manual_youtube: '🎬 Nuovo tutorial YouTube',
+    manual_update: '🚀 Aggiornamento app',
+    new_event: '📣 Nuovo evento',
+    new_library_item: '📚 Nuovo schema/libro',
+}
+const MANUAL_TRIGGERS = ['manual_youtube', 'manual_update']
+const STATUS_COLORS: Record<string, string> = {
+    draft: 'bg-gray-100 text-gray-500',
+    approved: 'bg-amber-100 text-amber-700',
+    sending: 'bg-blue-100 text-blue-700',
+    sent: 'bg-green-100 text-green-700',
+}
+const STATUS_LABELS: Record<string, string> = { draft: 'Bozza', approved: 'Approvata', sending: 'Invio...', sent: 'Inviata' }
+
+type EmailTab = 'campagne' | 'sequenze' | 'inviate' | 'ricevute'
+
+function SectionEmailMarketing({ onBack }: { onBack: () => void }) {
+    const [tab, setTab] = useState<EmailTab>('campagne')
+    const [unreadCount, setUnreadCount] = useState(0)
+
+    // Fetch unread count once
+    useEffect(() => {
+        getReceivedEmails().then(emails => setUnreadCount(emails.filter(e => !e.is_read).length)).catch(() => {})
+    }, [])
+
+    const TABS: { key: EmailTab; label: string; badge?: number }[] = [
+        { key: 'campagne', label: 'Campagne' },
+        { key: 'sequenze', label: 'Sequenze' },
+        { key: 'inviate', label: 'Inviate' },
+        { key: 'ricevute', label: 'Ricevute', badge: unreadCount },
+    ]
+
+    return (
+        <div>
+            <div className="flex items-center gap-3 mb-5">
+                <button onClick={onBack} className="w-10 h-10 flex items-center justify-center bg-white border border-[#EEF0F4] rounded-xl text-[#9AA2B1] active:scale-95 transition-transform flex-shrink-0">
+                    <ArrowLeft size={20} />
+                </button>
+                <h2 className="text-xl font-black text-[#1C1C1E] flex-1">Email Marketing</h2>
+            </div>
+
+            {/* Tabs */}
+            <div className="flex gap-1 bg-[#F4F4F8] rounded-2xl p-1 mb-5">
+                {TABS.map(t => (
+                    <button key={t.key} onClick={() => setTab(t.key)}
+                        className={`flex-1 py-2 rounded-xl text-xs font-black transition-all relative ${tab === t.key ? 'bg-white text-[#1C1C1E] shadow-sm' : 'text-[#9AA2B1]'}`}>
+                        {t.label}
+                        {t.badge && t.badge > 0 ? (
+                            <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white rounded-full text-[9px] font-black flex items-center justify-center">{t.badge}</span>
+                        ) : null}
+                    </button>
+                ))}
+            </div>
+
+            {tab === 'campagne' && <TabCampaigns />}
+            {tab === 'sequenze' && <TabSequences />}
+            {tab === 'inviate' && <TabLogs />}
+            {tab === 'ricevute' && <TabReceived onUnreadChange={setUnreadCount} />}
+        </div>
+    )
+}
+
+/* ─── Tab: Campagne ─────────────────────────────────────────── */
+function TabCampaigns() {
+    const [campaigns, setCampaigns] = useState<EmailCampaign[]>([])
+    const [loading, setLoading] = useState(true)
+    const [showModal, setShowModal] = useState(false)
+    const [editCampaign, setEditCampaign] = useState<EmailCampaign | null>(null)
+    const [busy, setBusy] = useState<Record<string, boolean>>({})
+    const [notice, setNotice] = useState('')
+
+    const load = useCallback(async () => {
+        getCampaigns().then(data => { setCampaigns(data); setLoading(false) }).catch(() => setLoading(false))
+    }, [])
+    useEffect(() => { load() }, [load])
+
+    const handleApprove = async (id: string) => {
+        setBusy(b => ({ ...b, [id]: true }))
+        try {
+            const { recipientCount } = await approveCampaign(id)
+            setNotice(`Campagna approvata — sarà inviata a ${recipientCount} destinatari`)
+            await load()
+        } catch (e: any) { alert(e.message) } finally { setBusy(b => ({ ...b, [id]: false })) }
+    }
+    const handleSend = async (id: string) => {
+        if (!confirm('Inviare la campagna ora a tutti i destinatari?')) return
+        setBusy(b => ({ ...b, [id + '_send']: true }))
+        try {
+            const { sent, errors } = await sendCampaignNow(id)
+            setNotice(`✓ Inviata a ${sent} destinatari${errors > 0 ? ` (${errors} errori)` : ''}`)
+            await load()
+        } catch (e: any) { alert(e.message) } finally { setBusy(b => ({ ...b, [id + '_send']: false })) }
+    }
+    const handleDelete = async (id: string, name: string) => {
+        if (!confirm(`Eliminare la campagna "${name}"?`)) return
+        await deleteCampaign(id).catch(e => alert(e.message))
+        await load()
+    }
+
+    return (
+        <div className="space-y-3">
+            {notice && <div className="bg-green-50 border border-green-200 rounded-2xl px-4 py-3 text-green-700 text-sm font-bold">{notice}</div>}
+            <button onClick={() => { setEditCampaign(null); setShowModal(true) }}
+                className="w-full py-3 bg-[#7B5CF6] text-white rounded-2xl font-bold text-sm flex items-center justify-center gap-2 shadow-sm">
+                <Plus size={15} /> Nuova Campagna
+            </button>
+            {loading ? <p className="text-center text-[#9AA2B1] font-bold py-6">Caricamento...</p> : campaigns.length === 0 ? (
+                <p className="text-center text-[#9AA2B1] text-sm italic py-6">Nessuna campagna creata</p>
+            ) : campaigns.map(c => (
+                <div key={c.id} className="bg-white rounded-[20px] border border-[#EEF0F4] p-4 shadow-sm">
+                    <div className="flex items-start justify-between gap-2 mb-1">
+                        <p className="font-black text-[#1C1C1E] text-sm">{c.name}</p>
+                        <span className={`text-[10px] font-black px-2 py-0.5 rounded-full flex-shrink-0 ${STATUS_COLORS[c.status] ?? 'bg-gray-100 text-gray-500'}`}>
+                            {STATUS_LABELS[c.status] ?? c.status}
+                        </span>
+                    </div>
+                    <p className="text-[#9AA2B1] text-xs font-medium mb-1 truncate">{c.subject || '(Nessun oggetto)'}</p>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[10px] text-[#9AA2B1] font-bold">{c.target}</span>
+                        {c.recipient_count != null && <span className="text-[10px] text-[#9AA2B1] font-bold">· {c.recipient_count} destinatari</span>}
+                        {c.sent_at && <span className="text-[10px] text-[#9AA2B1] font-bold">· {new Date(c.sent_at).toLocaleDateString('it-IT')}</span>}
+                        <div className="flex-1" />
+                        {c.status === 'draft' && (
+                            <>
+                                <button onClick={() => { setEditCampaign(c); setShowModal(true) }} className="w-7 h-7 flex items-center justify-center bg-[#FAFAFC] text-[#9AA2B1] hover:text-[#7B5CF6] rounded-lg">
+                                    <Edit2 size={13} />
+                                </button>
+                                <button onClick={() => handleApprove(c.id)} disabled={busy[c.id]} className="px-2.5 py-1 bg-amber-500 text-white rounded-lg text-[10px] font-black disabled:opacity-50">
+                                    {busy[c.id] ? '...' : '✓ Approva'}
+                                </button>
+                            </>
+                        )}
+                        {c.status === 'approved' && (
+                            <button onClick={() => handleSend(c.id)} disabled={busy[c.id + '_send']}
+                                className="px-2.5 py-1 bg-[#7B5CF6] text-white rounded-lg text-[10px] font-black disabled:opacity-50 flex items-center gap-1">
+                                <Send size={10} /> {busy[c.id + '_send'] ? 'Invio...' : 'Invia ora'}
+                            </button>
+                        )}
+                        {c.status !== 'sending' && (
+                            <button onClick={() => handleDelete(c.id, c.name)} className="w-7 h-7 flex items-center justify-center bg-red-50 text-red-400 rounded-lg">
+                                <Trash2 size={13} />
+                            </button>
+                        )}
+                    </div>
+                </div>
+            ))}
+            {showModal && (
+                <CampaignModal
+                    initial={editCampaign}
+                    onClose={() => { setShowModal(false); setEditCampaign(null) }}
+                    onSaved={async () => { setShowModal(false); setEditCampaign(null); await load() }}
+                />
+            )}
+        </div>
+    )
+}
+
+/* ─── Campaign Modal ─────────────────────────────────────────── */
+function CampaignModal({ initial, onClose, onSaved }: { initial?: EmailCampaign | null; onClose: () => void; onSaved: () => void }) {
+    const [name, setName] = useState(initial?.name ?? '')
+    const [subject, setSubject] = useState(initial?.subject ?? '')
+    const [body, setBody] = useState(initial?.body_html ?? '')
+    const [target, setTarget] = useState<'newsletter' | 'marketing' | 'all'>(initial?.target as any ?? 'newsletter')
+    const [saving, setSaving] = useState(false)
+    const [err, setErr] = useState('')
+    const [improvingField, setImprovingField] = useState<'subject' | 'body' | null>(null)
+
+    const improveField = async (field: 'subject' | 'body') => {
+        const text = field === 'subject' ? subject : body
+        if (!text.trim()) return
+        setImprovingField(field)
+        try {
+            const res = await fetch('/api/ai/improve-text', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text, type: field === 'subject' ? 'title' : 'description' }),
+            })
+            const data = await res.json()
+            if (data.success) { if (field === 'subject') setSubject(data.text); else setBody(data.text) }
+        } catch {} finally { setImprovingField(null) }
+    }
+
+    const handleSave = async () => {
+        if (!name.trim() || !subject.trim()) { setErr('Nome e oggetto sono obbligatori'); return }
+        setSaving(true); setErr('')
+        try {
+            const payload = { name, subject, body_html: body.includes('<') ? body : `<p style="margin:0 0 16px;font-size:15px;color:#1C1C1E;line-height:1.7;">${body.replace(/\n/g, '<br>')}</p>`, target }
+            if (initial) await updateCampaign(initial.id, payload)
+            else await createCampaign(payload)
+            onSaved()
+        } catch (e: any) { setErr(e.message) } finally { setSaving(false) }
+    }
+
+    return (
+        <div className="fixed inset-0 z-[10000] flex items-end justify-center bg-black/40" onClick={onClose}>
+            <div className="w-full max-w-2xl bg-white rounded-t-[32px] p-6 pb-10 shadow-2xl animate-in slide-in-from-bottom duration-300 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+                <div className="w-12 h-1.5 bg-[#EEF0F4] rounded-full mx-auto mb-5" />
+                <div className="flex items-center justify-between mb-5">
+                    <h3 className="text-xl font-black">{initial ? 'Modifica Campagna' : 'Nuova Campagna'}</h3>
+                    <button onClick={onClose}><X size={20} className="text-[#9AA2B1]" /></button>
+                </div>
+                {err && <p className="text-red-500 text-sm font-bold mb-3 bg-red-50 p-3 rounded-xl">{err}</p>}
+                <div className="space-y-4">
+                    <div>
+                        <label className="text-xs font-black text-[#9AA2B1] uppercase tracking-wider block mb-1">Nome campagna *</label>
+                        <input value={name} onChange={e => setName(e.target.value)} placeholder="es. Newsletter marzo 2026" className="w-full h-12 px-4 bg-[#FAFAFC] border border-[#E6DAFF] rounded-xl outline-none focus:border-[#7B5CF6] font-medium" />
+                    </div>
+                    <div>
+                        <div className="flex items-center justify-between mb-1">
+                            <label className="text-xs font-black text-[#9AA2B1] uppercase tracking-wider">Oggetto *</label>
+                            <button type="button" onClick={() => improveField('subject')} disabled={!subject.trim() || improvingField === 'subject'}
+                                className="flex items-center gap-1 text-[#7B5CF6] text-[11px] font-bold disabled:opacity-40">
+                                <Sparkles size={11} className={improvingField === 'subject' ? 'animate-pulse' : ''} />
+                                {improvingField === 'subject' ? 'Migliorando...' : 'Migliora con AI'}
+                            </button>
+                        </div>
+                        <input value={subject} onChange={e => setSubject(e.target.value)} placeholder="es. ✨ Novità di marzo per te" className="w-full h-12 px-4 bg-[#FAFAFC] border border-[#E6DAFF] rounded-xl outline-none focus:border-[#7B5CF6] font-medium" />
+                    </div>
+                    <div>
+                        <div className="flex items-center justify-between mb-1">
+                            <label className="text-xs font-black text-[#9AA2B1] uppercase tracking-wider">Corpo email</label>
+                            <button type="button" onClick={() => improveField('body')} disabled={!body.trim() || improvingField === 'body'}
+                                className="flex items-center gap-1 text-[#7B5CF6] text-[11px] font-bold disabled:opacity-40">
+                                <Sparkles size={11} className={improvingField === 'body' ? 'animate-pulse' : ''} />
+                                {improvingField === 'body' ? 'Migliorando...' : 'Migliora con AI'}
+                            </button>
+                        </div>
+                        <textarea value={body} onChange={e => setBody(e.target.value)} rows={7} placeholder="Scrivi il corpo dell'email. Usa {{nome}}, {{cara}}, {{benvenut}} per personalizzare." className="w-full px-4 py-3 bg-[#FAFAFC] border border-[#E6DAFF] rounded-xl outline-none focus:border-[#7B5CF6] font-medium resize-none text-sm" />
+                        <p className="text-[10px] text-[#9AA2B1] mt-0.5">Merge tag: {'{{nome}}'} {'{{cara}}'} {'{{benvenut}}'}</p>
+                    </div>
+                    <div>
+                        <label className="text-xs font-black text-[#9AA2B1] uppercase tracking-wider block mb-2">Destinatari</label>
+                        <div className="flex gap-2 flex-wrap">
+                            {(['newsletter', 'marketing', 'all'] as const).map(t => (
+                                <button key={t} type="button" onClick={() => setTarget(t)}
+                                    className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors ${target === t ? 'bg-[#7B5CF6] text-white border-[#7B5CF6]' : 'bg-white text-[#9AA2B1] border-[#EEF0F4]'}`}>
+                                    {t === 'newsletter' ? '📧 Aggiornamenti' : t === 'marketing' ? '🎯 Promozioni' : '🌐 Tutte'}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+                <div className="flex gap-3 mt-6">
+                    <button onClick={onClose} className="flex-1 h-12 bg-white border border-[#EEF0F4] rounded-2xl font-bold text-[#9AA2B1]">Annulla</button>
+                    <button onClick={handleSave} disabled={saving} className="flex-[2] h-12 bg-[#7B5CF6] text-white rounded-2xl font-bold flex items-center justify-center gap-2 disabled:opacity-60">
+                        <Save size={15} /> {saving ? 'Salvataggio...' : 'Salva bozza'}
+                    </button>
+                </div>
+            </div>
+        </div>
+    )
+}
+
+/* ─── Tab: Sequenze ─────────────────────────────────────────── */
+function TabSequences() {
+    const [sequences, setSequences] = useState<EmailSequence[]>([])
+    const [steps, setSteps] = useState<Record<string, EmailSequenceStep[]>>({})
+    const [expanded, setExpanded] = useState<string | null>(null)
+    const [loading, setLoading] = useState(true)
+    const [showNew, setShowNew] = useState(false)
+    const [newName, setNewName] = useState('')
+    const [newTrigger, setNewTrigger] = useState('first_login')
+    const [creating, setCreating] = useState(false)
+    const [notice, setNotice] = useState('')
+    // Linked entity state
+    const [linkedEventId, setLinkedEventId] = useState('')
+    const [linkedLibItemId, setLinkedLibItemId] = useState('')
+    const [linkedYoutubeUrl, setLinkedYoutubeUrl] = useState('')
+    const [eventsList, setEventsList] = useState<{ id: string; title: string; description: string | null }[]>([])
+    const [libList, setLibList] = useState<{ id: string; title: string; description: string }[]>([])
+    // Audience counts
+    const [audience, setAudience] = useState<{ newsletter: number; marketing: number; all: number } | null>(null)
+
+    const load = useCallback(async () => {
+        getSequences().then(data => { setSequences(data); setLoading(false) }).catch(() => setLoading(false))
+    }, [])
+    useEffect(() => { load() }, [load])
+    useEffect(() => {
+        getAudienceCounts().then(setAudience).catch(() => {})
+        getAdminEvents().then(evs => setEventsList(evs.map(e => ({ id: e.id, title: e.title, description: e.description })))).catch(() => {})
+        getAdminLibraryItems().then(items => setLibList(items.map(i => ({ id: i.id, title: i.title, description: i.description })))).catch(() => {})
+    }, [])
+
+    const loadSteps = async (seqId: string) => {
+        const data = await getSequenceSteps(seqId)
+        setSteps(s => ({ ...s, [seqId]: data }))
+    }
+
+    const handleExpand = (id: string) => {
+        if (expanded === id) { setExpanded(null); return }
+        setExpanded(id)
+        if (!steps[id]) loadSteps(id)
+    }
+
+    const handleCreate = async () => {
+        if (!newName.trim()) return
+        setCreating(true)
+        try {
+            // Resolve linked entity info
+            let linked_event_id: string | null = null
+            let linked_library_item_id: string | null = null
+            let linked_youtube_url: string | null = null
+            let linked_entity_title: string | null = null
+            let linked_entity_description: string | null = null
+
+            if (newTrigger === 'new_event' && linkedEventId) {
+                const ev = eventsList.find(e => e.id === linkedEventId)
+                linked_event_id = linkedEventId
+                linked_entity_title = ev?.title ?? null
+                linked_entity_description = ev?.description ?? null
+            } else if (newTrigger === 'new_library_item' && linkedLibItemId) {
+                const item = libList.find(i => i.id === linkedLibItemId)
+                linked_library_item_id = linkedLibItemId
+                linked_entity_title = item?.title ?? null
+                linked_entity_description = item?.description ?? null
+            } else if (newTrigger === 'manual_youtube' && linkedYoutubeUrl.trim()) {
+                linked_youtube_url = linkedYoutubeUrl.trim()
+            }
+
+            await createSequence({
+                name: newName, trigger_type: newTrigger,
+                linked_event_id, linked_library_item_id, linked_youtube_url,
+                linked_entity_title, linked_entity_description,
+            })
+            setNewName(''); setLinkedEventId(''); setLinkedLibItemId(''); setLinkedYoutubeUrl('')
+            setShowNew(false); await load()
+        } catch (e: any) { alert(e.message) } finally { setCreating(false) }
+    }
+
+    const handleToggle = async (id: string, current: boolean) => {
+        await toggleSequenceActive(id, !current).catch(e => alert(e.message))
+        await load()
+    }
+
+    const handleDelete = async (id: string, name: string) => {
+        if (!confirm(`Eliminare la sequenza "${name}"?`)) return
+        await deleteSequence(id).catch(e => alert(e.message))
+        setSteps(s => { const n = { ...s }; delete n[id]; return n })
+        if (expanded === id) setExpanded(null)
+        await load()
+    }
+
+    const handleSendManual = async (id: string, name: string) => {
+        if (!confirm(`Inviare "${name}" immediatamente a tutti gli iscritti alla newsletter?`)) return
+        try {
+            const { sent } = await sendManualSequenceToAll(id)
+            setNotice(`✓ Inviata a ${sent} utenti`)
+        } catch (e: any) { alert(e.message) }
+    }
+
+    return (
+        <div className="space-y-3">
+            {notice && <div className="bg-green-50 border border-green-200 rounded-2xl px-4 py-3 text-green-700 text-sm font-bold">{notice}</div>}
+
+            {/* Audience summary */}
+            {audience && (
+                <div className="bg-[#FAFAFC] rounded-2xl border border-[#EEF0F4] px-4 py-3 flex gap-4 text-[11px] font-bold text-[#9AA2B1]">
+                    <span>📧 Newsletter: <strong className="text-[#1C1C1E]">{audience.newsletter}</strong></span>
+                    <span>🎯 Promozioni: <strong className="text-[#1C1C1E]">{audience.marketing}</strong></span>
+                    <span>👥 Totale: <strong className="text-[#1C1C1E]">{audience.all}</strong></span>
+                </div>
+            )}
+
+            <button onClick={() => setShowNew(v => !v)} className="w-full py-3 bg-[#7B5CF6] text-white rounded-2xl font-bold text-sm flex items-center justify-center gap-2">
+                <Plus size={15} /> Nuova Sequenza
+            </button>
+            {showNew && (
+                <div className="bg-white rounded-[20px] border border-[#EEF0F4] p-4 shadow-sm space-y-3">
+                    <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Nome sequenza" className="w-full h-11 px-4 bg-[#FAFAFC] border border-[#E6DAFF] rounded-xl outline-none focus:border-[#7B5CF6] font-medium text-sm" />
+                    <select value={newTrigger} onChange={e => { setNewTrigger(e.target.value); setLinkedEventId(''); setLinkedLibItemId(''); setLinkedYoutubeUrl('') }}
+                        className="w-full h-11 px-3 bg-[#FAFAFC] border border-[#E6DAFF] rounded-xl outline-none focus:border-[#7B5CF6] font-medium text-sm">
+                        {Object.entries(TRIGGER_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                    </select>
+                    {/* Linked entity picker */}
+                    {newTrigger === 'new_event' && (
+                        <div>
+                            <label className="text-[10px] font-black text-[#9AA2B1] uppercase tracking-wider block mb-1">Associa evento</label>
+                            <select value={linkedEventId} onChange={e => setLinkedEventId(e.target.value)}
+                                className="w-full h-11 px-3 bg-[#FAFAFC] border border-[#E6DAFF] rounded-xl outline-none focus:border-[#7B5CF6] font-medium text-sm">
+                                <option value="">— Seleziona evento (opzionale)</option>
+                                {eventsList.map(ev => <option key={ev.id} value={ev.id}>{ev.title}</option>)}
+                            </select>
+                            {linkedEventId && (() => { const ev = eventsList.find(e => e.id === linkedEventId); return ev?.description ? <p className="text-[10px] text-[#9AA2B1] mt-1 line-clamp-2">{ev.description}</p> : null })()}
+                        </div>
+                    )}
+                    {newTrigger === 'new_library_item' && (
+                        <div>
+                            <label className="text-[10px] font-black text-[#9AA2B1] uppercase tracking-wider block mb-1">Associa schema/libro</label>
+                            <select value={linkedLibItemId} onChange={e => setLinkedLibItemId(e.target.value)}
+                                className="w-full h-11 px-3 bg-[#FAFAFC] border border-[#E6DAFF] rounded-xl outline-none focus:border-[#7B5CF6] font-medium text-sm">
+                                <option value="">— Seleziona elemento (opzionale)</option>
+                                {libList.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}
+                            </select>
+                        </div>
+                    )}
+                    {newTrigger === 'manual_youtube' && (
+                        <div>
+                            <label className="text-[10px] font-black text-[#9AA2B1] uppercase tracking-wider block mb-1">Link tutorial YouTube</label>
+                            <input value={linkedYoutubeUrl} onChange={e => setLinkedYoutubeUrl(e.target.value)}
+                                placeholder="https://youtu.be/..." className="w-full h-11 px-4 bg-[#FAFAFC] border border-[#E6DAFF] rounded-xl outline-none focus:border-[#7B5CF6] font-medium text-sm" />
+                        </div>
+                    )}
+                    <div className="flex gap-2">
+                        <button onClick={() => setShowNew(false)} className="flex-1 h-10 bg-white border border-[#EEF0F4] rounded-xl font-bold text-[#9AA2B1] text-sm">Annulla</button>
+                        <button onClick={handleCreate} disabled={creating || !newName.trim()} className="flex-[2] h-10 bg-[#7B5CF6] text-white rounded-xl font-bold text-sm disabled:opacity-60">
+                            {creating ? 'Creazione...' : 'Crea'}
+                        </button>
+                    </div>
+                </div>
+            )}
+            {loading ? <p className="text-center text-[#9AA2B1] font-bold py-6">Caricamento...</p> : sequences.length === 0 ? (
+                <p className="text-center text-[#9AA2B1] text-sm italic py-6">Nessuna sequenza configurata</p>
+            ) : sequences.map(seq => (
+                <div key={seq.id} className="bg-white rounded-[20px] border border-[#EEF0F4] shadow-sm overflow-hidden">
+                    <div className="flex items-center gap-2 p-4">
+                        <div className="flex-1 min-w-0">
+                            <p className="font-black text-[#1C1C1E] text-sm">{seq.name}</p>
+                            <p className="text-[#9AA2B1] text-[11px] font-bold">{TRIGGER_LABELS[seq.trigger_type] ?? seq.trigger_type}</p>
+                            {seq.linked_entity_title && (
+                                <p className="text-[#7B5CF6] text-[10px] font-bold truncate">📎 {seq.linked_entity_title}</p>
+                            )}
+                            {seq.linked_youtube_url && (
+                                <p className="text-[#7B5CF6] text-[10px] font-bold truncate">▶ {seq.linked_youtube_url}</p>
+                            )}
+                        </div>
+                        {MANUAL_TRIGGERS.includes(seq.trigger_type) && seq.is_active && (
+                            <button onClick={() => handleSendManual(seq.id, seq.name)}
+                                className="flex items-center gap-1 px-2 py-1 bg-amber-50 text-amber-600 rounded-lg text-[10px] font-black border border-amber-100">
+                                <Send size={10} /> Invia ora
+                            </button>
+                        )}
+                        <button onClick={() => handleToggle(seq.id, seq.is_active)} className={seq.is_active ? 'text-[#7B5CF6]' : 'text-[#9AA2B1]'}>
+                            {seq.is_active ? <ToggleRight size={28} /> : <ToggleLeft size={28} />}
+                        </button>
+                        <button onClick={() => handleExpand(seq.id)} className="text-[#9AA2B1]">
+                            {expanded === seq.id ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                        </button>
+                        <button onClick={() => handleDelete(seq.id, seq.name)} className="w-7 h-7 flex items-center justify-center bg-red-50 text-red-400 rounded-lg">
+                            <Trash2 size={12} />
+                        </button>
+                    </div>
+                    {expanded === seq.id && (
+                        <div className="border-t border-[#EEF0F4] px-4 pb-4 pt-3">
+                            <SequenceStepsEditor seqId={seq.id} seqName={seq.name} trigger={seq.trigger_type}
+                                linkedEntityTitle={seq.linked_entity_title ?? undefined}
+                                linkedEntityDescription={seq.linked_entity_description ?? undefined}
+                                linkedYoutubeUrl={seq.linked_youtube_url ?? undefined}
+                                steps={steps[seq.id] ?? []}
+                                onRefresh={() => loadSteps(seq.id)} />
+                        </div>
+                    )}
+                </div>
+            ))}
+        </div>
+    )
+}
+
+/* ─── Sequence Steps Editor ─────────────────────────────────── */
+function SequenceStepsEditor({ seqId, seqName, trigger, steps, onRefresh, linkedEntityTitle, linkedEntityDescription, linkedYoutubeUrl }: {
+    seqId: string; seqName: string; trigger: string;
+    steps: EmailSequenceStep[]; onRefresh: () => void;
+    linkedEntityTitle?: string; linkedEntityDescription?: string; linkedYoutubeUrl?: string;
+}) {
+    const AIDA_PHASES = [
+        { value: 'awareness', label: '👁 Consapevolezza' },
+        { value: 'interest', label: '🤔 Interesse' },
+        { value: 'desire', label: '🔥 Desiderio' },
+        { value: 'action', label: '🎯 Azione' },
+        { value: 'retention', label: '💜 Fidelizzazione' },
+    ]
+
+    const [adding, setAdding] = useState(false)
+    const [editStep, setEditStep] = useState<EmailSequenceStep | null>(null)
+    const [generating, setGenerating] = useState<string | null>(null)
+    const [stepPhases, setStepPhases] = useState<Record<string, string>>({})
+
+    const handleAdd = async () => {
+        setAdding(true)
+        try {
+            await createSequenceStep(seqId, { step_order: steps.length, delay_days: steps.length === 0 ? 0 : 3, subject: '', body_html: '' })
+            onRefresh()
+        } catch (e: any) { alert(e.message) } finally { setAdding(false) }
+    }
+
+    const handleDelete = async (id: string) => {
+        await deleteSequenceStep(id).catch(e => alert(e.message))
+        onRefresh()
+    }
+
+    const handleGenerate = async (step: EmailSequenceStep) => {
+        setGenerating(step.id)
+        const selectedPhase = stepPhases[step.id]
+        try {
+            const res = await fetch('/api/ai/suggest-email', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    triggerType: trigger,
+                    stepNumber: step.step_order + 1,
+                    totalSteps: steps.length,
+                    delayDays: step.delay_days,
+                    sequenceName: seqName,
+                    linkedEntityTitle,
+                    linkedEntityDescription,
+                    linkedYoutubeUrl,
+                    forcedPhase: selectedPhase || undefined,
+                }),
+            })
+            const data = await res.json()
+            if (data.success) {
+                await updateSequenceStep(step.id, { subject: data.subject, body_html: data.bodyHtml })
+                onRefresh()
+            } else { alert(data.error || 'Errore AI') }
+        } catch (e: any) { alert(e.message) } finally { setGenerating(null) }
+    }
+
+    return (
+        <div className="space-y-3">
+            {/* Linked entity context banner */}
+            {(linkedEntityTitle || linkedYoutubeUrl) && (
+                <div className="bg-[#F4EEFF] rounded-xl px-3 py-2 text-[10px] font-bold text-[#7B5CF6]">
+                    {linkedEntityTitle && <p>📎 Contesto AI: <span className="font-black">{linkedEntityTitle}</span></p>}
+                    {linkedEntityDescription && <p className="text-[#9AA2B1] font-medium mt-0.5 line-clamp-2">{linkedEntityDescription}</p>}
+                    {linkedYoutubeUrl && <p>▶ {linkedYoutubeUrl}</p>}
+                    <p className="text-[#9AA2B1] mt-0.5 font-medium">L'AI userà questo contesto per generare la sequenza AIDA</p>
+                </div>
+            )}
+            {steps.length === 0 ? (
+                <p className="text-[#9AA2B1] text-xs italic text-center py-2">Nessuno step — aggiungi il primo</p>
+            ) : steps.map((step, i) => (
+                <div key={step.id} className={`rounded-xl border p-3 ${step.is_active ? 'border-[#E6DAFF] bg-[#FAFAFC]' : 'border-[#EEF0F4] bg-white opacity-60'}`}>
+                    <div className="flex items-center justify-between mb-2">
+                        <span className="text-[10px] font-black text-[#7B5CF6] uppercase tracking-wider">Step {i + 1} · Dopo {step.delay_days} giorn{step.delay_days === 1 ? 'o' : 'i'}</span>
+                        <div className="flex items-center gap-1.5">
+                            <select
+                                value={stepPhases[step.id] || ''}
+                                onChange={e => setStepPhases(p => ({ ...p, [step.id]: e.target.value }))}
+                                className="h-6 px-1.5 bg-[#F4EEFF] border border-[#E6DAFF] rounded-lg text-[9px] font-bold text-[#7B5CF6] outline-none"
+                                title="Fase AIDA per questa email"
+                            >
+                                <option value="">🤖 Auto AIDA</option>
+                                {AIDA_PHASES.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+                            </select>
+                            <button onClick={() => handleGenerate(step)} disabled={!!generating}
+                                className="flex items-center gap-1 text-[#7B5CF6] text-[10px] font-black disabled:opacity-50">
+                                <Sparkles size={10} className={generating === step.id ? 'animate-pulse' : ''} />
+                                {generating === step.id ? 'Generando...' : 'Genera AI'}
+                            </button>
+                            <button onClick={() => setEditStep(editStep?.id === step.id ? null : step)} className="text-[#9AA2B1]">
+                                <Edit2 size={12} />
+                            </button>
+                            <button onClick={() => handleDelete(step.id)} className="text-red-400">
+                                <Trash2 size={12} />
+                            </button>
+                        </div>
+                    </div>
+                    {step.subject ? (
+                        <p className="text-[#1C1C1E] text-xs font-bold truncate">{step.subject}</p>
+                    ) : (
+                        <p className="text-[#9AA2B1] text-xs italic">Oggetto non impostato — premi "Genera AI"</p>
+                    )}
+                    {editStep?.id === step.id && (
+                        <StepEditor step={step} onClose={() => setEditStep(null)} onSaved={() => { setEditStep(null); onRefresh() }} />
+                    )}
+                </div>
+            ))}
+            <button onClick={handleAdd} disabled={adding}
+                className="w-full py-2 border-2 border-dashed border-[#E6DAFF] rounded-xl text-[#7B5CF6] text-xs font-bold hover:bg-[#F4EEFF] transition-colors disabled:opacity-50">
+                {adding ? 'Aggiungendo...' : '+ Aggiungi Step'}
+            </button>
+        </div>
+    )
+}
+
+/* ─── Step Editor ────────────────────────────────────────────── */
+function StepEditor({ step, onClose, onSaved }: { step: EmailSequenceStep; onClose: () => void; onSaved: () => void }) {
+    const [delay, setDelay] = useState(step.delay_days)
+    const [subject, setSubject] = useState(step.subject)
+    const [body, setBody] = useState(step.body_html)
+    const [saving, setSaving] = useState(false)
+    const [improvingField, setImprovingField] = useState<'subject' | 'body' | null>(null)
+
+    const improve = async (field: 'subject' | 'body') => {
+        const text = field === 'subject' ? subject : body
+        if (!text.trim()) return
+        setImprovingField(field)
+        try {
+            const res = await fetch('/api/ai/improve-text', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text, type: field === 'subject' ? 'title' : 'description' }),
+            })
+            const data = await res.json()
+            if (data.success) { if (field === 'subject') setSubject(data.text); else setBody(data.text) }
+        } catch {} finally { setImprovingField(null) }
+    }
+
+    const handleSave = async () => {
+        setSaving(true)
+        try {
+            await updateSequenceStep(step.id, { delay_days: delay, subject, body_html: body })
+            onSaved()
+        } catch (e: any) { alert(e.message) } finally { setSaving(false) }
+    }
+
+    return (
+        <div className="mt-3 pt-3 border-t border-[#EEF0F4] space-y-3">
+            <div>
+                <label className="text-[10px] font-black text-[#9AA2B1] uppercase tracking-wider block mb-1">Invia dopo (giorni)</label>
+                <input type="number" min="0" value={delay} onChange={e => setDelay(parseInt(e.target.value) || 0)} className="w-24 h-9 px-3 bg-[#FAFAFC] border border-[#E6DAFF] rounded-lg outline-none focus:border-[#7B5CF6] font-medium text-sm" />
+            </div>
+            <div>
+                <div className="flex items-center justify-between mb-1">
+                    <label className="text-[10px] font-black text-[#9AA2B1] uppercase tracking-wider">Oggetto</label>
+                    <button type="button" onClick={() => improve('subject')} disabled={!subject.trim() || !!improvingField}
+                        className="flex items-center gap-0.5 text-[#7B5CF6] text-[10px] font-black disabled:opacity-40">
+                        <Sparkles size={9} className={improvingField === 'subject' ? 'animate-pulse' : ''} />
+                        {improvingField === 'subject' ? '...' : 'AI'}
+                    </button>
+                </div>
+                <input value={subject} onChange={e => setSubject(e.target.value)} className="w-full h-9 px-3 bg-[#FAFAFC] border border-[#E6DAFF] rounded-lg outline-none focus:border-[#7B5CF6] font-medium text-sm" />
+            </div>
+            <div>
+                <div className="flex items-center justify-between mb-1">
+                    <label className="text-[10px] font-black text-[#9AA2B1] uppercase tracking-wider">Corpo</label>
+                    <button type="button" onClick={() => improve('body')} disabled={!body.trim() || !!improvingField}
+                        className="flex items-center gap-0.5 text-[#7B5CF6] text-[10px] font-black disabled:opacity-40">
+                        <Sparkles size={9} className={improvingField === 'body' ? 'animate-pulse' : ''} />
+                        {improvingField === 'body' ? '...' : 'AI'}
+                    </button>
+                </div>
+                <textarea value={body} onChange={e => setBody(e.target.value)} rows={4} className="w-full px-3 py-2 bg-[#FAFAFC] border border-[#E6DAFF] rounded-lg outline-none focus:border-[#7B5CF6] font-medium text-xs resize-none" />
+            </div>
+            <div className="flex gap-2">
+                <button onClick={onClose} className="flex-1 h-9 bg-white border border-[#EEF0F4] rounded-xl font-bold text-[#9AA2B1] text-xs">Annulla</button>
+                <button onClick={handleSave} disabled={saving} className="flex-[2] h-9 bg-[#7B5CF6] text-white rounded-xl font-bold text-xs disabled:opacity-60">
+                    {saving ? 'Salvataggio...' : 'Salva step'}
+                </button>
+            </div>
+        </div>
+    )
+}
+
+/* ─── Tab: Inviate (Log) ────────────────────────────────────── */
+function TabLogs() {
+    const [logs, setLogs] = useState<EmailSendLog[]>([])
+    const [loading, setLoading] = useState(true)
+    useEffect(() => { getEmailLogs(200).then(data => { setLogs(data); setLoading(false) }).catch(() => setLoading(false)) }, [])
+
+    return (
+        <div>
+            {loading ? <p className="text-center text-[#9AA2B1] font-bold py-6">Caricamento...</p> : logs.length === 0 ? (
+                <p className="text-center text-[#9AA2B1] text-sm italic py-6">Nessuna email inviata ancora</p>
+            ) : (
+                <div className="space-y-2">
+                    {logs.map(log => (
+                        <div key={log.id} className="bg-white rounded-[16px] border border-[#EEF0F4] px-4 py-3 flex items-start gap-3">
+                            <div className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${log.status === 'sent' ? 'bg-green-400' : 'bg-red-400'}`} />
+                            <div className="flex-1 min-w-0">
+                                <p className="text-[#1C1C1E] text-xs font-bold truncate">{log.user_email}</p>
+                                <p className="text-[#9AA2B1] text-[11px] font-medium truncate">{log.subject}</p>
+                                {log.error && <p className="text-red-400 text-[10px] font-medium">{log.error}</p>}
+                            </div>
+                            <p className="text-[#9AA2B1] text-[10px] font-bold flex-shrink-0">{new Date(log.sent_at).toLocaleDateString('it-IT')}</p>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    )
+}
+
+/* ─── Tab: Ricevute ─────────────────────────────────────────── */
+function TabReceived({ onUnreadChange }: { onUnreadChange: (n: number) => void }) {
+    const [emails, setEmails] = useState<ReceivedEmail[]>([])
+    const [loading, setLoading] = useState(true)
+    const [selected, setSelected] = useState<ReceivedEmail | null>(null)
+
+    const load = useCallback(async () => {
+        getReceivedEmails().then(data => {
+            setEmails(data)
+            setLoading(false)
+            onUnreadChange(data.filter(e => !e.is_read).length)
+        }).catch(() => setLoading(false))
+    }, [onUnreadChange])
+
+    useEffect(() => { load() }, [load])
+
+    const handleOpen = async (email: ReceivedEmail) => {
+        setSelected(email)
+        if (!email.is_read) {
+            await markEmailRead(email.id).catch(() => {})
+            await load()
+        }
+    }
+
+    return (
+        <div>
+            {loading ? <p className="text-center text-[#9AA2B1] font-bold py-6">Caricamento...</p> : emails.length === 0 ? (
+                <div className="text-center py-8">
+                    <p className="text-[#9AA2B1] text-sm font-bold">Nessuna email ricevuta</p>
+                    <p className="text-[#9AA2B1] text-xs mt-1">Configura il record MX su IONOS per ricevere email a supporto@lurumi.it</p>
+                </div>
+            ) : (
+                <div className="space-y-2">
+                    {emails.map(email => (
+                        <button key={email.id} onClick={() => handleOpen(email)}
+                            className="w-full bg-white rounded-[16px] border border-[#EEF0F4] px-4 py-3 flex items-start gap-3 text-left active:scale-[0.99] transition-transform">
+                            {!email.is_read && <div className="w-2 h-2 rounded-full bg-[#7B5CF6] mt-1.5 flex-shrink-0" />}
+                            <div className={`flex-1 min-w-0 ${email.is_read ? 'ml-5' : ''}`}>
+                                <p className={`text-xs truncate ${email.is_read ? 'text-[#9AA2B1] font-medium' : 'text-[#1C1C1E] font-black'}`}>
+                                    {email.from_name || email.from_email}
+                                </p>
+                                <p className={`text-[11px] truncate ${email.is_read ? 'text-[#9AA2B1] font-medium' : 'text-[#1C1C1E] font-bold'}`}>{email.subject}</p>
+                            </div>
+                            <p className="text-[#9AA2B1] text-[10px] font-bold flex-shrink-0">{new Date(email.received_at).toLocaleDateString('it-IT')}</p>
+                        </button>
+                    ))}
+                </div>
+            )}
+            {selected && (
+                <div className="fixed inset-0 z-[20000] bg-black/50 flex items-end justify-center" onClick={() => setSelected(null)}>
+                    <div className="w-full max-w-2xl bg-white rounded-t-[32px] shadow-2xl animate-in slide-in-from-bottom duration-300 flex flex-col" style={{ maxHeight: '85dvh' }} onClick={e => e.stopPropagation()}>
+                        <div className="flex-shrink-0 px-5 pt-4 pb-3 border-b border-[#EEF0F4]">
+                            <div className="w-10 h-1 bg-[#EEF0F4] rounded-full mx-auto mb-3" />
+                            <div className="flex items-start justify-between">
+                                <div className="min-w-0">
+                                    <p className="font-black text-[#1C1C1E] text-sm">{selected.subject}</p>
+                                    <p className="text-[#9AA2B1] text-xs mt-0.5">{selected.from_name ? `${selected.from_name} <${selected.from_email}>` : selected.from_email}</p>
+                                    <p className="text-[#9AA2B1] text-[10px] mt-0.5">{new Date(selected.received_at).toLocaleString('it-IT')}</p>
+                                </div>
+                                <button onClick={() => setSelected(null)} className="ml-3 w-8 h-8 flex items-center justify-center bg-[#F4F4F8] rounded-xl text-[#9AA2B1] flex-shrink-0"><X size={16} /></button>
+                            </div>
+                        </div>
+                        <div className="flex-1 overflow-y-auto px-5 py-4 min-h-0">
+                            {selected.body_html ? (
+                                <div className="text-sm text-[#1C1C1E] leading-relaxed" dangerouslySetInnerHTML={{ __html: selected.body_html }} />
+                            ) : (
+                                <p className="text-sm text-[#1C1C1E] leading-relaxed whitespace-pre-wrap">{selected.body_text || '(Corpo vuoto)'}</p>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    )
+}
+
 function SectionNewsletter({ onBack }: { onBack: () => void }) {
     const [subject, setSubject] = useState('');
     const [body, setBody] = useState('');
@@ -1923,7 +2788,7 @@ function SectionNewsletter({ onBack }: { onBack: () => void }) {
     );
 }
 
-type Section = null | 'peak' | 'users' | 'events' | 'ai-costs' | 'support' | 'library' | 'newsletter';
+type Section = null | 'peak' | 'users' | 'events' | 'ai-costs' | 'support' | 'library' | 'newsletter' | 'email';
 
 export function AdminDashboard() {
     const [stats, setStats] = useState<Stats | null>(null);
@@ -1995,6 +2860,14 @@ export function AdminDashboard() {
         );
     }
 
+    if (activeSection === 'email') {
+        return (
+            <div className="max-w-2xl mx-auto px-4 pt-6 pb-24">
+                <SectionEmailMarketing onBack={() => setActiveSection(null)} />
+            </div>
+        );
+    }
+
     /* ── Home Dashboard ── */
     return (
         <div className="max-w-2xl mx-auto px-4 pt-6 pb-24">
@@ -2057,9 +2930,9 @@ export function AdminDashboard() {
                 />
                 <SectionCard
                     icon={<Mail size={20} className="text-pink-500" />}
-                    title="Newsletter"
-                    subtitle="Invia email a iscritte newsletter o marketing"
-                    onClick={() => setActiveSection('newsletter')}
+                    title="Email Marketing"
+                    subtitle="Campagne, sequenze nurturing e inbox ricevute"
+                    onClick={() => setActiveSection('email')}
                 />
             </div>
         </div>

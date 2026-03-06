@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
     ArrowLeft,
     Minus,
@@ -11,9 +11,15 @@ import {
     Youtube,
     StickyNote,
     Plus as PlusIcon,
-    Save
+    Save,
+    FileText,
+    ChevronDown,
+    ChevronUp,
+    Languages,
+    Loader2,
+    GripVertical,
 } from "lucide-react";
-import { useProjectStore, Tutorial, RoundCounter as RoundCounterType } from "@/features/projects/store/useProjectStore";
+import { useProjectStore, Tutorial, RoundCounter as RoundCounterType, TranscriptSegment, TranscriptData } from "@/features/projects/store/useProjectStore";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { RoundCounter } from "@/features/projects/components/RoundCounter";
@@ -46,10 +52,25 @@ export default function TutorialDetail() {
     const [notes, setNotes] = useState("");
     const [showNewCounterModal, setShowNewCounterModal] = useState(false);
     const [newCounterName, setNewCounterName] = useState("");
+    const [reorderMode, setReorderMode] = useState(false);
+    const [dragIdx, setDragIdx] = useState<number | null>(null);
+    const [overIdx, setOverIdx] = useState<number | null>(null);
     const elapsedRef = useRef(0);
     const isTimerRunningRef = useRef(false);
     const isEditingNotesRef = useRef(false);
     const wasTimerRunningRef = useRef(false);
+
+    // Transcript state
+    const [transcriptOpen, setTranscriptOpen] = useState(false);
+    const [transcriptView, setTranscriptView] = useState<'original' | 'translated'>('original');
+    const [transcriptLoading, setTranscriptLoading] = useState(false);
+    const [transcriptError, setTranscriptError] = useState('');
+    const [transcriptData, setTranscriptData] = useState<TranscriptData | null>(tutorial?.transcriptData ?? null);
+    const [currentVideoTime, setCurrentVideoTime] = useState(0);
+    const iframeRef = useRef<HTMLIFrameElement>(null);
+    const timePollerRef = useRef<NodeJS.Timeout | null>(null);
+    const activeSegmentRef = useRef<HTMLDivElement | null>(null);
+    const ytPlayerRef = useRef<any>(null);
 
     useEffect(() => {
         if (!tutorial) return;
@@ -89,6 +110,10 @@ export default function TutorialDetail() {
                     updates.notesHtml = remote.notes_html ?? '';
                     setNotes(remote.notes_html ?? '');
                 }
+                if (remote.transcript_data) {
+                    updates.transcriptData = remote.transcript_data;
+                    setTranscriptData(remote.transcript_data);
+                }
                 updateTutorial(id as string, updates);
             })
             .subscribe();
@@ -127,6 +152,63 @@ export default function TutorialDetail() {
         return () => clearInterval(interval);
     }, [isTimerRunning, id, updateTutorial]); // eslint-disable-line react-hooks/exhaustive-deps
 
+    // YouTube IFrame API: polling tempo corrente quando la trascrizione è aperta
+    useEffect(() => {
+        if (!transcriptOpen || !tutorial?.videoId) return;
+
+        const initPlayer = () => {
+            if (!(window as any).YT?.Player) return;
+            if (ytPlayerRef.current) {
+                // Player già creato, riavvia il poller
+                timePollerRef.current = setInterval(() => {
+                    try {
+                        const t = ytPlayerRef.current?.getCurrentTime?.();
+                        if (typeof t === 'number') setCurrentVideoTime(t);
+                    } catch {}
+                }, 500);
+                return;
+            }
+            ytPlayerRef.current = new (window as any).YT.Player('yt-player', {
+                events: {
+                    onReady: () => {
+                        timePollerRef.current = setInterval(() => {
+                            try {
+                                const t = ytPlayerRef.current?.getCurrentTime?.();
+                                if (typeof t === 'number') setCurrentVideoTime(t);
+                            } catch {}
+                        }, 500);
+                    },
+                },
+            });
+        };
+
+        if ((window as any).YT?.Player) {
+            initPlayer();
+        } else {
+            if (!document.querySelector('script[src="https://www.youtube.com/iframe_api"]')) {
+                const script = document.createElement('script');
+                script.src = 'https://www.youtube.com/iframe_api';
+                document.head.appendChild(script);
+            }
+            const prevReady = (window as any).onYouTubeIframeAPIReady;
+            (window as any).onYouTubeIframeAPIReady = () => {
+                prevReady?.();
+                initPlayer();
+            };
+        }
+
+        return () => {
+            if (timePollerRef.current) clearInterval(timePollerRef.current);
+        };
+    }, [transcriptOpen, tutorial?.videoId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Auto-scroll al segmento attivo nella trascrizione
+    useEffect(() => {
+        if (activeSegmentRef.current && transcriptOpen) {
+            activeSegmentRef.current.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+    }, [currentVideoTime]); // eslint-disable-line react-hooks/exhaustive-deps
+
     // Redirect se il tutorial viene eliminato su un altro dispositivo mentre siamo qui
     useEffect(() => {
         if (hasLoadedRef.current && !tutorial) {
@@ -139,6 +221,91 @@ export default function TutorialDetail() {
         if (hasLoadedRef.current) return null; // redirect in corso
         return <div className="p-10 text-center">Tutorial non trovato</div>;
     }
+
+    const moveCounter = (from: number, to: number) => {
+        const newSecs = [...tutorial.secs];
+        const [removed] = newSecs.splice(from, 1);
+        newSecs.splice(to, 0, removed);
+        updateTutorial(tutorial.id, { secs: newSecs });
+        syncSecs(newSecs);
+    };
+
+    const generateTranscript = async (translate: boolean) => {
+        if (!user || !tutorial.videoId) return;
+        setTranscriptLoading(true);
+        setTranscriptError('');
+        try {
+            // Step 1: server fetch la pagina YouTube ed estrae i captionTracks
+            const trackRes = await fetch(`/api/tutorials/transcript?videoId=${tutorial.videoId}`);
+            const trackData = await trackRes.json();
+            if (!trackData.success) throw new Error(trackData.error || 'Impossibile trovare i sottotitoli');
+
+            const tracks: Array<{ languageCode: string; kind?: string; baseUrl: string }> = trackData.tracks;
+            const track =
+                tracks.find(t => t.languageCode === 'it' && t.kind !== 'asr') ||
+                tracks.find(t => t.languageCode === 'it') ||
+                tracks.find(t => t.kind === 'asr') ||
+                tracks.find(t => t.languageCode === 'en') ||
+                tracks[0];
+
+            if (!track) throw new Error('Nessuna traccia sottotitoli disponibile');
+
+            // Step 2: il BROWSER scarica il timedtext usando il proprio TLS fingerprint Chrome
+            // Proviamo prima senza credentials (meno restrittivo), poi con credentials come fallback
+            const fetchTimedtext = async (creds: RequestCredentials): Promise<any[]> => {
+                const url = track.baseUrl + '&fmt=json3';
+                const res = await fetch(url, { credentials: creds });
+                if (!res.ok) return [];
+                const text = await res.text();
+                if (!text || text.length < 10) return [];
+                try {
+                    const data = JSON.parse(text);
+                    return data?.events ?? [];
+                } catch { return []; }
+            };
+
+            let events = await fetchTimedtext('omit');
+            if (!events.length) events = await fetchTimedtext('include');
+
+            const segments = events
+                .filter((e: any) => e.segs && e.tStartMs !== undefined)
+                .map((e: any) => ({
+                    text: (e.segs as any[])
+                        .map((s: any) => s.utf8 ?? '')
+                        .join('')
+                        .replace(/\n/g, ' ')
+                        .replace(/&amp;/g, '&').replace(/&#39;/g, "'")
+                        .replace(/&quot;/g, '"').trim(),
+                    start: (e.tStartMs ?? 0) / 1000,
+                    duration: (e.dDurationMs ?? 0) / 1000,
+                }))
+                .filter((s: any) => s.text);
+
+            if (!segments.length) throw new Error('Trascrizione non disponibile. Apri il video su YouTube, verifica che abbia i sottotitoli attivi, poi riprova.');
+
+            // Step 3: server salva + traduce via Groq
+            const saveRes = await fetch('/api/tutorials/transcript', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tutorialId: tutorial.id, transcript: segments, translate }),
+            });
+            const saveData = await saveRes.json();
+            if (!saveData.success) throw new Error(saveData.error || 'Errore nel salvataggio');
+
+            const newData: TranscriptData = {
+                transcript: segments,
+                translated: saveData.translated ?? null,
+                generated_at: new Date().toISOString(),
+                has_translation: !!saveData.translated,
+            };
+            setTranscriptData(newData);
+            updateTutorial(tutorial.id, { transcriptData: newData });
+        } catch (err: any) {
+            setTranscriptError(err.message || 'Errore nella generazione della trascrizione');
+        } finally {
+            setTranscriptLoading(false);
+        }
+    };
 
     const formatTime = (seconds: number) => {
         const h = Math.floor(seconds / 3600);
@@ -155,8 +322,9 @@ export default function TutorialDetail() {
     };
 
     // Per playlist senza videoId specifico, usa l'URL embed della playlist
+    // enablejsapi=1 abilita YouTube IFrame API per il polling del tempo (trascrizione sincronizzata)
     const embedUrl = tutorial.videoId
-        ? `https://www.youtube.com/embed/${tutorial.videoId}?rel=0&modestbranding=1&playsinline=1`
+        ? `https://www.youtube.com/embed/${tutorial.videoId}?rel=0&modestbranding=1&playsinline=1&enablejsapi=1`
         : tutorial.playlistId
             ? `https://www.youtube.com/embed/videoseries?list=${tutorial.playlistId}&rel=0&modestbranding=1&playsinline=1`
             : '';
@@ -219,6 +387,8 @@ export default function TutorialDetail() {
             <div className="bg-black rounded-3xl overflow-hidden aspect-video shadow-lg mb-8">
                 {embedUrl ? (
                     <iframe
+                        ref={iframeRef}
+                        id="yt-player"
                         src={embedUrl}
                         className="w-full h-full border-0"
                         allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
@@ -230,6 +400,133 @@ export default function TutorialDetail() {
                     </div>
                 )}
             </div>
+
+            {/* Transcript Card */}
+            {tutorial.videoId && (
+                <div className="bg-white rounded-[32px] border border-[#EEF0F4] shadow-sm mb-8 overflow-hidden">
+                    <button
+                        onClick={() => setTranscriptOpen(o => !o)}
+                        className="w-full flex items-center justify-between px-6 py-5"
+                    >
+                        <div className="flex items-center gap-2 text-[#7B5CF6]">
+                            <FileText size={20} strokeWidth={3} />
+                            <h3 className="font-black text-sm uppercase tracking-widest">Trascrizione</h3>
+                            {transcriptData && (
+                                <span className="bg-[#7B5CF6]/10 text-[#7B5CF6] text-xs font-bold px-2 py-0.5 rounded-full">
+                                    {transcriptData.has_translation ? '🇮🇹 + orig.' : 'disponibile'}
+                                </span>
+                            )}
+                        </div>
+                        {transcriptOpen ? <ChevronUp size={18} className="text-[#9AA2B1]" /> : <ChevronDown size={18} className="text-[#9AA2B1]" />}
+                    </button>
+
+                    {transcriptOpen && (
+                        <div className="px-6 pb-6">
+                            {/* Genera trascrizione */}
+                            {!transcriptData && (
+                                <div className="flex flex-col gap-2">
+                                    <p className="text-sm text-[#9AA2B1] font-medium mb-1">
+                                        Genera la trascrizione automatica del video (gratuita). Sincronizzata con il player.
+                                    </p>
+                                    {transcriptError && (
+                                        <p className="text-red-500 text-sm font-medium">{transcriptError}</p>
+                                    )}
+                                    {!user ? (
+                                        <p className="text-[#9AA2B1] text-sm italic">Accedi per generare la trascrizione.</p>
+                                    ) : (
+                                        <>
+                                            <button
+                                                onClick={() => generateTranscript(false)}
+                                                disabled={transcriptLoading}
+                                                className="flex items-center justify-center gap-2 h-11 bg-[#FAFAFC] border border-[#EEF0F4] rounded-xl font-bold text-sm text-[#1C1C1E] disabled:opacity-50 active:scale-95 transition-transform"
+                                            >
+                                                {transcriptLoading ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />}
+                                                Solo trascrizione originale
+                                            </button>
+                                            <button
+                                                onClick={() => generateTranscript(true)}
+                                                disabled={transcriptLoading}
+                                                className="flex items-center justify-center gap-2 h-11 bg-[#7B5CF6] text-white rounded-xl font-bold text-sm shadow-md disabled:opacity-50 active:scale-95 transition-transform"
+                                            >
+                                                {transcriptLoading ? <Loader2 size={16} className="animate-spin" /> : <Languages size={16} />}
+                                                Genera + Traduzione Italiana
+                                            </button>
+                                        </>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Trascrizione disponibile */}
+                            {transcriptData && (() => {
+                                const segments = transcriptView === 'translated' && transcriptData.translated
+                                    ? transcriptData.translated
+                                    : transcriptData.transcript;
+                                return (
+                                    <>
+                                        {/* Toggle originale / traduzione */}
+                                        {transcriptData.has_translation && transcriptData.translated && (
+                                            <div className="flex gap-2 mb-4">
+                                                <button
+                                                    onClick={() => setTranscriptView('original')}
+                                                    className={`flex-1 h-9 rounded-xl font-bold text-xs transition-colors ${transcriptView === 'original' ? 'bg-[#7B5CF6] text-white' : 'bg-[#FAFAFC] border border-[#EEF0F4] text-[#9AA2B1]'}`}
+                                                >
+                                                    Originale
+                                                </button>
+                                                <button
+                                                    onClick={() => setTranscriptView('translated')}
+                                                    className={`flex-1 h-9 rounded-xl font-bold text-xs transition-colors ${transcriptView === 'translated' ? 'bg-[#7B5CF6] text-white' : 'bg-[#FAFAFC] border border-[#EEF0F4] text-[#9AA2B1]'}`}
+                                                >
+                                                    🇮🇹 Italiano
+                                                </button>
+                                            </div>
+                                        )}
+
+                                        {/* Aggiungi traduzione se mancante */}
+                                        {!transcriptData.has_translation && user && (
+                                            <button
+                                                onClick={() => generateTranscript(true)}
+                                                disabled={transcriptLoading}
+                                                className="flex items-center gap-1.5 text-[#7B5CF6] font-bold text-xs mb-4 disabled:opacity-50"
+                                            >
+                                                {transcriptLoading ? <Loader2 size={12} className="animate-spin" /> : <Languages size={12} />}
+                                                Aggiungi traduzione italiana
+                                            </button>
+                                        )}
+                                        {transcriptError && (
+                                            <p className="text-red-500 text-xs font-medium mb-2">{transcriptError}</p>
+                                        )}
+
+                                        {/* Lista segmenti */}
+                                        <div className="max-h-[380px] overflow-y-auto flex flex-col gap-0.5 pr-1 -mx-1 px-1">
+                                            {segments.map((seg, i) => {
+                                                const next = segments[i + 1];
+                                                const isActive = seg.start <= currentVideoTime && (!next || next.start > currentVideoTime) && currentVideoTime > 0;
+                                                return (
+                                                    <div
+                                                        key={i}
+                                                        ref={isActive ? activeSegmentRef : null}
+                                                        onClick={() => ytPlayerRef.current?.seekTo?.(seg.start, true)}
+                                                        className={`flex gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-colors text-sm ${
+                                                            isActive
+                                                                ? 'bg-[#7B5CF6]/10 text-[#7B5CF6] font-bold'
+                                                                : 'text-[#1C1C1E] font-medium hover:bg-[#FAFAFC]'
+                                                        }`}
+                                                    >
+                                                        <span className="text-[10px] font-black text-[#9AA2B1] mt-0.5 w-10 shrink-0 tabular-nums">
+                                                            {formatTime(Math.floor(seg.start))}
+                                                        </span>
+                                                        <span className="leading-relaxed">{seg.text}</span>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </>
+                                );
+                            })()}
+                        </div>
+                    )}
+                </div>
+            )}
 
             {/* Main Counter — più compatto su mobile */}
             <div className="bg-white rounded-xl md:rounded-2xl p-2 md:p-4 shadow-[0_4px_24px_rgba(0,0,0,0.06)] border border-[#EEF0F4] text-center mb-8">
@@ -272,43 +569,95 @@ export default function TutorialDetail() {
             <div className="mb-10">
                 <div className="flex items-center justify-between mb-4">
                     <h2 className="text-xl font-black text-[#1C1C1E]">Giri Secondari</h2>
-                    <button
-                        onClick={() => { setNewCounterName(""); setShowNewCounterModal(true); }}
-                        className="bg-[#7B5CF6]/10 text-[#7B5CF6] px-3 py-1.5 rounded-xl font-black text-xs flex items-center gap-2"
-                    >
-                        <PlusIcon size={14} strokeWidth={3} />
-                        AGGIUNGI
-                    </button>
+                    <div className="flex items-center gap-2">
+                        {tutorial.secs.length > 1 && (
+                            <button
+                                onClick={() => setReorderMode(r => !r)}
+                                className={`px-3 py-1.5 rounded-xl font-black text-xs flex items-center gap-1.5 transition-colors ${reorderMode ? 'bg-green-500/10 text-green-600 border border-green-200' : 'bg-[#F4EEFF] text-[#7B5CF6]'}`}
+                            >
+                                <GripVertical size={13} strokeWidth={3} />
+                                {reorderMode ? 'FINE' : 'ORDINA'}
+                            </button>
+                        )}
+                        {!reorderMode && (
+                            <button
+                                onClick={() => { setNewCounterName(""); setShowNewCounterModal(true); }}
+                                className="bg-[#7B5CF6]/10 text-[#7B5CF6] px-3 py-1.5 rounded-xl font-black text-xs flex items-center gap-2"
+                            >
+                                <PlusIcon size={14} strokeWidth={3} />
+                                AGGIUNGI
+                            </button>
+                        )}
+                    </div>
                 </div>
+                {reorderMode && (
+                    <p className="text-xs text-[#9AA2B1] font-medium px-2 mb-3">
+                        <span className="hidden md:inline">Trascina le card per riordinare • </span>
+                        Usa ↑↓ per spostare
+                    </p>
+                )}
                 <div className="flex flex-col gap-3">
-                    {tutorial.secs.map(sec => (
-                        <RoundCounter
+                    {tutorial.secs.map((sec, index) => (
+                        <div
                             key={sec.id}
-                            {...sec}
-                            onIncrement={(sid) => {
-                                const updated = tutorial.secs.map(s => s.id === sid ? { ...s, value: s.value + 1 } : s);
-                                updateTutorial(tutorial.id, { secs: updated });
-                                syncSecs(updated);
+                            draggable={reorderMode}
+                            onDragStart={() => setDragIdx(index)}
+                            onDragEnd={() => { setDragIdx(null); setOverIdx(null); }}
+                            onDragOver={(e) => { e.preventDefault(); setOverIdx(index); }}
+                            onDrop={() => {
+                                if (dragIdx !== null && dragIdx !== index) moveCounter(dragIdx, index);
+                                setDragIdx(null); setOverIdx(null);
                             }}
-                            onDecrement={(sid) => {
-                                const updated = tutorial.secs.map(s => s.id === sid ? { ...s, value: Math.max(1, s.value - 1) } : s);
-                                updateTutorial(tutorial.id, { secs: updated });
-                                syncSecs(updated);
-                            }}
-                            onRename={(sid, newName) => {
-                                const updated = tutorial.secs.map(s => s.id === sid ? { ...s, name: newName } : s);
-                                updateTutorial(tutorial.id, { secs: updated });
-                                syncSecs(updated);
-                            }}
-                            onDelete={(sid) => {
-                                const updated = tutorial.secs.filter(s => s.id !== sid);
-                                updateTutorial(tutorial.id, { secs: updated });
-                                syncSecs(updated);
-                            }}
-                            onAssociateImage={() => {}}
-                            onRemoveImage={() => {}}
-                            hideImageOption={true}
-                        />
+                            className={`relative flex items-stretch gap-2 transition-all ${reorderMode ? 'cursor-grab active:cursor-grabbing' : ''} ${overIdx === index && dragIdx !== index ? 'ring-2 ring-[#7B5CF6] rounded-[28px]' : ''} ${dragIdx === index ? 'opacity-50' : ''}`}
+                        >
+                            {reorderMode && (
+                                <div className="flex flex-col items-center justify-center gap-1 bg-[#F4EEFF] rounded-2xl px-1 py-2 shrink-0">
+                                    <button
+                                        onClick={() => index > 0 && moveCounter(index, index - 1)}
+                                        disabled={index === 0}
+                                        className="w-7 h-7 flex items-center justify-center rounded-lg text-[#7B5CF6] disabled:opacity-25 hover:bg-[#7B5CF6]/10 active:scale-90 transition-all"
+                                    >
+                                        <ChevronUp size={16} strokeWidth={3} />
+                                    </button>
+                                    <GripVertical size={14} className="text-[#9AA2B1] md:block hidden" />
+                                    <button
+                                        onClick={() => index < tutorial.secs.length - 1 && moveCounter(index, index + 1)}
+                                        disabled={index === tutorial.secs.length - 1}
+                                        className="w-7 h-7 flex items-center justify-center rounded-lg text-[#7B5CF6] disabled:opacity-25 hover:bg-[#7B5CF6]/10 active:scale-90 transition-all"
+                                    >
+                                        <ChevronDown size={16} strokeWidth={3} />
+                                    </button>
+                                </div>
+                            )}
+                            <div className="flex-1 min-w-0">
+                                <RoundCounter
+                                    {...sec}
+                                    onIncrement={(sid) => {
+                                        const updated = tutorial.secs.map(s => s.id === sid ? { ...s, value: s.value + 1 } : s);
+                                        updateTutorial(tutorial.id, { secs: updated });
+                                        syncSecs(updated);
+                                    }}
+                                    onDecrement={(sid) => {
+                                        const updated = tutorial.secs.map(s => s.id === sid ? { ...s, value: Math.max(1, s.value - 1) } : s);
+                                        updateTutorial(tutorial.id, { secs: updated });
+                                        syncSecs(updated);
+                                    }}
+                                    onRename={(sid, newName) => {
+                                        const updated = tutorial.secs.map(s => s.id === sid ? { ...s, name: newName } : s);
+                                        updateTutorial(tutorial.id, { secs: updated });
+                                        syncSecs(updated);
+                                    }}
+                                    onDelete={(sid) => {
+                                        const updated = tutorial.secs.filter(s => s.id !== sid);
+                                        updateTutorial(tutorial.id, { secs: updated });
+                                        syncSecs(updated);
+                                    }}
+                                    onAssociateImage={() => {}}
+                                    onRemoveImage={() => {}}
+                                    hideImageOption={true}
+                                />
+                            </div>
+                        </div>
                     ))}
                     {tutorial.secs.length === 0 && (
                         <div className="text-center p-6 bg-[#FAFAFC] rounded-2xl border border-dashed border-[#EEF0F4] text-[#9AA2B1] text-sm font-medium">

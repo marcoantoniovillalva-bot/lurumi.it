@@ -3,6 +3,7 @@
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import { pushToAdmins, checkAndNotifyAlmostFull } from '@/lib/webpush'
+import { enrollUserInSequence } from '@/lib/email-triggers'
 
 export async function bookEventWithCredit(eventId: string) {
     const supabase = await createClient()
@@ -75,6 +76,11 @@ export async function bookEventWithCredit(eventId: string) {
 
     // Controlla e notifica se i posti sono quasi esauriti
     checkAndNotifyAlmostFull(eventId).catch(() => {})
+
+    // Enrollment nella sequenza nurturing event_booked
+    if (user.email) {
+        enrollUserInSequence(user.id, user.email, 'event_booked', { event_id: eventId }).catch(() => {})
+    }
 
     return { success: true }
 }

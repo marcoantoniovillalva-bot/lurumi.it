@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, Sparkles, Download, RotateCcw, ZoomIn, ZoomOut, Eraser, Paintbrush, Undo2, Redo2, Palette, Wand2, Check, X, AlertCircle, Loader2, ChevronRight } from "lucide-react";
+import { ArrowLeft, Sparkles, Download, RotateCcw, ZoomIn, ZoomOut, Eraser, Paintbrush, Undo2, Redo2, Palette, Wand2, Check, X, AlertCircle, Loader2, ChevronRight, Hand } from "lucide-react";
 import { useProjectStore } from "@/features/projects/store/useProjectStore";
 import { useAuth } from "@/hooks/useAuth";
 import { luDB } from "@/lib/db";
@@ -63,8 +63,13 @@ export default function EditImagePage() {
     const historyIndex = useRef(-1);
     const [historyLen, setHistoryLen] = useState(0); // trigger re-render per undo/redo buttons
 
+    // Pan mode
+    const [panMode, setPanMode] = useState(false);
+    const panDragStart = useRef<{ mx: number; my: number; px: number; py: number } | null>(null);
+
     // Pinch zoom
     const lastPinchDist = useRef<number | null>(null);
+    const lastPinchCenter = useRef<{ x: number; y: number } | null>(null);
     const panStart = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
 
     // Background
@@ -316,8 +321,12 @@ export default function EditImagePage() {
         setHistoryLen(h => h);
     };
 
-    // Mouse events pennello
+    // Mouse events pennello / pan
     const onMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+        if (panMode) {
+            panDragStart.current = { mx: e.clientX, my: e.clientY, px: pan.x, py: pan.y };
+            return;
+        }
         if (!brushCanvasRef.current) return;
         isPainting.current = true;
         const p = getCanvasPoint(e, brushCanvasRef.current);
@@ -326,6 +335,12 @@ export default function EditImagePage() {
         paintAt(brushCanvasRef.current, p.x, p.y);
     };
     const onMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+        if (panMode && panDragStart.current) {
+            const dx = e.clientX - panDragStart.current.mx;
+            const dy = e.clientY - panDragStart.current.my;
+            setPan({ x: panDragStart.current.px + dx / zoom, y: panDragStart.current.py + dy / zoom });
+            return;
+        }
         if (!isPainting.current || !brushCanvasRef.current) return;
         const p = getCanvasPoint(e, brushCanvasRef.current);
         if (!p) return;
@@ -333,20 +348,30 @@ export default function EditImagePage() {
         lastPaintPoint.current = p;
     };
     const onMouseUp = () => {
+        if (panMode) { panDragStart.current = null; return; }
         if (!isPainting.current || !brushCanvasRef.current) return;
         isPainting.current = false;
         saveToHistory(brushCanvasRef.current);
     };
 
-    // Touch events pennello
+    // Touch events pennello / pan
     const onTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
         if (e.touches.length === 2) {
-            // Pinch start
+            // Pinch + pan start
             const d = Math.hypot(
                 e.touches[0].clientX - e.touches[1].clientX,
                 e.touches[0].clientY - e.touches[1].clientY
             );
             lastPinchDist.current = d;
+            lastPinchCenter.current = {
+                x: (e.touches[0].clientX + e.touches[1].clientX) / 2,
+                y: (e.touches[0].clientY + e.touches[1].clientY) / 2,
+            };
+            isPainting.current = false;
+            return;
+        }
+        if (panMode) {
+            panDragStart.current = { mx: e.touches[0].clientX, my: e.touches[0].clientY, px: pan.x, py: pan.y };
             return;
         }
         if (!brushCanvasRef.current) return;
@@ -364,7 +389,22 @@ export default function EditImagePage() {
             );
             const delta = d / lastPinchDist.current;
             setZoom(z => Math.min(8, Math.max(0.5, z * delta)));
+            // Pan based on pinch center movement
+            if (lastPinchCenter.current) {
+                const cx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+                const cy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+                const dcx = cx - lastPinchCenter.current.x;
+                const dcy = cy - lastPinchCenter.current.y;
+                setPan(p => ({ x: p.x + dcx / zoom, y: p.y + dcy / zoom }));
+                lastPinchCenter.current = { x: cx, y: cy };
+            }
             lastPinchDist.current = d;
+            return;
+        }
+        if (panMode && panDragStart.current) {
+            const dx = e.touches[0].clientX - panDragStart.current.mx;
+            const dy = e.touches[0].clientY - panDragStart.current.my;
+            setPan({ x: panDragStart.current.px + dx / zoom, y: panDragStart.current.py + dy / zoom });
             return;
         }
         if (!isPainting.current || !brushCanvasRef.current) return;
@@ -375,6 +415,8 @@ export default function EditImagePage() {
     };
     const onTouchEnd = (e: React.TouchEvent<HTMLCanvasElement>) => {
         lastPinchDist.current = null;
+        lastPinchCenter.current = null;
+        if (panMode) { panDragStart.current = null; return; }
         if (!isPainting.current || !brushCanvasRef.current) return;
         isPainting.current = false;
         saveToHistory(brushCanvasRef.current);
@@ -624,8 +666,15 @@ export default function EditImagePage() {
                             <button onClick={() => setZoom(z => Math.max(0.5, z / 1.3))} className="w-9 h-9 flex items-center justify-center rounded-xl bg-white/10">
                                 <ZoomOut size={16} />
                             </button>
-                            <button onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }} className="w-9 h-9 flex items-center justify-center rounded-xl bg-white/10">
+                            <button onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }} className="w-9 h-9 flex items-center justify-center rounded-xl bg-white/10" title="Reset zoom">
                                 <RotateCcw size={14} />
+                            </button>
+                            <button
+                                onClick={() => setPanMode(v => !v)}
+                                className={`w-9 h-9 flex items-center justify-center rounded-xl text-sm font-bold transition-colors ${panMode ? 'bg-[#7B5CF6] text-white' : 'bg-white/10 text-white/60'}`}
+                                title="Modalità sposta (trascina per muoverti)"
+                            >
+                                <Hand size={16} />
                             </button>
                         </div>
 
@@ -634,11 +683,11 @@ export default function EditImagePage() {
                             className="flex-1 overflow-hidden relative flex items-center justify-center"
                             style={{ backgroundImage: 'repeating-conic-gradient(#333 0% 25%, #222 0% 50%)', backgroundSize: '20px 20px' }}
                         >
-                            <div style={{ transform: `scale(${zoom}) translate(${pan.x}px, ${pan.y}px)`, transformOrigin: 'center', transition: 'transform 0.05s' }}>
+                            <div style={{ transform: `scale(${zoom}) translate(${pan.x}px, ${pan.y}px)`, transformOrigin: 'center', transition: panDragStart.current ? 'none' : 'transform 0.05s' }}>
                                 <canvas
                                     ref={brushCanvasRef}
                                     className="max-w-full max-h-full rounded-lg shadow-2xl"
-                                    style={{ cursor: brushMode === 'erase' ? 'crosshair' : 'cell', touchAction: 'none' }}
+                                    style={{ cursor: panMode ? (panDragStart.current ? 'grabbing' : 'grab') : brushMode === 'erase' ? 'crosshair' : 'cell', touchAction: 'none' }}
                                     onMouseDown={onMouseDown}
                                     onMouseMove={onMouseMove}
                                     onMouseUp={onMouseUp}

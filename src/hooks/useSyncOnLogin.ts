@@ -161,6 +161,7 @@ export function useSyncOnLogin(user: User | null) {
                         timer: t.timer_seconds ?? 0,
                         secs: t.secs ?? [],
                         notesHtml: t.notes_html ?? '',
+                        transcriptData: t.transcript_data ?? null,
                     }
                     if (localIds.has(t.id)) updateTutorial(t.id, mapped)
                     else addTutorial(mapped)

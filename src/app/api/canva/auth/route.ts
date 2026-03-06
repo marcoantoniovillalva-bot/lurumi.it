@@ -16,16 +16,14 @@ export async function GET() {
         .update(codeVerifier)
         .digest('base64url')
 
-    const params = new URLSearchParams({
-        response_type: 'code',
-        client_id: clientId,
-        redirect_uri: redirectUri,
-        scope: 'asset:read asset:write design:content:read design:content:write',
-        code_challenge_method: 'S256',
-        code_challenge: codeChallenge,
-    })
-
-    const authUrl = `https://www.canva.com/api/oauth/authorize?${params.toString()}`
+    // Costruiamo la URL manualmente per evitare che URLSearchParams encoding i ':' in '%3A'
+    const authUrl = 'https://www.canva.com/api/oauth/authorize' +
+        '?response_type=code' +
+        `&client_id=${encodeURIComponent(clientId)}` +
+        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+        `&scope=${encodeURIComponent('asset:read asset:write')}` +
+        `&code_challenge_method=S256` +
+        `&code_challenge=${encodeURIComponent(codeChallenge)}`
 
     // Store verifier in a short-lived cookie so callback can use it
     const response = NextResponse.redirect(authUrl)

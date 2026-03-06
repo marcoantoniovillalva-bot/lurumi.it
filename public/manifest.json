@@ -7,6 +7,22 @@
     "background_color": "#ffffff",
     "theme_color": "#B9E5F9",
     "orientation": "portrait",
+    "share_target": {
+        "action": "/share",
+        "method": "POST",
+        "enctype": "multipart/form-data",
+        "params": {
+            "title": "title",
+            "text": "text",
+            "url": "url",
+            "files": [
+                {
+                    "name": "media",
+                    "accept": ["application/pdf", "image/png", "image/jpeg", "image/webp", "image/gif", "image/heic", "image/heif"]
+                }
+            ]
+        }
+    },
     "icons": [
         {
             "src": "/images/logo/isotipo.png",
@@ -24,7 +40,7 @@
             "src": "/images/logo/isotipo.png",
             "sizes": "1024x1024",
             "type": "image/png",
-            "purpose": "maskable"
+            "purpose": "any"
         }
     ]
 }

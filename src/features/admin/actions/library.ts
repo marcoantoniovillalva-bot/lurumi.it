@@ -3,6 +3,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { pushToAllUsers } from '@/lib/webpush'
 import { revalidatePath } from 'next/cache'
+import { enrollAllActiveUsersInSequence } from '@/lib/email-triggers'
 
 /* ─── Tipi ─────────────────────────────────────────────────── */
 
@@ -105,6 +106,8 @@ export async function createLibraryItem(
             url: '/tools/books',
             tag: `library-new-${itemId}`,
         }).catch(() => {})
+        // Enrollment sequenza email new_library_item
+        enrollAllActiveUsersInSequence('new_library_item', { title: form.title, type: form.item_type }).catch(() => {})
     }
 
     revalidatePath('/tools/books')
