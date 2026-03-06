@@ -61,12 +61,8 @@ export async function generatePatternPdf(
     const addPage = () => {
         const page = pdfDoc.addPage([W, H])
 
-        // Footer line + titolo progetto (senza ripetere lurumi.it)
+        // Footer line
         page.drawLine({ start: { x: MARGIN, y: 36 }, end: { x: W - MARGIN, y: 36 }, thickness: 0.5, color: LIGHT })
-        page.drawText(project.title, {
-            x: W - MARGIN - fontBold.widthOfTextAtSize(project.title, 8),
-            y: 20, size: 8, font: fontBold, color: MUTED,
-        })
         return page
     }
 
