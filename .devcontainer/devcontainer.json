@@ -14,15 +14,11 @@
       "extensions": [
         "dbaeumer.vscode-eslint",
         "esbenp.prettier-vscode",
-        "bradlc.vscode-tailwindcss",
-        "Prisma.prisma"
+        "bradlc.vscode-tailwindcss"
       ],
       "settings": {
         "terminal.integrated.defaultProfile.linux": "bash"
       }
     }
-  },
-  "remoteEnv": {
-    "ANTHROPIC_API_KEY": "${localEnv:ANTHROPIC_API_KEY}"
   }
 }
