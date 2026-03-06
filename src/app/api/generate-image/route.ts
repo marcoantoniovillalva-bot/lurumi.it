@@ -126,13 +126,14 @@ export async function POST(req: NextRequest) {
             // flux-dev con immagine di riferimento (Replicate)
             // HD = più inference steps per qualità superiore mantenendo la somiglianza
             const replicate = getReplicateClient()
+            const enrichedRefPrompt = `Amigurumi crochet doll version of the subject in the reference image. ${prompt}. Cute kawaii amigurumi stuffed toy, hand-crocheted yarn texture, visible crochet stitches, round simplified chibi features, soft plush toy aesthetic, maintain color palette and recognizable traits from reference. Clean studio background, soft lighting.`
             const output = await replicate.run(
                 'black-forest-labs/flux-dev' as any,
                 {
                     input: {
-                        prompt: `Beautiful high-quality crochet/knitting: ${prompt}. Studio lighting, professional craft photography.`,
+                        prompt: enrichedRefPrompt,
                         image: referenceImageBase64,
-                        prompt_strength: 0.65,
+                        prompt_strength: 0.78,
                         aspect_ratio: aspectRatio,
                         output_format: 'webp',
                         num_outputs: 1,
