@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useRef, useEffect } from 'react'
-import { ArrowLeft, Dice5, Sparkles, Upload, X, Download, Share2, Palette, Zap, Crown } from 'lucide-react'
+import { ArrowLeft, Dice5, Sparkles, Upload, X, Download, Share2, Zap, Crown } from 'lucide-react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/hooks/useAuth'
@@ -28,40 +28,6 @@ export const ImageGenerator: React.FC = () => {
     const [showSuggestions, setShowSuggestions] = useState(false)
     const [hdMode, setHdMode] = useState(false)
     const refImageInput = useRef<HTMLInputElement>(null)
-    const [canvaConnected, setCanvaConnected] = useState(false)
-    const [exportingCanva, setExportingCanva] = useState(false)
-
-    useEffect(() => {
-        if (!user) return
-        const supabase = createClient()
-        supabase.from('profiles').select('canva_token').eq('id', user.id).single().then(({ data, error }) => {
-            if (error) console.warn('[ImageGenerator] canva_token fetch failed:', error.message)
-            setCanvaConnected(!!(data as { canva_token?: string })?.canva_token)
-        })
-    }, [user?.id])
-
-    const handleExportCanva = async () => {
-        if (!generatedImage) return
-        setExportingCanva(true)
-        try {
-            const res = await fetch('/api/canva/upload', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ imageUrl: generatedImage }),
-            })
-            const result = await res.json()
-            if (result.success) {
-                alert(result.message)
-                window.open(result.canvaUrl, '_blank')
-            } else {
-                alert(`Errore: ${result.error}`)
-            }
-        } catch {
-            alert('Errore durante l\'esportazione su Canva')
-        } finally {
-            setExportingCanva(false)
-        }
-    }
 
     const handleReferenceImage = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0]
@@ -210,16 +176,6 @@ export const ImageGenerator: React.FC = () => {
                                 Condividi
                             </button>
                         </div>
-                        {canvaConnected && (
-                            <button
-                                onClick={handleExportCanva}
-                                disabled={exportingCanva}
-                                className="w-full flex items-center justify-center gap-2 py-3 bg-[#00C4CC] text-white rounded-2xl font-bold text-sm active:scale-95 transition-transform disabled:opacity-50"
-                            >
-                                <Palette size={18} />
-                                {exportingCanva ? 'Esportando...' : 'Esporta in Canva'}
-                            </button>
-                        )}
                     </div>
                 )}
 

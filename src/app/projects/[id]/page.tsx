@@ -5,7 +5,7 @@ import {
     ArrowLeft, Minus, Plus, RotateCcw, Timer, Share2,
     ChevronLeft, ChevronRight, StickyNote, Trash2,
     Plus as PlusIcon, Camera, Save, Maximize2, Archive, Pencil,
-    GripVertical, ChevronUp, ChevronDown, Loader2, X
+    GripVertical, ChevronUp, ChevronDown, FileDown, ExternalLink, X
 } from "lucide-react";
 import { useProjectStore, Project, RoundCounter as RoundCounterType, ProjectImage } from "@/features/projects/store/useProjectStore";
 import { luDB } from "@/lib/db";
@@ -62,10 +62,7 @@ export default function ProjectDetail() {
     const [showImageManager, setShowImageManager] = useState(false);
     const [imgDragIdx, setImgDragIdx] = useState<number | null>(null);
     const [imgOverIdx, setImgOverIdx] = useState<number | null>(null);
-    // Canva export states
-    const [exportingCanva, setExportingCanva] = useState(false);
-    const [canvaConnected, setCanvaConnected] = useState(false);
-    const [canvaStatus, setCanvaStatus] = useState<'preparing' | 'uploading' | null>(null);
+    const [exportingPdf, setExportingPdf] = useState(false);
 
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const renderTaskRef = useRef<any>(null);
@@ -279,15 +276,6 @@ export default function ProjectDetail() {
         }
     }, [project]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Controlla se Canva è connesso
-    useEffect(() => {
-        if (!user) return;
-        const supabase = createClient();
-        supabase.from('profiles').select('canva_token').eq('id', user.id).single().then(({ data }) => {
-            setCanvaConnected(!!(data as any)?.canva_token);
-        });
-    }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-
     // Pointer drag globale per il riordino immagini (funziona su mobile e desktop)
     useEffect(() => {
         if (imgDragIdx === null) return;
@@ -432,112 +420,24 @@ export default function ProjectDetail() {
         if (Math.abs(e.clientX - lpStartPos.current.x) > 8 || Math.abs(e.clientY - lpStartPos.current.y) > 8) cancelLongPress();
     };
 
-    // ── Canva export ─────────────────────────────────────────────────────────
-    const handleExportCanva = async () => {
-        if (!canvaConnected) {
-            alert('Connetti prima Canva dal tuo profilo per usare questa funzione.');
-            return;
-        }
-
-        // Apri la finestra SUBITO — i browser bloccano window.open() dopo un await
-        const canvaWin = window.open('about:blank', '_blank');
-        const wasRunning = isTimerRunning;
-        if (wasRunning) setIsTimerRunning(false);
-        const timerLabel = formatTime(elapsedRef.current);
-
-        setExportingCanva(true);
-        setCanvaStatus('preparing');
+    // ── PDF export ───────────────────────────────────────────────────────────
+    const handleExportPdf = async () => {
+        setExportingPdf(true);
         try {
-            const imgs = project.images ?? [];
-            const associatedIds = new Set(project.secs.map(s => s.imageId).filter(Boolean));
-
-            // Comprimi URL immagine → base64 JPEG (max 640px)
-            const compress = async (url: string | undefined): Promise<string | null> => {
-                if (!url) return null;
-                try {
-                    const blob = await fetch(url).then(r => r.blob());
-                    const dataUrl = await new Promise<string>(resolve => {
-                        const reader = new FileReader();
-                        reader.onloadend = () => resolve(reader.result as string);
-                        reader.readAsDataURL(blob);
-                    });
-                    const imgEl = await new Promise<HTMLImageElement>(resolve => {
-                        const i = new Image();
-                        i.onload = () => resolve(i);
-                        i.src = dataUrl;
-                    });
-                    const scale = Math.min(640 / imgEl.width, 640 / imgEl.height, 1);
-                    const cv = document.createElement('canvas');
-                    cv.width = Math.round(imgEl.width * scale);
-                    cv.height = Math.round(imgEl.height * scale);
-                    cv.getContext('2d')!.drawImage(imgEl, 0, 0, cv.width, cv.height);
-                    return cv.toDataURL('image/jpeg', 0.78);
-                } catch { return null; }
-            };
-
-            type ExportSection =
-                | { type: 'title';   title: string; timer: string; coverBase64?: string | null }
-                | { type: 'counter'; name: string; value: number; imageBase64?: string | null }
-                | { type: 'image';   label: string; imageBase64: string | null }
-                | { type: 'notes';   text: string; title: string; timer: string };
-
-            const sections: ExportSection[] = [];
-
-            // Pagina titolo
-            const coverIdx = project.coverImageId
-                ? imgs.findIndex(img => img.id === project.coverImageId)
-                : 0;
-            sections.push({
-                type: 'title',
-                title: project.title,
-                timer: timerLabel,
-                coverBase64: await compress(imageUrls[coverIdx >= 0 ? coverIdx : 0]),
-            });
-
-            // Immagini non associate
-            for (let i = 0; i < imgs.length; i++) {
-                if (!associatedIds.has(imgs[i].id) && imageUrls[i]) {
-                    sections.push({ type: 'image', label: `Immagine ${i + 1}`, imageBase64: await compress(imageUrls[i]) });
-                }
-            }
-
-            // Pagina per ogni contatore
-            for (const sec of project.secs) {
-                const imgIdx = sec.imageId ? imgs.findIndex(img => img.id === sec.imageId) : -1;
-                sections.push({ type: 'counter', name: sec.name, value: sec.value, imageBase64: imgIdx >= 0 ? await compress(imageUrls[imgIdx]) : null });
-            }
-
-            // Pagina note
-            if (project.notesHtml) {
-                sections.push({ type: 'notes', text: project.notesHtml.replace(/<[^>]+>/g, '').trim(), title: project.title, timer: timerLabel });
-            }
-
-            setCanvaStatus('uploading');
-            const res = await fetch('/api/canva/export-project', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ title: project.title, sections }),
-            });
-
-            if (!res.ok) {
-                const err = await res.json().catch(() => ({ error: 'Errore sconosciuto' }));
-                canvaWin?.close();
-                alert(`Esportazione fallita: ${err.error}`);
-                return;
-            }
-
-            const { designUrl } = await res.json();
-            if (canvaWin) canvaWin.location.href = designUrl;
-            else window.open(designUrl, '_blank');
-
+            const { generatePatternPdf } = await import('@/lib/pdf-export');
+            const pdfBytes = await generatePatternPdf(project, imageUrls);
+            const blob = new Blob([pdfBytes.buffer as ArrayBuffer], { type: 'application/pdf' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${project.title.replace(/[^a-zA-Z0-9]/g, '-')}.pdf`;
+            a.click();
+            URL.revokeObjectURL(url);
         } catch (e) {
-            canvaWin?.close();
-            console.error('[Canva Export]', e);
-            alert("Errore durante l'esportazione su Canva.");
+            console.error('[PDF Export]', e);
+            alert('Errore durante la generazione del PDF. Riprova.');
         } finally {
-            setExportingCanva(false);
-            setCanvaStatus(null);
-            if (wasRunning) setIsTimerRunning(true);
+            setExportingPdf(false);
         }
     };
 
@@ -639,19 +539,21 @@ export default function ProjectDetail() {
                     >
                         <Archive size={20} />
                     </button>
-                    {canvaConnected && (
-                        <button
-                            onClick={handleExportCanva}
-                            disabled={exportingCanva}
-                            className="h-10 px-3 flex items-center gap-1.5 bg-[#00C4CC]/10 border border-[#00C4CC]/30 rounded-xl text-[#008B8F] font-black text-xs active:scale-95 transition-transform shadow-sm disabled:opacity-60"
-                            title="Esporta su Canva"
-                        >
-                            {exportingCanva ? <Loader2 size={15} className="animate-spin" /> : (
-                                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm0 4.5c4.136 0 7.5 3.364 7.5 7.5 0 4.136-3.364 7.5-7.5 7.5-4.136 0-7.5-3.364-7.5-7.5 0-4.136 3.364-7.5 7.5-7.5zm0 2.25a5.25 5.25 0 100 10.5 5.25 5.25 0 000-10.5z"/></svg>
-                            )}
-                            Canva
-                        </button>
-                    )}
+                    <button
+                        onClick={handleExportPdf}
+                        disabled={exportingPdf}
+                        className="w-10 h-10 flex items-center justify-center bg-white border border-[#EEF0F4] rounded-xl text-[#7B5CF6] active:scale-95 transition-transform shadow-sm disabled:opacity-50"
+                        title="Esporta PDF editabile"
+                    >
+                        <FileDown size={20} />
+                    </button>
+                    <button
+                        onClick={() => window.open('https://www.canva.com/create', '_blank')}
+                        className="w-10 h-10 flex items-center justify-center bg-white border border-[#EEF0F4] rounded-xl text-[#9AA2B1] active:scale-95 transition-transform shadow-sm"
+                        title="Apri Canva (importa il PDF con File → Importa)"
+                    >
+                        <ExternalLink size={18} />
+                    </button>
                 </div>
             </div>
 
@@ -1087,23 +989,6 @@ export default function ProjectDetail() {
                             >
                                 Crea
                             </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* Canva export loading toast */}
-            {exportingCanva && (
-                <div className="fixed bottom-6 left-0 right-0 flex justify-center z-[10001] px-4 pointer-events-none">
-                    <div className="bg-[#1C1C1E] text-white rounded-2xl px-5 py-3 flex items-center gap-3 shadow-2xl">
-                        <Loader2 size={18} className="animate-spin text-[#00C4CC] shrink-0" />
-                        <div>
-                            <p className="text-sm font-bold leading-tight">
-                                {canvaStatus === 'preparing' ? 'Preparando il PDF…' : 'Caricando su Canva…'}
-                            </p>
-                            <p className="text-xs text-white/50 mt-0.5">
-                                {canvaStatus === 'preparing' ? 'Elaborazione immagini e testi' : 'Attendere, potrebbe richiedere qualche secondo'}
-                            </p>
                         </div>
                     </div>
                 </div>

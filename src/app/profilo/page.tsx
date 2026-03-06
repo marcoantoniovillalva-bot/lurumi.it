@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Palette, CheckCircle, Mail } from "lucide-react";
+import { Mail } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useUserProfile, broadcastProfileRefresh } from "@/hooks/useUserProfile";
@@ -23,22 +23,11 @@ export default function ProfiloPage() {
     const { character, getUrl } = useCharacterTheme();
     const router = useRouter();
     const searchParams = useSearchParams();
-    const canvaStatus = searchParams.get('canva');
-    const [canvaConnected, setCanvaConnected] = useState(false);
     const [isPending, startTransition] = useTransition();
     const [themeSaved, setThemeSaved] = useState(false);
     const [showAvatarModal, setShowAvatarModal] = useState(false);
     const [emailPrefs, setEmailPrefs] = useState<{ newsletter: boolean; marketing: boolean } | null>(null);
     const [emailPrefsSaved, setEmailPrefsSaved] = useState(false);
-
-    useEffect(() => {
-        if (!user) return;
-        const supabase = createClient();
-        supabase.from('profiles').select('canva_token').eq('id', user.id).single().then(({ data, error }) => {
-            if (error) console.warn('[Profilo] canva_token fetch failed:', error.message);
-            setCanvaConnected(!!(data as { canva_token?: string })?.canva_token);
-        });
-    }, [user?.id]);
 
     useEffect(() => {
         if (!loading && !user) router.push("/login");
@@ -213,40 +202,6 @@ export default function ProfiloPage() {
                     </div>
                 </div>
             )}
-
-            {/* ── Canva Integration ── */}
-            <div className="bg-white rounded-[28px] border border-[#EEF0F4] p-6 shadow-sm mb-6">
-                <div className="flex items-start justify-between">
-                    <div>
-                        <div className="flex items-center gap-2 mb-1">
-                            <Palette size={18} className="text-[#7B5CF6]" />
-                            <h2 className="text-lg font-black text-[#1C1C1E]">Canva</h2>
-                        </div>
-                        <p className="text-[#9AA2B1] text-xs font-medium">
-                            {canvaConnected ? 'Account connesso — puoi esportare dal Designer AI' : 'Connetti Canva per esportare le immagini AI direttamente'}
-                        </p>
-                        {canvaStatus === 'success' && (
-                            <p className="text-green-600 text-xs font-bold mt-1">✓ Canva connesso con successo!</p>
-                        )}
-                        {canvaStatus === 'error' && (
-                            <p className="text-red-500 text-xs font-bold mt-1">Connessione fallita. Riprova.</p>
-                        )}
-                    </div>
-                    {canvaConnected ? (
-                        <div className="flex items-center gap-1.5 text-green-600 font-bold text-sm">
-                            <CheckCircle size={16} />
-                            Connesso
-                        </div>
-                    ) : (
-                        <a
-                            href="/api/canva/auth"
-                            className="px-4 py-2.5 bg-[#7B5CF6] text-white rounded-xl font-bold text-sm active:scale-95 transition-transform flex-shrink-0"
-                        >
-                            Connetti
-                        </a>
-                    )}
-                </div>
-            </div>
 
             {/* ── Preferenze Email ── */}
             <div className="bg-white rounded-[28px] border border-[#EEF0F4] p-6 shadow-sm mb-6">
