@@ -13,7 +13,7 @@ export async function GET() {
 
     const codeVerifier = 'debug-verifier-placeholder'
     const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url')
-    const scope = encodeURIComponent('asset:read asset:write app:read app:write design:content:read design:content:write')
+    const scope = 'asset:read asset:write app:read app:write design:content:read design:content:write'.replace(/ /g, '%20')
 
     const authUrl = 'https://www.canva.com/api/oauth/authorize' +
         `?code_challenge_method=s256` +

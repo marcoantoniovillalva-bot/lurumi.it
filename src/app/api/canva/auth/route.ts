@@ -19,8 +19,9 @@ export async function GET() {
     // State per CSRF protection
     const state = crypto.randomBytes(16).toString('hex')
 
-    // Scopes abilitati nel portale Canva: app:read/write, asset:read/write, design:content:read/write
-    const scope = encodeURIComponent('asset:read asset:write app:read app:write design:content:read design:content:write')
+    // Scopes: codifica SOLO gli spazi come %20, lascia i due punti letterali
+    // (il portale Canva mostra esplicitamente colons non codificati nel template URL)
+    const scope = 'asset:read asset:write app:read app:write design:content:read design:content:write'.replace(/ /g, '%20')
 
     // Ordine parametri e formato IDENTICO al template mostrato dal portale Canva Developer:
     // code_challenge_method=s256 (minuscolo — Canva non usa S256 standard RFC)
