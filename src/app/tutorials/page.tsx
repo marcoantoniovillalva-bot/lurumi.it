@@ -54,7 +54,14 @@ export default function TutorialsPage() {
             .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'tutorials', filter: `user_id=eq.${user.id}` }, (payload) => {
                 if (!payload.new?.id) return;
                 const t = payload.new as Record<string, any>;
-                updateTutorial(t.id, { title: t.title, counter: t.counter ?? 0, timer: t.timer_seconds ?? 0, secs: t.secs ?? [], notesHtml: t.notes_html ?? '' });
+                updateTutorial(t.id, {
+                    title: t.title,
+                    counter: t.counter ?? 0,
+                    timer: t.timer_seconds ?? 0,
+                    secs: t.secs ?? [],
+                    notesHtml: t.notes_html ?? '',
+                    transcriptData: t.transcript_data ?? undefined,
+                });
             })
             .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'tutorials' }, (payload) => {
                 if (!payload.old?.id) return;
@@ -246,7 +253,7 @@ export default function TutorialsPage() {
             <div className="grid gap-3.5">
                 {filteredTutorials.length > 0 ? (
                     filteredTutorials.map((t) => (
-                        <div key={t.id} className="bg-white p-3.5 rounded-2xl border border-[#EEF0F4] shadow-sm flex items-center gap-4 active:scale-[0.98] transition-transform">
+                        <div key={t.id} className="bg-white p-3.5 rounded-2xl border border-[#EEF0F4] shadow-sm flex items-center gap-3 min-w-0 active:scale-[0.98] transition-transform">
                             <Link href={`/tutorials/${t.id}`} className="flex-1 flex items-center gap-4 min-w-0">
                                 <div className="w-20 h-14 bg-black rounded-xl overflow-hidden relative group flex-shrink-0">
                                     <img src={t.thumbUrl} alt={t.title} className="w-full h-full object-cover opacity-80 group-hover:scale-110 transition-transform" />
@@ -256,16 +263,16 @@ export default function TutorialsPage() {
                                 </div>
                                 <div className="flex-1 min-w-0">
                                     {renamingId === t.id ? (
-                                        <div className="flex items-center gap-1.5" onClick={e => e.preventDefault()}>
+                                        <div className="flex items-center gap-1 min-w-0" onClick={e => e.preventDefault()}>
                                             <input
                                                 autoFocus
                                                 value={renameValue}
                                                 onChange={e => setRenameValue(e.target.value)}
                                                 onKeyDown={e => { if (e.key === 'Enter') saveRename(t.id); if (e.key === 'Escape') setRenamingId(null); }}
-                                                className="flex-1 h-7 px-2 border border-[#7B5CF6] rounded-lg text-sm font-bold outline-none"
+                                                className="min-w-0 flex-1 h-8 px-2 border border-[#7B5CF6] rounded-lg text-sm font-bold outline-none"
                                             />
-                                            <button onClick={() => saveRename(t.id)} className="text-green-500 p-1"><Check size={14} /></button>
-                                            <button onClick={() => setRenamingId(null)} className="text-[#9AA2B1] p-1"><X size={14} /></button>
+                                            <button onClick={() => saveRename(t.id)} className="flex-shrink-0 text-green-500 p-1"><Check size={14} /></button>
+                                            <button onClick={() => setRenamingId(null)} className="flex-shrink-0 text-[#9AA2B1] p-1"><X size={14} /></button>
                                         </div>
                                     ) : (
                                         <>

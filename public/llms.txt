@@ -1,0 +1,34 @@
+# Lurumi
+
+## What is Lurumi?
+Lurumi is an AI-powered Progressive Web App (PWA) for crochet, amigurumi, and knitting enthusiasts in Italy.
+
+## Key Features
+- **AI Chat Assistant**: Ask anything about crochet, amigurumi patterns, yarn types, and knitting techniques.
+- **AI Image Generation**: Generate pattern inspiration images using DALL-E 3 and Flux AI models.
+- **Vision Analysis**: Upload photos of your work-in-progress for AI feedback and stitch counting.
+- **Round Counter**: Track stitch counts and rounds with customizable per-project counters.
+- **Project Manager**: Organize crochet and knitting projects with images, notes, and PDFs.
+- **YouTube Tutorial Tracker**: Save YouTube crochet tutorials with AI-generated transcripts and Italian translations.
+- **Live Courses**: Book in-person and online crochet and amigurumi workshops.
+- **Background Removal & Generation**: AI tools to create professional product photos of finished projects.
+- **PDF Pattern Viewer**: Read and annotate PDF crochet patterns within the app.
+
+## Who is it for?
+Italian-speaking crochet and knitting hobbyists, amigurumi makers, and crafters who want AI assistance.
+
+## Language
+Italian (Italian UI, Italian AI responses, Italian tutorials focus)
+
+## Technology
+Next.js PWA, installable on Android and iOS, works offline.
+
+## URL
+https://lurumi.it
+
+## Contact
+info@lurumi.it
+
+## Pricing
+- Free tier: 50 AI credits/month
+- Premium tier: 300 AI credits/month (Stripe subscription)

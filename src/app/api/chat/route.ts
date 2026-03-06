@@ -34,7 +34,12 @@ const MAX_IMAGE_SIZE = 10 * 1024 * 1024 // 10 MB in caratteri base64
 
 export async function POST(req: NextRequest) {
     try {
-        const { message, imageBase64, toolType } = await req.json()
+        const { message, imageBase64, toolType, history } = await req.json() as {
+            message: string
+            imageBase64?: string
+            toolType?: string
+            history?: { role: 'user' | 'assistant'; content: string }[]
+        }
 
         // Validazione input
         if (message && typeof message === 'string' && message.length > MAX_MESSAGE_LENGTH) {
@@ -134,11 +139,17 @@ export async function POST(req: NextRequest) {
         } else {
             // ── Llama 3.3 70B via Groq per chat testuale (gratuito) ─────────────
             const groq = getGroqClient()
+            // Includi la cronologia degli ultimi 20 messaggi (per non superare il contesto)
+            const historyMessages = (history ?? []).slice(-20).map(h => ({
+                role: h.role,
+                content: h.content,
+            }))
             const completion = await groq.chat.completions.create({
                 model: 'llama-3.3-70b-versatile',
                 max_tokens: 600,
                 messages: [
                     { role: 'system', content: `${SYSTEM_PROMPT}\nContesto attuale: ${toolType || 'assistente generale'}` },
+                    ...historyMessages,
                     { role: 'user', content: message },
                 ],
             })

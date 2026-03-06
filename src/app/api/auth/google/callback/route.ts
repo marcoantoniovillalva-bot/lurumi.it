@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient, type CookieOptions } from '@supabase/ssr'
 import { sendWelcomeEmail } from '@/lib/resend'
+import { enrollUserInSequence } from '@/lib/email-triggers'
 
 export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url)
@@ -101,11 +102,12 @@ export async function GET(request: NextRequest) {
             { onConflict: 'id', ignoreDuplicates: true }
         )
 
-        // Welcome email solo al primo accesso (created_at < 60s fa)
+        // Welcome email + enrollment solo al primo accesso (created_at < 60s fa)
         const isNewUser = Date.now() - new Date(authedUser.created_at).getTime() < 60_000
         if (isNewUser && authedUser.email) {
             const firstName = authedUser.user_metadata?.full_name?.split(' ')[0] as string | undefined
             sendWelcomeEmail(authedUser.email, firstName).catch(() => {})
+            enrollUserInSequence(authedUser.id, authedUser.email, 'first_login').catch(() => {})
         }
     }
 

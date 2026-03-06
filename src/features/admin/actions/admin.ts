@@ -3,6 +3,7 @@
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { pushToUser, pushToAdmins, pushToAllUsers, pushToConfirmedBookers } from '@/lib/webpush'
 import { invalidateAiStatusCache } from '@/lib/ai-status'
+import { enrollAllActiveUsersInSequence } from '@/lib/email-triggers'
 
 async function assertAdmin() {
     const supabase = await createClient()
@@ -40,6 +41,9 @@ export async function createEvent(data: EventFormData) {
         tag: `new-event-${event.id}`,
     }).catch(() => {})
 
+    // Enrollment sequenza email new_event
+    enrollAllActiveUsersInSequence('new_event', { title: data.title }).catch(() => {})
+
     return event
 }
 
@@ -66,16 +70,23 @@ export async function updateEvent(id: string, data: Partial<EventFormData> & { i
 export async function deleteEvent(id: string): Promise<{ ok: true } | { ok: false; error: string }> {
     try {
         const { db } = await assertAdmin()
-        const { count } = await db
-            .from('event_bookings')
-            .select('*', { count: 'exact', head: true })
-            .eq('event_id', id)
-            .eq('status', 'confirmed')
-        if (count && count > 0) {
-            return { ok: false, error: `Ci sono ${count} prenotazioni attive. Cancella prima le prenotazioni.` }
+
+        // Fetch event to check date and title
+        const { data: ev } = await db.from('events').select('title, event_date').eq('id', id).single()
+
+        // Only block deletion if event is in the future AND has confirmed bookings
+        const isPast = ev ? new Date(ev.event_date) < new Date() : false
+        if (!isPast) {
+            const { count } = await db
+                .from('event_bookings')
+                .select('*', { count: 'exact', head: true })
+                .eq('event_id', id)
+                .eq('status', 'confirmed')
+            if (count && count > 0) {
+                return { ok: false, error: `Ci sono ${count} prenotazioni attive. Cancella prima le prenotazioni o attendi che l'evento si svolga.` }
+            }
         }
 
-        const { data: ev } = await db.from('events').select('title').eq('id', id).single()
         if (ev) {
             pushToConfirmedBookers(id, {
                 title: 'Lurumi — Evento eliminato',

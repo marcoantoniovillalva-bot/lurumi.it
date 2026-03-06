@@ -417,25 +417,18 @@ function EventCard({
         ? event.image_urls
         : (event.image_url ? [event.image_url] : []);
     const [viewer, setViewer] = useState<{ open: boolean; index: number }>({ open: false, index: 0 });
-    const lastTapRef = useRef(0);
+    const [descExpanded, setDescExpanded] = useState(false);
+    const DESC_LIMIT = 160;
 
     return (
         <div className="bg-white rounded-[28px] border border-[#EEF0F4] overflow-hidden shadow-sm">
             {/* Image(s) */}
             {allImages.length > 0 && (
                 <div
-                    className="relative w-full h-44 cursor-pointer select-none"
-                    onDoubleClick={() => setViewer({ open: true, index: 0 })}
-                    onTouchEnd={e => {
-                        const now = Date.now();
-                        if (now - lastTapRef.current < 300) {
-                            e.preventDefault();
-                            setViewer({ open: true, index: 0 });
-                        }
-                        lastTapRef.current = now;
-                    }}
+                    className="relative w-full cursor-pointer select-none"
+                    onClick={() => setViewer({ open: true, index: 0 })}
                 >
-                    <img src={allImages[0]} alt={event.title} className="w-full h-full object-cover" />
+                    <img src={allImages[0]} alt={event.title} className="w-full h-auto block" />
                     {allImages.length > 1 && (
                         <span className="absolute bottom-2 right-2 bg-black/60 text-white text-[10px] font-black px-2 py-0.5 rounded-full">
                             +{allImages.length - 1} foto
@@ -453,7 +446,21 @@ function EventCard({
                 </div>
 
                 {event.description && (
-                    <p className="text-[#9AA2B1] text-sm font-medium mb-3 leading-relaxed">{event.description}</p>
+                    <div className="mb-3">
+                        <p className="text-[#9AA2B1] text-sm font-medium leading-relaxed">
+                            {descExpanded || event.description.length <= DESC_LIMIT
+                                ? event.description
+                                : event.description.slice(0, DESC_LIMIT) + '…'}
+                        </p>
+                        {event.description.length > DESC_LIMIT && (
+                            <button
+                                onClick={() => setDescExpanded(v => !v)}
+                                className="text-[#7B5CF6] text-xs font-bold mt-1"
+                            >
+                                {descExpanded ? 'Mostra meno' : 'Leggi di più'}
+                            </button>
+                        )}
+                    </div>
                 )}
 
                 <div className="flex items-center gap-4 text-xs text-[#9AA2B1] font-bold mb-4 flex-wrap">

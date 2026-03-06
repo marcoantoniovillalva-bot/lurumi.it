@@ -559,6 +559,108 @@ ALTER TABLE profiles ADD COLUMN IF NOT EXISTS marketing_opt_in BOOLEAN DEFAULT f
 
 -- ── Library video URL ────────────────────────────────────────────────────────
 ALTER TABLE library_items ADD COLUMN IF NOT EXISTS video_url TEXT;
+
+-- ── Gender detection (rilevato via Groq AI al primo accesso) ─────────────────
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS gender TEXT; -- 'f' | 'm' | null
+
+-- ── Email Marketing System ───────────────────────────────────────────────────
+
+-- Campagne email manuali (draft → approved → sent)
+CREATE TABLE IF NOT EXISTS email_campaigns (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name           TEXT NOT NULL,
+  subject        TEXT NOT NULL DEFAULT '',
+  body_html      TEXT NOT NULL DEFAULT '',
+  status         TEXT NOT NULL DEFAULT 'draft',
+  target         TEXT NOT NULL DEFAULT 'newsletter',
+  recipient_count INT,
+  sent_count     INT DEFAULT 0,
+  approved_at    TIMESTAMPTZ,
+  sent_at        TIMESTAMPTZ,
+  created_at     TIMESTAMPTZ DEFAULT NOW(),
+  updated_at     TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Sequenze nurturing (trigger-based)
+CREATE TABLE IF NOT EXISTS email_sequences (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name         TEXT NOT NULL,
+  trigger_type TEXT NOT NULL,
+  is_active    BOOLEAN DEFAULT false,
+  created_at   TIMESTAMPTZ DEFAULT NOW(),
+  updated_at   TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Step di ogni sequenza
+CREATE TABLE IF NOT EXISTS email_sequence_steps (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  sequence_id UUID REFERENCES email_sequences(id) ON DELETE CASCADE,
+  step_order  INT NOT NULL DEFAULT 0,
+  delay_days  INT NOT NULL DEFAULT 0,
+  subject     TEXT NOT NULL DEFAULT '',
+  body_html   TEXT NOT NULL DEFAULT '',
+  is_active   BOOLEAN DEFAULT true,
+  created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Enrollment utenti nelle sequenze
+CREATE TABLE IF NOT EXISTS email_sequence_enrollments (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id      UUID NOT NULL,
+  user_email   TEXT NOT NULL,
+  sequence_id  UUID REFERENCES email_sequences(id) ON DELETE CASCADE,
+  current_step INT DEFAULT 0,
+  enrolled_at  TIMESTAMPTZ DEFAULT NOW(),
+  next_send_at TIMESTAMPTZ,
+  status       TEXT DEFAULT 'active',
+  metadata     JSONB,
+  UNIQUE(user_id, sequence_id)
+);
+
+-- Log di tutte le email inviate
+CREATE TABLE IF NOT EXISTS email_send_logs (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  campaign_id      UUID,
+  sequence_step_id UUID,
+  user_id          UUID,
+  user_email       TEXT NOT NULL,
+  subject          TEXT NOT NULL,
+  status           TEXT DEFAULT 'sent',
+  error            TEXT,
+  sent_at          TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Email ricevute dagli utenti (via Resend Inbound webhook)
+CREATE TABLE IF NOT EXISTS received_emails (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  from_email  TEXT NOT NULL,
+  from_name   TEXT,
+  subject     TEXT NOT NULL,
+  body_text   TEXT,
+  body_html   TEXT,
+  is_read     BOOLEAN DEFAULT false,
+  received_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE email_campaigns ENABLE ROW LEVEL SECURITY;
+ALTER TABLE email_sequences ENABLE ROW LEVEL SECURITY;
+ALTER TABLE email_sequence_steps ENABLE ROW LEVEL SECURITY;
+ALTER TABLE email_sequence_enrollments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE email_send_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE received_emails ENABLE ROW LEVEL SECURITY;
+
+CREATE INDEX IF NOT EXISTS email_seq_enrollments_next ON email_sequence_enrollments(next_send_at, status);
+CREATE INDEX IF NOT EXISTS email_send_logs_sent ON email_send_logs(sent_at DESC);
+
+-- ── Linked entity columns for email_sequences (v2) ────────────────────────────
+ALTER TABLE email_sequences ADD COLUMN IF NOT EXISTS linked_event_id UUID;
+ALTER TABLE email_sequences ADD COLUMN IF NOT EXISTS linked_library_item_id UUID;
+ALTER TABLE email_sequences ADD COLUMN IF NOT EXISTS linked_youtube_url TEXT;
+ALTER TABLE email_sequences ADD COLUMN IF NOT EXISTS linked_entity_title TEXT;
+ALTER TABLE email_sequences ADD COLUMN IF NOT EXISTS linked_entity_description TEXT;
+
+-- ── Tutorial transcript storage ───────────────────────────────────────────────
+ALTER TABLE tutorials ADD COLUMN IF NOT EXISTS transcript_data JSONB;
 `
 
 async function run() {

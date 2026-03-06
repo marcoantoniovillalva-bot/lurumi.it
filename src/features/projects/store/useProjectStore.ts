@@ -34,6 +34,19 @@ export interface Project {
     coverImageId?: string
 }
 
+export interface TranscriptSegment {
+    text: string
+    start: number
+    duration: number
+}
+
+export interface TranscriptData {
+    transcript: TranscriptSegment[]
+    translated: TranscriptSegment[] | null
+    generated_at: string
+    has_translation: boolean
+}
+
 export interface Tutorial {
     id: string
     title: string
@@ -46,6 +59,7 @@ export interface Tutorial {
     timer: number
     secs: RoundCounter[]
     notesHtml: string
+    transcriptData?: TranscriptData | null
 }
 
 interface ProjectState {

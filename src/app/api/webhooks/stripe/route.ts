@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import Stripe from 'stripe'
 import { createServiceClient } from '@/lib/supabase/server'
 import { pushToUser, pushToAdmins, checkAndNotifyAlmostFull } from '@/lib/webpush'
+import { enrollUserInSequence } from '@/lib/email-triggers'
 
 export async function POST(req: Request) {
     const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
@@ -107,6 +108,11 @@ export async function POST(req: Request) {
                 url: '/profilo',
                 tag: 'premium-activated',
             }).catch(() => {})
+            // Enrollment sequenza premium_purchased
+            const { data: authUser } = await supabase.auth.admin.getUserById(profile.id)
+            if (authUser?.user?.email) {
+                enrollUserInSequence(profile.id, authUser.user.email, 'premium_purchased').catch(() => {})
+            }
         }
     }
 

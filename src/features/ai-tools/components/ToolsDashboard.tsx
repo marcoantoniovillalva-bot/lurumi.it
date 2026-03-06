@@ -8,7 +8,7 @@ import { useCharacterTheme, type CharacterSlot } from "@/hooks/useCharacterTheme
 const toolGrid: { title: string; desc: string; color: string; href: string; slot: CharacterSlot }[] = [
     { title: "Designer AI", desc: "Crea pattern unici",    color: "#E3F2FD", href: "/tools/designer", slot: "tool_designer" },
     { title: "Chat AI",     desc: "Chiedi aiuto a Lurumi", color: "#F3E5F5", href: "/tools/chat",     slot: "tool_chat"     },
-    { title: "Libri",       desc: "Libri e Riviste",       color: "#FFF3E0", href: "/tools/books",    slot: "tool_books"    },
+    { title: "Libri",       desc: "Libri e Schemi",        color: "#FFF3E0", href: "/tools/books",    slot: "tool_books"    },
     { title: "Timer",       desc: "Cronometri e Giri",     color: "#FFEBEE", href: "/tools/timer",    slot: "tool_timer"    },
     { title: "Note",        desc: "Agenda creativa",       color: "#E0F7FA", href: "/tools/notes",    slot: "tool_notes"    },
     { title: "Corsi",       desc: "Corsi e Workshop",      color: "#EDE7F6", href: "/eventi",         slot: "tool_courses"  },

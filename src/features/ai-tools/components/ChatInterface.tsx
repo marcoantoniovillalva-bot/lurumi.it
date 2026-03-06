@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useRef, useEffect } from 'react'
-import { Send, Camera, ArrowLeft, X, History, MessageSquare, MoreVertical, Pencil, Trash2, Check } from 'lucide-react'
+import { Send, Camera, ArrowLeft, X, History, MessageSquare, MoreVertical, Pencil, Trash2, Check, Copy } from 'lucide-react'
 import Image from 'next/image'
 import Link from 'next/link'
 import ReactMarkdown from 'react-markdown'
@@ -21,6 +21,24 @@ interface ChatInterfaceProps {
     title: string
     placeholder?: string
     suggestions?: string[]
+}
+
+function CopyButton({ text }: { text: string }) {
+    const [copied, setCopied] = useState(false)
+    const handleCopy = async () => {
+        try {
+            await navigator.clipboard.writeText(text)
+            setCopied(true)
+            setTimeout(() => setCopied(false), 2000)
+        } catch {}
+    }
+    return (
+        <button onClick={handleCopy}
+            className="flex items-center gap-1 text-[#9AA2B1] hover:text-[#7B5CF6] transition-colors text-[11px] font-bold mt-1">
+            {copied ? <Check size={12} className="text-green-500" /> : <Copy size={12} />}
+            {copied ? 'Copiato!' : 'Copia'}
+        </button>
+    )
 }
 
 export const ChatInterface: React.FC<ChatInterfaceProps> = ({
@@ -184,6 +202,11 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                     message: textToSend || 'Analizza questa immagine',
                     imageBase64: imageToSend ?? undefined,
                     toolType: title,
+                    // Passa la cronologia testo dei messaggi precedenti (escludi immagini per non gonfiare il payload)
+                    history: messages.map(m => ({
+                        role: m.sender === 'user' ? 'user' : 'assistant',
+                        content: m.text || '',
+                    })).filter(m => m.content),
                 }),
             })
             const result = await res.json()
@@ -399,14 +422,17 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                             )}
                             {m.text && (
                                 m.sender === 'ai' ? (
-                                    <div className="text-[15px] font-medium leading-relaxed prose prose-sm max-w-none
-                                        prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0
-                                        prose-strong:font-black prose-strong:text-[#1C1C1E]
-                                        prose-code:bg-[#F4F4F8] prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-[#7B5CF6] prose-code:text-[13px] prose-code:font-mono
-                                        prose-headings:font-black prose-headings:text-[#1C1C1E]
-                                        prose-a:text-[#7B5CF6] prose-a:no-underline">
-                                        <ReactMarkdown>{m.text}</ReactMarkdown>
-                                    </div>
+                                    <>
+                                        <div className="text-[15px] font-medium leading-relaxed prose prose-sm max-w-none
+                                            prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0
+                                            prose-strong:font-black prose-strong:text-[#1C1C1E]
+                                            prose-code:bg-[#F4F4F8] prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-[#7B5CF6] prose-code:text-[13px] prose-code:font-mono
+                                            prose-headings:font-black prose-headings:text-[#1C1C1E]
+                                            prose-a:text-[#7B5CF6] prose-a:no-underline">
+                                            <ReactMarkdown>{m.text}</ReactMarkdown>
+                                        </div>
+                                        <CopyButton text={m.text} />
+                                    </>
                                 ) : (
                                     <div className="text-[15px] font-medium leading-relaxed">{m.text}</div>
                                 )
