@@ -15,16 +15,21 @@ async function fetchViaSupadata(videoId: string): Promise<TranscriptSegment[]> {
     )
 
     if (res.status === 404) throw new Error('Questo video non ha sottotitoli disponibili.')
-    if (!res.ok) throw new Error(`Supadata error ${res.status}`)
+    if (!res.ok) {
+        const body = await res.text().catch(() => '')
+        throw new Error(`Supadata error ${res.status}: ${body}`)
+    }
 
     const data = await res.json()
     // Supadata restituisce { content: [{ text, offset, duration }] }
     const items: any[] = data?.content ?? []
-    return items.map((item: any) => ({
-        text: item.text?.replace(/\n/g, ' ').trim() ?? '',
-        start: (item.offset ?? 0) / 1000,
-        duration: (item.duration ?? 0) / 1000,
-    })).filter(s => s.text)
+    return items
+        .map((item: any) => ({
+            text: item.text?.replace(/\n/g, ' ').trim() ?? '',
+            start: (item.offset ?? 0) / 1000,
+            duration: (item.duration ?? 0) / 1000,
+        }))
+        .filter(s => s.text)
 }
 
 // ── GET: restituisce i segmenti al client ─────────────────────────────────────
@@ -38,13 +43,19 @@ export async function GET(req: NextRequest) {
 
     try {
         const segments = await fetchViaSupadata(videoId)
+
         if (!segments.length) {
-            return NextResponse.json({ error: 'Trascrizione vuota. Verifica che il video abbia i sottotitoli attivi.' }, { status: 404 })
+            return NextResponse.json(
+                { error: 'Trascrizione vuota. Il video potrebbe avere i sottotitoli disabilitati.' },
+                { status: 404 }
+            )
         }
+
         return NextResponse.json({ success: true, segments })
     } catch (err: any) {
         console.error('[Transcript GET]', err.message)
-        return NextResponse.json({ error: err.message || 'Errore interno' }, { status: 500 })
+        const status = err.message.includes('sottotitoli') ? 404 : 500
+        return NextResponse.json({ error: err.message || 'Errore interno' }, { status })
     }
 }
 
