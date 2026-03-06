@@ -17,7 +17,8 @@ import {
     getInterestMessages, sendAdminMessage,
     getAiSpendingSummary, getAdminSettings, setAdminSetting, getAiDeposits, addAiDeposit,
     getAllBugReports, getAdminSupportMessages, sendAdminSupportReply, updateBugReportStatus,
-    EventFormData, UserProfile, AiSpendingSummary, AiDeposit, BugReport, SupportMessage,
+    getSupadataStatus, setSupadataBudget,
+    EventFormData, UserProfile, AiSpendingSummary, AiDeposit, BugReport, SupportMessage, SupadataStatus,
 } from "@/features/admin/actions/admin";
 import {
     getAdminLibraryItems, createLibraryItem, updateLibraryItem, deleteLibraryItem,
@@ -905,6 +906,7 @@ function SectionAiCosts({ onBack }: { onBack: () => void }) {
     const [spending, setSpending] = useState<AiSpendingSummary | null>(null)
     const [settings, setSettings] = useState<Record<string, string>>({})
     const [deposits, setDeposits] = useState<AiDeposit[]>([])
+    const [supadata, setSupadata] = useState<SupadataStatus | null>(null)
     const [loading, setLoading] = useState(true)
     const [notice, setNotice] = useState('')
     const [noticeType, setNoticeType] = useState<'ok' | 'err'>('ok')
@@ -921,21 +923,31 @@ function SectionAiCosts({ onBack }: { onBack: () => void }) {
     const [togglingAi, setTogglingAi] = useState(false)
     const [togglingAuto, setTogglingAuto] = useState(false)
 
+    // Supadata budget
+    const [editingSupadata, setEditingSupadata] = useState(false)
+    const [supaBudgetInput, setSupaBudgetInput] = useState('')
+    const [supaThreshInput, setSupaThreshInput] = useState('80')
+    const [savingSupadata, setSavingSupadata] = useState(false)
+
     const showNotice = (msg: string, type: 'ok' | 'err' = 'ok') => {
         setNotice(msg); setNoticeType(type); setTimeout(() => setNotice(''), 3000)
     }
 
     const load = useCallback(async () => {
         setLoading(true)
-        const [s, cfg, d] = await Promise.all([
+        const [s, cfg, d, sup] = await Promise.all([
             getAiSpendingSummary(),
             getAdminSettings(),
             getAiDeposits(),
+            getSupadataStatus(),
         ])
         setSpending(s)
         setSettings(cfg)
         setDeposits(d)
+        setSupadata(sup)
         setBudgetInput(cfg.monthly_budget_usd ?? '50')
+        setSupaBudgetInput(sup.budgetEur.toString())
+        setSupaThreshInput(sup.notifyThreshold.toString())
         setLoading(false)
     }, [])
 
@@ -1004,6 +1016,21 @@ function SectionAiCosts({ onBack }: { onBack: () => void }) {
             await load()
         } catch (e: any) { showNotice(e.message, 'err') }
         finally { setSavingDeposit(false) }
+    }
+
+    const handleSaveSupadata = async () => {
+        const budget = parseFloat(supaBudgetInput)
+        const thresh = parseInt(supaThreshInput, 10)
+        if (isNaN(budget) || budget < 0) { showNotice('Budget non valido', 'err'); return }
+        if (isNaN(thresh) || thresh < 50 || thresh > 100) { showNotice('Soglia deve essere tra 50 e 100', 'err'); return }
+        setSavingSupadata(true)
+        try {
+            await setSupadataBudget(budget, thresh)
+            setEditingSupadata(false)
+            showNotice('Impostazioni Supadata salvate')
+            await load()
+        } catch (e: any) { showNotice(e.message, 'err') }
+        finally { setSavingSupadata(false) }
     }
 
     return (
@@ -1177,6 +1204,108 @@ function SectionAiCosts({ onBack }: { onBack: () => void }) {
                             </div>
                         )}
                     </div>
+
+                    {/* ── Supadata (Trascrizioni YouTube) ───────────────── */}
+                    {supadata && (() => {
+                        const pct = supadata.pctUsed
+                        const isAlert = pct >= supadata.notifyThreshold
+                        const isOver = supadata.monthlyCount >= supadata.freeLimit
+                        const barColor = isOver ? 'bg-red-400' : isAlert ? 'bg-amber-400' : 'bg-emerald-400'
+                        const textColor = isOver ? 'text-red-500' : isAlert ? 'text-amber-500' : 'text-[#7B5CF6]'
+                        return (
+                            <div className="bg-white rounded-2xl border border-[#EEF0F4] p-4 space-y-3">
+                                <div className="flex items-center justify-between">
+                                    <p className="text-[10px] font-black text-[#9AA2B1] uppercase tracking-wider">
+                                        Trascrizioni YouTube (Supadata)
+                                    </p>
+                                    <button onClick={() => setEditingSupadata(v => !v)}
+                                        className="text-[11px] font-black text-[#7B5CF6]">
+                                        {editingSupadata ? 'Annulla' : 'Impostazioni'}
+                                    </button>
+                                </div>
+
+                                {/* Contatore mensile */}
+                                <div className="space-y-1.5">
+                                    <div className="flex items-center justify-between text-sm">
+                                        <span className="font-bold text-[#1C1C1E]">
+                                            {supadata.monthlyCount} / {supadata.freeLimit} richieste
+                                        </span>
+                                        <span className={`font-black text-xs ${textColor}`}>{pct}%</span>
+                                    </div>
+                                    <div className="h-2 bg-[#F4F4F8] rounded-full overflow-hidden">
+                                        <div className={`h-full rounded-full transition-all duration-500 ${barColor}`}
+                                            style={{ width: `${pct}%` }} />
+                                    </div>
+                                    <div className="flex items-center justify-between text-[11px] text-[#9AA2B1] font-bold">
+                                        <span>Reset tra {supadata.daysUntilReset} giorni</span>
+                                        <span>Free tier: {supadata.freeLimit - supadata.monthlyCount} rimaste</span>
+                                    </div>
+                                </div>
+
+                                {/* Avvisi */}
+                                {isOver && (
+                                    <div className="bg-red-50 border border-red-100 rounded-xl px-3 py-2 text-xs font-bold text-red-600">
+                                        ⚠️ Limite free tier raggiunto! Le prossime trascrizioni costeranno crediti agli utenti.
+                                        Ricarica Supadata per mantenere il servizio gratuito.
+                                    </div>
+                                )}
+                                {!isOver && isAlert && (
+                                    <div className="bg-amber-50 border border-amber-100 rounded-xl px-3 py-2 text-xs font-bold text-amber-700">
+                                        🔔 Hai usato il {pct}% del free tier mensile. Considera di ricaricare.
+                                    </div>
+                                )}
+
+                                {/* Budget caricato + stima */}
+                                <div className="flex items-center justify-between text-sm border-t border-[#F4F4F8] pt-2">
+                                    <div>
+                                        <p className="text-xs text-[#9AA2B1] font-bold">Credito Supadata caricato</p>
+                                        <p className="font-black text-[#1C1C1E]">
+                                            €{supadata.budgetEur.toFixed(2)}
+                                        </p>
+                                    </div>
+                                    {supadata.recommendedBudget > 0 && (
+                                        <div className="text-right">
+                                            <p className="text-xs text-[#9AA2B1] font-bold">Budget consigliato</p>
+                                            <p className="font-black text-amber-600">€{supadata.recommendedBudget.toFixed(2)}/mese</p>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Impostazioni */}
+                                {editingSupadata && (
+                                    <div className="border-t border-[#F4F4F8] pt-3 space-y-2">
+                                        <div className="flex gap-2 items-center flex-wrap">
+                                            <div className="relative w-28">
+                                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-[#9AA2B1]">€</span>
+                                                <input type="number" min="0" step="1" placeholder="Budget"
+                                                    value={supaBudgetInput} onChange={e => setSupaBudgetInput(e.target.value)}
+                                                    className="w-full h-9 pl-6 pr-2 bg-[#FAFAFC] border border-[#EEF0F4] rounded-xl text-sm font-bold outline-none focus:border-[#7B5CF6]" />
+                                            </div>
+                                            <div className="relative w-24">
+                                                <input type="number" min="50" max="100" step="5" placeholder="Soglia %"
+                                                    value={supaThreshInput} onChange={e => setSupaThreshInput(e.target.value)}
+                                                    className="w-full h-9 px-3 bg-[#FAFAFC] border border-[#EEF0F4] rounded-xl text-sm font-bold outline-none focus:border-[#7B5CF6]" />
+                                                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-[#9AA2B1] font-bold">%</span>
+                                            </div>
+                                            <button onClick={handleSaveSupadata} disabled={savingSupadata}
+                                                className="h-9 px-3 bg-[#7B5CF6] text-white rounded-xl font-bold text-xs disabled:opacity-50">
+                                                {savingSupadata ? '...' : 'Salva'}
+                                            </button>
+                                        </div>
+                                        <p className="text-[11px] text-[#9AA2B1]">
+                                            Budget = credito totale caricato su Supadata. Soglia = % a cui riceverai una notifica push.
+                                        </p>
+                                    </div>
+                                )}
+
+                                {/* Link ricarica */}
+                                <a href="https://supadata.ai/dashboard" target="_blank" rel="noopener noreferrer"
+                                    className="flex items-center justify-center gap-1.5 h-9 rounded-xl border border-[#EEF0F4] text-xs font-black text-[#1C1C1E] hover:bg-[#F4EEFF] transition-colors w-full">
+                                    <ExternalLink size={12} /> Ricarica su Supadata
+                                </a>
+                            </div>
+                        )
+                    })()}
 
                 </div>
             )}

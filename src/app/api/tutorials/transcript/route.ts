@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import OpenAI from 'openai'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { computeTranscriptCost } from '@/app/api/transcript-config/route'
+import { pushToAdmins } from '@/lib/webpush'
 
 interface TranscriptSegment { text: string; start: number; duration: number }
 
@@ -89,6 +90,18 @@ export async function GET(req: NextRequest) {
         // Incrementa contatore mensile e calcola costo corrente
         const newCount = await incrementTranscriptUsage()
         const nextCost = computeTranscriptCost(newCount)
+
+        // Notifica admin ai checkpoint importanti (80, 90, 100 req/mese)
+        if (newCount === 80 || newCount === 90 || newCount === 100) {
+            pushToAdmins({
+                title: `Lurumi — Supadata: ${newCount}/100 trascrizioni`,
+                body: newCount === 100
+                    ? '🔴 Limite free tier raggiunto! Le trascrizioni ora costano crediti agli utenti.'
+                    : `⚠️ Hai usato ${newCount}% del free tier mensile Supadata.`,
+                url: '/admin',
+                tag: `supadata-alert-${newCount}`,
+            }).catch(() => {})
+        }
 
         return NextResponse.json({ success: true, segments, nextCost })
     } catch (err: any) {

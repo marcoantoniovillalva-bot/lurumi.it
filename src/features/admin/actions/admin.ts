@@ -497,6 +497,79 @@ export async function sendAdminSupportReply(bugReportId: string, content: string
     }
 }
 
+/* ─── Supadata (trascrizioni YouTube) ─────────────────────────────────────── */
+
+export interface SupadataStatus {
+    monthlyCount: number
+    freeLimit: number       // 100 req/mese free tier
+    pctUsed: number
+    resetAt: string | null
+    daysUntilReset: number
+    budgetEur: number       // credito caricato su Supadata (da admin_settings)
+    notifyThreshold: number // % a cui inviare alert
+    estimatedCostEur: number // stima costo mensile se superasse il free tier
+    recommendedBudget: number // budget consigliato in base all'uso medio
+}
+
+const SUPADATA_FREE_LIMIT = 100
+const SUPADATA_COST_PER_REQ_EUR = 0.01 // stima conservativa ~€0.01/req oltre il free tier
+
+export async function getSupadataStatus(): Promise<SupadataStatus> {
+    const { db } = await assertAdmin()
+
+    const [usageRes, settingsRes] = await Promise.all([
+        db.from('system_usage').select('count, reset_at').eq('key', 'transcript').single(),
+        db.from('admin_settings').select('key, value')
+            .in('key', ['supadata_budget_eur', 'supadata_notify_threshold']),
+    ])
+
+    const count = usageRes.data?.count ?? 0
+    const resetAt = usageRes.data?.reset_at ?? null
+    const settings = Object.fromEntries((settingsRes.data ?? []).map((r: any) => [r.key, r.value]))
+
+    const daysSinceReset = resetAt
+        ? (Date.now() - new Date(resetAt).getTime()) / 86400000
+        : 30
+    const effectiveCount = daysSinceReset >= 30 ? 0 : count
+    const daysUntilReset = Math.max(0, Math.ceil(30 - daysSinceReset))
+
+    const budgetEur = parseFloat(settings.supadata_budget_eur ?? '0')
+    const notifyThreshold = parseInt(settings.supadata_notify_threshold ?? '80', 10)
+    const pctUsed = Math.min(100, Math.round((effectiveCount / SUPADATA_FREE_LIMIT) * 100))
+
+    // Stima costo se superasse il free tier
+    const overFreeLimit = Math.max(0, effectiveCount - SUPADATA_FREE_LIMIT)
+    const estimatedCostEur = overFreeLimit * SUPADATA_COST_PER_REQ_EUR
+
+    // Budget consigliato: basato su uso attuale, con 20% di margine
+    const dailyRate = daysSinceReset > 0 ? effectiveCount / daysSinceReset : 0
+    const monthlyProjection = Math.round(dailyRate * 30)
+    const overProjected = Math.max(0, monthlyProjection - SUPADATA_FREE_LIMIT)
+    const recommendedBudget = overProjected > 0
+        ? Math.ceil(overProjected * SUPADATA_COST_PER_REQ_EUR * 1.2 * 100) / 100
+        : 0
+
+    return {
+        monthlyCount: effectiveCount,
+        freeLimit: SUPADATA_FREE_LIMIT,
+        pctUsed,
+        resetAt,
+        daysUntilReset,
+        budgetEur,
+        notifyThreshold,
+        estimatedCostEur,
+        recommendedBudget,
+    }
+}
+
+export async function setSupadataBudget(budgetEur: number, notifyThreshold: number): Promise<void> {
+    const { db } = await assertAdmin()
+    await Promise.all([
+        db.from('admin_settings').upsert({ key: 'supadata_budget_eur', value: budgetEur.toString(), updated_at: new Date().toISOString() }),
+        db.from('admin_settings').upsert({ key: 'supadata_notify_threshold', value: notifyThreshold.toString(), updated_at: new Date().toISOString() }),
+    ])
+}
+
 /** Cambia lo stato di una segnalazione (open/closed) */
 export async function updateBugReportStatus(bugReportId: string, status: 'open' | 'closed') {
     const { db } = await assertAdmin()

@@ -16,19 +16,33 @@ export async function GET() {
         .update(codeVerifier)
         .digest('base64url')
 
-    // I due punti nei scope NON vanno codificati (Canva li rifiuta se sono %3A)
-    // code_challenge è già base64url (URL-safe), non serve re-codificarlo
-    const scope = 'asset:read asset:write design:content:read design:content:write'
+    // State per CSRF protection
+    const state = crypto.randomBytes(16).toString('hex')
+
+    // Scope: solo asset:read+asset:write (scopri dai Canva Developer docs).
+    // Canva usa %3A per i due punti e %20 per gli spazi nella loro documentazione.
+    // design:content:* richiede permessi extra nell'app Canva — rimossi per evitare rejected client.
+    const scope = encodeURIComponent('asset:read asset:write')
+
+    // Rispettiamo esattamente l'ordine dei parametri dalla documentazione ufficiale Canva:
+    // https://www.canva.com/developers/docs/connect/authentication/
     const authUrl = 'https://www.canva.com/api/oauth/authorize' +
-        '?response_type=code' +
+        `?code_challenge=${encodeURIComponent(codeChallenge)}` +
+        `&code_challenge_method=S256` +
+        `&response_type=code` +
         `&client_id=${encodeURIComponent(clientId)}` +
         `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-        `&scope=${scope.replace(/ /g, '%20')}` +
-        `&code_challenge_method=S256` +
-        `&code_challenge=${codeChallenge}`
+        `&scope=${scope}` +
+        `&state=${state}`
 
-    // Store verifier in a short-lived cookie so callback can use it
+    console.log('[Canva Auth] Redirect URL:', authUrl)
+    console.log('[Canva Auth] client_id:', clientId)
+    console.log('[Canva Auth] redirect_uri:', redirectUri)
+    console.log('[Canva Auth] scope:', decodeURIComponent(scope))
+
+    // Store verifier and state in a short-lived cookie so callback can use it
     const response = NextResponse.redirect(authUrl)
     response.cookies.set('canva_cv', codeVerifier, { httpOnly: true, maxAge: 600, path: '/' })
+    response.cookies.set('canva_state', state, { httpOnly: true, maxAge: 600, path: '/' })
     return response
 }
