@@ -21,12 +21,24 @@ function formatTime(seconds: number): string {
 
 async function fetchImageAsBytes(url: string): Promise<{ bytes: Uint8Array; isPng: boolean } | null> {
     try {
-        const res = await fetch(url)
-        if (!res.ok) return null
-        const blob = await res.blob()
-        const isPng = blob.type === 'image/png' || url.toLowerCase().includes('.png')
-        const buf = await blob.arrayBuffer()
-        return { bytes: new Uint8Array(buf), isPng }
+        // Usa canvas per convertire qualsiasi formato (PNG, JPEG, WebP, HEIC…) in JPEG
+        const img = new Image()
+        img.crossOrigin = 'anonymous'
+        await new Promise<void>((resolve, reject) => {
+            img.onload = () => resolve()
+            img.onerror = () => reject(new Error('load failed'))
+            img.src = url
+        })
+        const canvas = document.createElement('canvas')
+        canvas.width = img.naturalWidth
+        canvas.height = img.naturalHeight
+        const ctx = canvas.getContext('2d')
+        if (!ctx) return null
+        ctx.drawImage(img, 0, 0)
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.92)
+        const base64 = dataUrl.split(',')[1]
+        const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0))
+        return { bytes, isPng: false }
     } catch {
         return null
     }
@@ -49,11 +61,8 @@ export async function generatePatternPdf(
     const addPage = () => {
         const page = pdfDoc.addPage([W, H])
 
-        // Footer line
+        // Footer line + titolo progetto (senza ripetere lurumi.it)
         page.drawLine({ start: { x: MARGIN, y: 36 }, end: { x: W - MARGIN, y: 36 }, thickness: 0.5, color: LIGHT })
-        page.drawText('Creato con lurumi.it', {
-            x: MARGIN, y: 20, size: 8, font: fontNormal, color: MUTED,
-        })
         page.drawText(project.title, {
             x: W - MARGIN - fontBold.widthOfTextAtSize(project.title, 8),
             y: 20, size: 8, font: fontBold, color: MUTED,
