@@ -2,80 +2,32 @@ import { NextRequest, NextResponse } from 'next/server'
 import OpenAI from 'openai'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 
-export const runtime = 'edge'
-
-const YOUTUBE_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-    'Accept-Language': 'it-IT,it;q=0.9,en;q=0.8',
-    'Accept-Encoding': 'gzip, deflate, br',
-    'Cookie': 'CONSENT=YES+cb; SOCS=CAI; GPS=1',
-    'Sec-Fetch-Dest': 'document',
-    'Sec-Fetch-Mode': 'navigate',
-    'Sec-Fetch-Site': 'none',
-    'Cache-Control': 'no-cache',
-}
-
 interface TranscriptSegment { text: string; start: number; duration: number }
 
-// ── Estrae captionTracks dall'HTML ────────────────────────────────────────────
-function extractTracksFromHtml(html: string): any[] {
-    const startIdx = html.indexOf('"captionTracks":')
-    if (startIdx === -1) return []
-    const arrStart = html.indexOf('[', startIdx)
-    if (arrStart === -1) return []
-    let depth = 0, i = arrStart
-    while (i < html.length) {
-        const ch = html[i]
-        if (ch === '[' || ch === '{') depth++
-        else if (ch === ']' || ch === '}') { depth--; if (depth === 0) break }
-        i++
-    }
-    const raw = html.slice(arrStart, i + 1)
-        .replace(/\\u0026/g, '&').replace(/\\u003d/g, '=')
-        .replace(/\\u003c/g, '<').replace(/\\u003e/g, '>')
-    try { return JSON.parse(raw) } catch { return [] }
-}
+// ── Supadata API (affidabile da server, free tier 100 req/mese) ───────────────
+async function fetchViaSupadata(videoId: string): Promise<TranscriptSegment[]> {
+    const apiKey = process.env.SUPADATA_API_KEY
+    if (!apiKey) throw new Error('SUPADATA_API_KEY non configurata')
 
-// ── Sceglie la traccia migliore ───────────────────────────────────────────────
-function pickBestTrack(tracks: any[]): any {
-    return (
-        tracks.find(t => t.languageCode === 'it' && t.kind !== 'asr') ||
-        tracks.find(t => t.languageCode === 'it') ||
-        tracks.find(t => t.kind === 'asr') ||
-        tracks.find(t => t.languageCode?.startsWith('en')) ||
-        tracks[0]
+    const res = await fetch(
+        `https://api.supadata.ai/v1/youtube/transcript?videoId=${encodeURIComponent(videoId)}`,
+        { headers: { 'x-api-key': apiKey } }
     )
+
+    if (res.status === 404) throw new Error('Questo video non ha sottotitoli disponibili.')
+    if (!res.ok) throw new Error(`Supadata error ${res.status}`)
+
+    const data = await res.json()
+    // Supadata restituisce { content: [{ text, offset, duration }] }
+    const items: any[] = data?.content ?? []
+    return items.map((item: any) => ({
+        text: item.text?.replace(/\n/g, ' ').trim() ?? '',
+        start: (item.offset ?? 0) / 1000,
+        duration: (item.duration ?? 0) / 1000,
+    })).filter(s => s.text)
 }
 
-// ── Scarica e parsa il timedtext JSON dal server ──────────────────────────────
-async function fetchSegments(baseUrl: string): Promise<TranscriptSegment[]> {
-    const url = baseUrl + '&fmt=json3'
-    const res = await fetch(url, {
-        headers: {
-            'User-Agent': YOUTUBE_HEADERS['User-Agent'],
-            'Cookie': YOUTUBE_HEADERS['Cookie'],
-        },
-    })
-    if (!res.ok) return []
-    let data: any
-    try { data = await res.json() } catch { return [] }
-    const events: any[] = data?.events ?? []
-    return events
-        .filter(e => e.segs && e.tStartMs !== undefined)
-        .map(e => ({
-            text: (e.segs as any[])
-                .map((s: any) => s.utf8 ?? '').join('')
-                .replace(/\n/g, ' ')
-                .replace(/&amp;/g, '&').replace(/&#39;/g, "'")
-                .replace(/&quot;/g, '"').trim(),
-            start: (e.tStartMs ?? 0) / 1000,
-            duration: (e.dDurationMs ?? 0) / 1000,
-        }))
-        .filter(s => s.text)
-}
-
-// ── GET: tutto server-side, restituisce i segmenti direttamente al client ─────
+// ── GET: restituisce i segmenti al client ─────────────────────────────────────
 export async function GET(req: NextRequest) {
     const videoId = req.nextUrl.searchParams.get('videoId')
     if (!videoId) return NextResponse.json({ error: 'videoId mancante' }, { status: 400 })
@@ -85,46 +37,11 @@ export async function GET(req: NextRequest) {
     if (!user) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
 
     try {
-        const pageRes = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
-            headers: YOUTUBE_HEADERS,
-        })
-        if (!pageRes.ok) {
-            return NextResponse.json({ error: `YouTube non raggiungibile (${pageRes.status})` }, { status: 502 })
-        }
-
-        const html = await pageRes.text()
-        const rawTracks = extractTracksFromHtml(html)
-
-        if (!rawTracks.length) {
-            const reason = html.includes('class="g-recaptcha"')
-                ? 'YouTube richiede un captcha. Riprova tra qualche minuto.'
-                : 'Questo video non ha sottotitoli disponibili. Attiva i sottotitoli automatici sul video YouTube.'
-            return NextResponse.json({ error: reason }, { status: 404 })
-        }
-
-        const track = pickBestTrack(rawTracks)
-        if (!track?.baseUrl) {
-            return NextResponse.json({ error: 'Nessuna traccia sottotitoli valida trovata.' }, { status: 404 })
-        }
-
-        // Scarica la trascrizione server-side (stesso IP che ha fetchato la pagina)
-        const segments = await fetchSegments(track.baseUrl)
-
+        const segments = await fetchViaSupadata(videoId)
         if (!segments.length) {
-            return NextResponse.json({ error: 'Trascrizione vuota. Il video potrebbe avere i sottotitoli disabilitati.' }, { status: 404 })
+            return NextResponse.json({ error: 'Trascrizione vuota. Verifica che il video abbia i sottotitoli attivi.' }, { status: 404 })
         }
-
-        return NextResponse.json({
-            success: true,
-            segments,
-            languageCode: track.languageCode,
-            kind: track.kind,
-            availableTracks: rawTracks.map((t: any) => ({
-                languageCode: t.languageCode,
-                kind: t.kind,
-                name: t.name?.simpleText ?? t.name?.runs?.[0]?.text ?? '',
-            })),
-        })
+        return NextResponse.json({ success: true, segments })
     } catch (err: any) {
         console.error('[Transcript GET]', err.message)
         return NextResponse.json({ error: err.message || 'Errore interno' }, { status: 500 })
