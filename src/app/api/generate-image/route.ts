@@ -107,8 +107,8 @@ export async function POST(req: NextRequest) {
         let provider: string
         let costUsd: number
 
-        if (hd) {
-            // DALL-E 3 HD
+        if (hd && !referenceImageBase64) {
+            // DALL-E 3 HD — solo testo, nessuna immagine di riferimento
             const openai = getOpenAIClient()
             const enrichedPrompt = `High quality crochet and amigurumi art: ${prompt}. Handcrafted look, detailed yarn texture, studio lighting, soft background.`
             const response = await openai.images.generate({
@@ -124,6 +124,7 @@ export async function POST(req: NextRequest) {
             costUsd = 0.08
         } else if (referenceImageBase64) {
             // flux-dev con immagine di riferimento (Replicate)
+            // HD = più inference steps per qualità superiore mantenendo la somiglianza
             const replicate = getReplicateClient()
             const output = await replicate.run(
                 'black-forest-labs/flux-dev' as any,
@@ -131,18 +132,19 @@ export async function POST(req: NextRequest) {
                     input: {
                         prompt: `Beautiful high-quality crochet/knitting: ${prompt}. Studio lighting, professional craft photography.`,
                         image: referenceImageBase64,
-                        prompt_strength: 0.8,
+                        prompt_strength: 0.65,
                         aspect_ratio: aspectRatio,
                         output_format: 'webp',
                         num_outputs: 1,
+                        num_inference_steps: hd ? 40 : 28,
                     }
                 }
             )
             imageUrl = await extractReplicateUrl(output)
-            provider = 'replicate-flux-dev'
-            costUsd = 0.025
+            provider = hd ? 'replicate-flux-dev-hd' : 'replicate-flux-dev'
+            costUsd = hd ? 0.035 : 0.025
         } else {
-            // flux-schnell fast (Replicate)
+            // flux-schnell fast (Replicate) — solo testo
             const replicate = getReplicateClient()
             const output = await replicate.run(
                 'black-forest-labs/flux-schnell',

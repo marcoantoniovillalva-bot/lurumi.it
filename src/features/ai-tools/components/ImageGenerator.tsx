@@ -308,7 +308,9 @@ export const ImageGenerator: React.FC = () => {
                     </div>
                     {hdMode && (
                         <p className="text-[11px] text-[#9AA2B1] font-medium px-1">
-                            Modalità HD usa DALL-E 3 — qualità superiore, dettagli del filato più realistici.
+                            {referenceImage
+                                ? 'Modalità HD con riferimento — mantiene la somiglianza al personaggio con più dettagli e qualità superiore.'
+                                : 'Modalità HD usa DALL-E 3 — qualità superiore, dettagli del filato più realistici.'}
                         </p>
                     )}
                 </section>
