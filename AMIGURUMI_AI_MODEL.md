@@ -372,6 +372,156 @@ Il parser (deterministico, non AI) calcola le dimensioni fisiche reali a partire
 
 ---
 
+---
+
+## Sezioni Esistenti nell'App Utili al Training
+
+### 1. TRASCRIZIONI TUTORIAL (Potenziale altissimo — già raccolta dati)
+
+**Cosa c'è:** tabella `tutorials` con `transcript_data` (JSON con segmenti testo + timestamp)
+Gli utenti già scaricano trascrizioni di tutorial YouTube su amigurumi.
+
+**Perché è oro:** le trascrizioni contengono istruzioni reali di esperti pronunciate ad alta voce:
+> *"facciamo 6 catenelle di avviamento, poi giriamo, punto fisso in ogni catenella..."*
+
+Sono pattern instructions naturali in italiano e inglese, già in app, già indicizzate per video.
+
+**Come sfruttarle:**
+- Aggiungere un tag admin `is_pattern_tutorial: true` ai tutorial identificati come schemi
+- Parser NLP che estrae sequenze di istruzioni dalla trascrizione → converte in formato strutturato
+- L'admin convalida la conversione → entra nel dataset
+
+**Azione richiesta:** aggiungere colonna `is_pattern_tutorial BOOLEAN` e `extracted_pattern JSONB` alla tabella `tutorials`
+
+---
+
+### 2. CALCOLATORE PUNTI (già contiene la logica di validazione)
+
+**Cosa c'è:** `src/app/tools/calculator/page.tsx` — calcola distribuzioni di aumenti/diminuzioni tra due stitch count
+
+**La logica esistente:**
+```javascript
+// Dato: current=18, target=24 (voglio aggiungere 6 punti)
+// Output: "(Lavora 2 MB, 1 Aumento) per 6 volte" → formula matematicamente corretta
+```
+
+**Perché è fondamentale per il training:** questa stessa logica è il VALIDATORE dei pattern generati dall'AI. Se il modello genera "Giro 3: *sc, inc* x6 (18)" partendo da 12, il calcolatore può verificare che 12→18 con 6 aumenti sia corretto.
+
+**Come sfruttarlo:**
+- Estrarre la logica di calcolo in una funzione pura `src/lib/pattern-math.ts`
+- Usarla nel Schema Creator per auto-validare ogni giro inserito
+- Usarla nel training per filtrare automaticamente schemi con errori matematici dal dataset
+
+**Azione richiesta:** refactor della logica calculator in libreria condivisa `pattern-math.ts`
+
+---
+
+### 3. CHAT + CRONOLOGIA (dataset domande-risposte già in accumulo)
+
+**Cosa c'è:** `chat_messages` table con `tool_type`, `role` (user/assistant), `content`
+Tool types: `chat`, `symbol-reader`, `troubleshooter`, `vision`
+
+**Perché è utile:**
+- **Symbol Reader:** utente invia foto simbolo → AI risponde con spiegazione. Crea coppie (immagine simbolo, significato)
+- **Troubleshooter:** utente descrive problema → AI propone soluzione. Crea dataset problemi-soluzioni uncinetto
+- **Chat generale:** domande tecniche su punti, abbreviazioni, materiali → Q&A crochet in italiano
+
+**Come sfruttarlo:**
+- Aggiungere flag `is_training_candidate BOOLEAN DEFAULT FALSE` alle chat sessions
+- Admin può marcare sessioni di qualità come training data
+- Specialmente le sessioni Vision con foto di amigurumi in progress → caption labeling
+
+**Azione richiesta:** aggiungere colonna flag alla tabella `chat_sessions`
+
+---
+
+### 4. DESIGNER / AI_GENERATIONS (coppie prompt→immagine già loggate)
+
+**Cosa c'è:** tabella `ai_generations` con `tool_type='designer'`, `output_data: {prompt, imageUrl, aspectRatio, hd}`
+
+**Ogni riga già contiene:**
+- Il prompt dell'utente (descrizione amigurumi testuale)
+- L'URL dell'immagine generata
+- Il provider usato
+
+**Perché è utile:** sono coppie (descrizione testuale, immagine amigurumi) già etichettate. Con consenso utente e validazione admin, diventano training data per il modello immagini.
+
+**Come sfruttarlo:**
+- Aggiungere `user_rating INT` (1-5 stelle) e `training_approved BOOLEAN` alla tabella
+- Permettere all'utente di votare l'immagine generata → le immagini 5 stelle + approved = dataset
+- Admin può navigare le generazioni e approvare le migliori
+
+**Azione richiesta:** aggiungere colonne rating/approved a `ai_generations`
+
+---
+
+### 5. LIBRERIA (schemi curati dall'admin già categorizzati)
+
+**Cosa c'è:** tabella `library_items` con `item_type` ('schema'/'book'), `cover_urls`, `description`, `tier`
+
+**Perché è utile:** l'admin ha già curato una collezione di schemi e libri con copertine. Questi sono già etichettati come "contenuto amigurumi di qualità".
+
+**Come sfruttarlo:**
+- Aggiungere metadati strutturati agli item della libreria: `yarn_weight`, `difficulty`, `animal_type`, `stitch_types[]`
+- Le copertine degli schemi sono immagini già etichettate come "amigurumi pattern cover"
+- I libri contengono schemi che Erika conosce → può inserirli nel Schema Creator
+
+**Azione richiesta:** aggiungere colonne metadata a `library_items`
+
+---
+
+### 6. NOTE UTENTI (istruzioni informali in linguaggio naturale)
+
+**Cosa c'è:** tabella `notes` — note libere degli utenti sincronizzate su Supabase
+
+**Perché è utile:** molti utenti scrivono nelle note le istruzioni di schemi mentre lavorano:
+> *"Testa: MR6, +6, +6, +6, piatto x3, -6, -6, chiudi"*
+
+Sono schemi abbreviati in linguaggio naturale. Difficili da parsare automaticamente ma identificabili da admin.
+
+**Come sfruttarlo:**
+- Flag opzionale "Questa nota contiene uno schema" → va in coda validazione
+- L'admin la vede e la converte nel formato strutturato
+
+---
+
+### 7. EDITOR IMMAGINI (foto amigurumi già processate)
+
+**Cosa c'è:** `src/app/projects/[id]/edit-image/[imgId]/page.tsx` — remove-bg, genera sfondo, pennello
+
+**Perché è utile:** gli utenti caricano foto reali dei loro amigurumi e le processano. Queste sono immagini reali di pezzi fatti a mano, con background removal già applicato → soggetto isolato = perfetto per training immagini.
+
+**Come sfruttarlo:**
+- Dopo remove-bg, chiedere all'utente: "Vuoi contribuire questa foto al dataset amigurumi?"
+- Le foto con sfondo rimosso = soggetti amigurumi puliti, ideali per training Flux LoRA
+- Associarle al progetto → automaticamente collegate ai `secs` del progetto (stitch data)
+
+---
+
+### 8. SESSION TRACKER (behavioral data)
+
+**Cosa c'è:** tabella `user_sessions` con dati di utilizzo
+
+**Perché è utile:** sapere quali tool usano di più gli utenti indica quali tipologie di schema/amigurumi sono più richieste → orienta le priorità di raccolta dati (se il 60% usa il troubleshooter per problemi con teste sferiche, il dataset deve avere molti più schemi di sfere).
+
+---
+
+## Tabella Riassuntiva: Valore per il Training
+
+| Sezione | Dato disponibile | Valore | Azione richiesta |
+|---------|-----------------|--------|-----------------|
+| Tutorial trascrizioni | Istruzioni verbali pattern | ★★★★★ | Tag + parser NLP |
+| Calcolatore | Logica validazione math | ★★★★★ | Refactor in lib condivisa |
+| Progetti secs + foto | Struttura parti + immagini | ★★★★☆ | Bottone contribuisci |
+| Designer ai_generations | Coppie prompt→immagine | ★★★★☆ | Rating + approval |
+| Chat (vision+troubleshooter) | Q&A + foto amigurumi | ★★★☆☆ | Flag sessioni qualità |
+| Editor immagini (remove-bg) | Foto amigurumi isolati | ★★★☆☆ | Opt-in contribuzione |
+| Libreria | Schemi curati con immagini | ★★★☆☆ | Metadati strutturati |
+| Note utenti | Schemi informali | ★★☆☆☆ | Flag opzionale |
+| Session tracker | Dati comportamentali | ★★☆☆☆ | Analisi priorità dataset |
+
+---
+
 ## Note Sessioni
 
 ### 2026-03-06 — Sessione 1
