@@ -661,6 +661,26 @@ ALTER TABLE email_sequences ADD COLUMN IF NOT EXISTS linked_entity_description T
 
 -- ── Tutorial transcript storage ───────────────────────────────────────────────
 ALTER TABLE tutorials ADD COLUMN IF NOT EXISTS transcript_data JSONB;
+
+-- ── Contatore utilizzo sistema (auto-scaling crediti trascrizione) ─────────────
+CREATE TABLE IF NOT EXISTS system_usage (
+  key TEXT PRIMARY KEY,
+  count INTEGER NOT NULL DEFAULT 0,
+  reset_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Abilita lettura pubblica (solo service role può scrivere)
+ALTER TABLE system_usage ENABLE ROW LEVEL SECURITY;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'system_usage' AND policyname = 'service role full access') THEN
+    CREATE POLICY "service role full access" ON system_usage USING (true) WITH CHECK (true);
+  END IF;
+END $$;
+
+-- Inserisci riga transcript se non esiste
+INSERT INTO system_usage (key, count, reset_at) VALUES ('transcript', 0, NOW())
+  ON CONFLICT (key) DO NOTHING;
 `
 
 async function run() {

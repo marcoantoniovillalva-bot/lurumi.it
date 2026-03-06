@@ -8,7 +8,7 @@
     "theme_color": "#B9E5F9",
     "orientation": "portrait",
     "share_target": {
-        "action": "/share",
+        "action": "/api/share-target",
         "method": "POST",
         "enctype": "multipart/form-data",
         "params": {

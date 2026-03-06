@@ -3,7 +3,7 @@
 // ── Web Share Target: intercetta POST /share ─────────────────────────────────
 self.addEventListener('fetch', (event) => {
     const url = new URL(event.request.url)
-    if (url.pathname !== '/share' || event.request.method !== 'POST') return
+    if ((url.pathname !== '/share' && url.pathname !== '/api/share-target') || event.request.method !== 'POST') return
 
     event.respondWith((async () => {
         const formData = await event.request.formData()

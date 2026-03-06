@@ -18,6 +18,8 @@ import {
     Languages,
     Loader2,
     GripVertical,
+    Copy,
+    Check,
 } from "lucide-react";
 import { useProjectStore, Tutorial, RoundCounter as RoundCounterType, TranscriptSegment, TranscriptData } from "@/features/projects/store/useProjectStore";
 import { useParams, useRouter } from "next/navigation";
@@ -66,6 +68,9 @@ export default function TutorialDetail() {
     const [transcriptAction, setTranscriptAction] = useState<'original' | 'translate' | null>(null);
     const [transcriptError, setTranscriptError] = useState('');
     const [transcriptData, setTranscriptData] = useState<TranscriptData | null>(tutorial?.transcriptData ?? null);
+    const [transcriptCost, setTranscriptCost] = useState(0);
+    const [copySuccess, setCopySuccess] = useState(false);
+    const [copyChunkIdx, setCopyChunkIdx] = useState<number | null>(null);
     const [currentVideoTime, setCurrentVideoTime] = useState(0);
     const iframeRef = useRef<HTMLIFrameElement>(null);
     const timePollerRef = useRef<NodeJS.Timeout | null>(null);
@@ -209,6 +214,14 @@ export default function TutorialDetail() {
         }
     }, [currentVideoTime]); // eslint-disable-line react-hooks/exhaustive-deps
 
+    // Carica costo corrente della trascrizione (auto-scaling)
+    useEffect(() => {
+        fetch('/api/transcript-config')
+            .then(r => r.json())
+            .then(d => setTranscriptCost(d.cost ?? 0))
+            .catch(() => {});
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
     // Redirect se il tutorial viene eliminato su un altro dispositivo mentre siamo qui
     useEffect(() => {
         if (hasLoadedRef.current && !tutorial) {
@@ -230,6 +243,45 @@ export default function TutorialDetail() {
         syncSecs(newSecs);
     };
 
+    const copyTextToClipboard = async (text: string): Promise<boolean> => {
+        try {
+            await navigator.clipboard.writeText(text);
+            return true;
+        } catch {
+            // Fallback per browser/iOS che non supportano clipboard API
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+            document.body.appendChild(ta);
+            ta.focus();
+            ta.select();
+            try { document.execCommand('copy'); return true; } catch { return false; }
+            finally { document.body.removeChild(ta); }
+        }
+    };
+
+    const handleCopyTranscript = async (segments: TranscriptSegment[]) => {
+        const fullText = segments.map(s => s.text).join('\n');
+        const ok = await copyTextToClipboard(fullText);
+        if (ok) { setCopySuccess(true); setTimeout(() => setCopySuccess(false), 2500); }
+    };
+
+    // Per trascrizioni molto lunghe su mobile: copia a pezzi da 5000 chars
+    const COPY_CHUNK = 5000;
+    const handleCopyChunk = async (segments: TranscriptSegment[], idx: number) => {
+        const fullText = segments.map(s => s.text).join('\n');
+        const totalChunks = Math.ceil(fullText.length / COPY_CHUNK);
+        const chunk = fullText.slice(idx * COPY_CHUNK, (idx + 1) * COPY_CHUNK);
+        await copyTextToClipboard(chunk);
+        if (idx + 1 >= totalChunks) {
+            setCopyChunkIdx(null);
+            setCopySuccess(true);
+            setTimeout(() => setCopySuccess(false), 2500);
+        } else {
+            setCopyChunkIdx(idx + 1);
+        }
+    };
+
     const generateTranscript = async (translate: boolean) => {
         if (!user || !tutorial.videoId) return;
         setTranscriptAction(translate ? 'translate' : 'original');
@@ -242,6 +294,9 @@ export default function TutorialDetail() {
 
             const segments = trackData.segments;
             if (!segments?.length) throw new Error('Trascrizione vuota. Verifica che il video abbia i sottotitoli attivi.');
+
+            // Aggiorna il costo per la prossima trascrizione (auto-scaling)
+            if (typeof trackData.nextCost === 'number') setTranscriptCost(trackData.nextCost);
 
             // Step 2: server salva + traduce via Groq se richiesto
             const saveRes = await fetch('/api/tutorials/transcript', {
@@ -386,7 +441,7 @@ export default function TutorialDetail() {
                             {!transcriptData && (
                                 <div className="flex flex-col gap-2">
                                     <p className="text-sm text-[#9AA2B1] font-medium mb-1">
-                                        Genera la trascrizione automatica del video (gratuita). Sincronizzata con il player.
+                                        Genera la trascrizione automatica del video{transcriptCost === 0 ? ' (gratuita)' : ` (${transcriptCost} ✦ crediti)`}. Sincronizzata con il player.
                                     </p>
                                     {transcriptError && (
                                         <p className="text-red-500 text-sm font-medium">{transcriptError}</p>
@@ -479,6 +534,29 @@ export default function TutorialDetail() {
                                                     </div>
                                                 );
                                             })}
+                                        </div>
+
+                                        {/* Pulsanti copia */}
+                                        <div className="flex gap-2 mt-3 flex-wrap">
+                                            <button
+                                                onClick={() => { setCopyChunkIdx(null); handleCopyTranscript(segments); }}
+                                                className="flex items-center gap-1.5 h-9 px-3 bg-[#FAFAFC] border border-[#EEF0F4] rounded-xl text-xs font-bold text-[#1C1C1E] active:scale-95 transition-transform"
+                                            >
+                                                {copySuccess && copyChunkIdx === null ? <Check size={12} className="text-green-500" /> : <Copy size={12} />}
+                                                {copySuccess && copyChunkIdx === null ? 'Copiata!' : 'Copia testo'}
+                                            </button>
+                                            {segments.map(s => s.text).join('\n').length > COPY_CHUNK && (
+                                                <button
+                                                    onClick={() => handleCopyChunk(segments, copyChunkIdx ?? 0)}
+                                                    className="flex items-center gap-1.5 h-9 px-3 bg-[#F4EEFF] border border-[#7B5CF6]/20 rounded-xl text-xs font-bold text-[#7B5CF6] active:scale-95 transition-transform"
+                                                >
+                                                    <Copy size={12} />
+                                                    {copyChunkIdx === null
+                                                        ? 'Copia a pezzi'
+                                                        : `Copia parte ${copyChunkIdx + 1}/${Math.ceil(segments.map(s => s.text).join('\n').length / COPY_CHUNK)}`
+                                                    }
+                                                </button>
+                                            )}
                                         </div>
                                     </>
                                 );

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import OpenAI from 'openai'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { computeTranscriptCost } from '@/app/api/transcript-config/route'
 
 interface TranscriptSegment { text: string; start: number; duration: number }
 
@@ -32,6 +33,40 @@ async function fetchViaSupadata(videoId: string): Promise<TranscriptSegment[]> {
         .filter(s => s.text)
 }
 
+// ── Contatore mensile (auto-scaling crediti) ──────────────────────────────────
+async function incrementTranscriptUsage(): Promise<number> {
+    try {
+        const db = createServiceClient()
+        const { data } = await db
+            .from('system_usage')
+            .select('count, reset_at')
+            .eq('key', 'transcript')
+            .single()
+
+        const now = new Date()
+        const resetAt = data?.reset_at ? new Date(data.reset_at) : new Date(0)
+        const needsReset = (now.getTime() - resetAt.getTime()) / 86400000 >= 30
+
+        if (needsReset || !data) {
+            await db.from('system_usage').upsert({
+                key: 'transcript',
+                count: 1,
+                reset_at: now.toISOString(),
+                updated_at: now.toISOString(),
+            })
+            return 1
+        }
+
+        const newCount = (data.count ?? 0) + 1
+        await db.from('system_usage')
+            .update({ count: newCount, updated_at: now.toISOString() })
+            .eq('key', 'transcript')
+        return newCount
+    } catch {
+        return 0 // Non bloccare la trascrizione se il contatore fallisce
+    }
+}
+
 // ── GET: restituisce i segmenti al client ─────────────────────────────────────
 export async function GET(req: NextRequest) {
     const videoId = req.nextUrl.searchParams.get('videoId')
@@ -51,7 +86,11 @@ export async function GET(req: NextRequest) {
             )
         }
 
-        return NextResponse.json({ success: true, segments })
+        // Incrementa contatore mensile e calcola costo corrente
+        const newCount = await incrementTranscriptUsage()
+        const nextCost = computeTranscriptCost(newCount)
+
+        return NextResponse.json({ success: true, segments, nextCost })
     } catch (err: any) {
         console.error('[Transcript GET]', err.message)
         const status = err.message.includes('sottotitoli') ? 404 : 500
