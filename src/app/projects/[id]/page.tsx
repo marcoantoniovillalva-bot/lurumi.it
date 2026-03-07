@@ -67,9 +67,11 @@ export default function ProjectDetail() {
     const [currentPage, setCurrentPage] = useState(1);
     const [totalPages, setTotalPages] = useState(0);
     const [isTimerRunning, setIsTimerRunning] = useState(false);
-    const [elapsedTime, setElapsedTime] = useState(0);
+    // Inizializzazione diretta da project (in localStorage al mount) — evita il flash a 0
+    // e previene che il debounce delle note scatti falsamente al primo render.
+    const [elapsedTime, setElapsedTime] = useState(() => project?.timer ?? 0);
     const [isEditingNotes, setIsEditingNotes] = useState(false);
-    const [notes, setNotes] = useState("");
+    const [notes, setNotes] = useState(() => project?.notesHtml || '');
     const [showNewCounterModal, setShowNewCounterModal] = useState(false);
     const [newCounterName, setNewCounterName] = useState("");
     const [pickerCounterId, setPickerCounterId] = useState<string | null>(null);
@@ -97,7 +99,8 @@ export default function ProjectDetail() {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const renderTaskRef = useRef<any>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
-    const elapsedRef = useRef(0);
+    // Inizializzato da project.timer per evitare che il timer riparta da 0 al refresh
+    const elapsedRef = useRef(project?.timer ?? 0);
     const blobUrlsRef = useRef<string[]>([]);
     const isTimerRunningRef = useRef(false);
     const isEditingNotesRef = useRef(false);
@@ -111,7 +114,7 @@ export default function ProjectDetail() {
     const [transcriptView, setTranscriptView] = useState<'original' | 'translated'>('original');
     const [transcriptAction, setTranscriptAction] = useState<'original' | 'translate' | null>(null);
     const [transcriptError, setTranscriptError] = useState('');
-    const [transcriptData, setTranscriptData] = useState<TranscriptData | null>(null);
+    const [transcriptData, setTranscriptData] = useState<TranscriptData | null>(() => project?.transcriptData ?? null);
     const [transcriptCost, setTranscriptCost] = useState(0);
     const [copySuccess, setCopySuccess] = useState(false);
     const [copyChunkIdx, setCopyChunkIdx] = useState<number | null>(null);
@@ -127,7 +130,7 @@ export default function ProjectDetail() {
     const lpStartPos = useRef<{ x: number; y: number } | null>(null);
     const imgDragState = useRef<{ from: number; over: number | null } | null>(null);
 
-    // Init timer + notes dallo store, reset hint al cambio progetto
+    // Init timer + notes dallo store al cambio progetto (navigazione tra progetti)
     useEffect(() => {
         if (!project) return;
         setElapsedTime(project.timer || 0);
@@ -138,6 +141,18 @@ export default function ProjectDetail() {
         const t = setTimeout(() => setHintVisible(false), 4000);
         return () => clearTimeout(t);
     }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Sincronizza timer display quando lo store aggiorna project.timer senza che il timer sia in corso.
+    // Necessario quando useSyncOnLogin ripristina un valore corretto da Supabase
+    // (es. localStorage aveva timer=0 stantio, Supabase aveva timer=120 dal sync precedente).
+    useEffect(() => {
+        if (isTimerRunning) return;
+        const storeTimer = project?.timer ?? 0;
+        if (storeTimer > elapsedRef.current) {
+            elapsedRef.current = storeTimer;
+            setElapsedTime(storeTimer);
+        }
+    }, [project?.timer]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // PDF loading — con fallback da Supabase Storage se non in IndexedDB
     useEffect(() => {
