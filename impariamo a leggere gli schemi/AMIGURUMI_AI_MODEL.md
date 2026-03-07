@@ -395,22 +395,21 @@ Pronti per training: 59
 - [ ] **Verificare con Erika G3 braccio Luly** — [18pb] sembra errato → braccio NON inserito fino a verifica
 - [ ] Erika aggiunge schemi Livello 1 (sfere pure, cilindri, ovali) — ~10 schemi
 
-### Fase 1 — Tool nell'App (2-3 mesi)
+### Fase 1 — Tool nell'App ✅ COMPLETATA 2026-03-07
 
-> Inizia solo dopo che `pattern-math.ts` e le tabelle DB esistono.
-
-- [ ] Schema Creator con validator live (usa `pattern-math.ts`)
-- [ ] Classificatore auto foto Reale vs IA
-- [ ] Bottone "Contribuisci" nei progetti
-- [ ] Coda validazione admin
-- [ ] **Pannello Test Modello + Feedback** (RLHF loop)
-- Target: 100 schemi validati + 50 dati correttivi
+- [x] **Schema Creator** con validator live (`pattern-math.ts`) — `/admin/schema-creator/`
+- [x] **Classificatore auto foto Reale vs IA** — `/api/training/classify-image` + `SectionImageClassifier`
+- [x] **Bottone "Contribuisci"** nei progetti — `projects/[id]/page.tsx` + `/api/training/submit-contribution`
+- [x] **Coda validazione admin** — `SectionValidationQueue` in AdminDashboard
+- [x] **Pannello Test Modello + Feedback** (RLHF loop) — `/api/training/generate-schema` + `/api/training/save-feedback` + `SectionModelTest`
+- Target: 100 schemi validati + 50 dati correttivi (raccolta in corso — dipende da Erika)
 
 ### Fase 2 — Training LLM (1 mese, ~€150-300)
-- [ ] Dataset JSONL trilingue da schemi validati + dati correttivi
-- [ ] Fine-tune Mistral 7B con QLoRA
+- [x] **Script export dataset JSONL** — `scripts/export-training-dataset.mjs` (2026-03-07)
+- [ ] Raccogliere ≥100 schemi validati nel DB (Erika aggiunge Livello 1: sfere, cilindri, ovali)
+- [ ] Fine-tune Mistral 7B con QLoRA (RunPod ~75h A100, ~€190)
 - [ ] Valutazione: stitch count accuracy per giro
-- [ ] Beta nell'app: "Genera schema"
+- [ ] Beta nell'app: "Genera schema" (sostituisce GPT-4o in `/api/training/generate-schema`)
 
 ### Fase 3 — Training Immagini (2-3 mesi, ~€300-500)
 - [ ] Dataset foto reali filtrate dal classificatore
@@ -497,15 +496,29 @@ Canva permette di **importare PDF** direttamente dalla sua UI (File → Import).
 Nessun OAuth necessario. L'utente importa manualmente in 2 clic.
 Se in futuro Canva risolve il problema OAuth, si può riaggiungere l'upload automatico senza cambiare il PDF export.
 
-### Pannello Admin — Nuove Sezioni da Aggiungere
+### Pannello Admin — Sezioni AI Model ✅ TUTTE COMPLETATE 2026-03-07
 
-1. **Coda Validazione Schemi** — lista schemi utenti in attesa con azioni Approva/Correggi/Rifiuta
-2. **Test Modello + Feedback (RLHF)** — prompt libero → risposta modello → check matematico automatico → admin corregge se sbagliato → dato correttivo salvato
-3. **Dataset Stats** — contatori ground truth / validati / correttivi / totale training-ready
+1. ✅ **Schema Creator** — `/admin/schema-creator/` — editor giro-per-giro con validator live
+2. ✅ **Coda Validazione Schemi** — `SectionValidationQueue` — lista pending, Approva/Rifiuta con note
+3. ✅ **Classificatore Immagini** — `SectionImageClassifier` — GPT-4o Vision Reale vs IA
+4. ✅ **Test Modello + Feedback (RLHF)** — `SectionModelTest` — prompt → schema → math check → correggi → training data
+5. ⏳ **Dataset Stats** — contatori ground truth / validati / correttivi / totale training-ready (da costruire in Fase 2)
 
 ---
 
 ## Note Sessioni
+
+### 2026-03-07 — Sessione 6 (build Fase 1 completa + inizio Fase 2)
+- **Fase 1 completata interamente:**
+  - Schema Creator `/admin/schema-creator/` con editor giro-per-giro e validazione live `pattern-math.ts`
+  - API `/api/training/save-pattern` per inserimento ground truth (admin)
+  - Bottone "Contribuisci schema" nei progetti → modal → API `/api/training/submit-contribution` (status=pending)
+  - Coda Validazione in AdminDashboard — lista pending, approva/rifiuta con note
+  - Classificatore Foto Reale vs IA — GPT-4o Vision + criteri libro pp.28-36 → `SectionImageClassifier`
+  - Pannello Test Modello + RLHF: prompt → generazione GPT-4o → validazione math live → feedback corretto/sbagliato → salvataggio in `model_feedback`
+- **Fase 2 iniziata:**
+  - Script `scripts/export-training-dataset.mjs` — esporta `training_patterns` + `model_feedback` in JSONL per fine-tuning Mistral 7B
+- **Pending da Erika:** verifica G3 braccio Luly + aggiungere ~10 schemi Livello 1 (sfere, cilindri, ovali) tramite Schema Creator
 
 ### 2026-03-07 — Sessione 5 (build Fase 0)
 - `pattern-math.ts` era già completo dalla sessione precedente — confermato e spuntato

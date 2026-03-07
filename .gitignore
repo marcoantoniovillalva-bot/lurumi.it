@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Training dataset exports (JSONL — dati sensibili, non committare)
+dataset/
