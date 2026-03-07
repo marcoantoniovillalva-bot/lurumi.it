@@ -256,7 +256,7 @@ export default function Home() {
       : 'https://placehold.co/120x120?text=Playlist';
     const id = Math.random().toString(36).slice(2, 9);
     const title = pendingYtTitle.trim() || 'Tutorial YouTube';
-    const newProject: import('@/features/projects/store/useProjectStore').Project = {
+    const newProject: Project = {
       id, title, type: 'tutorial', kind: 'tutorial',
       createdAt: Date.now(), size: 0, counter: 0, timer: 0,
       secs: [], notesHtml: '', images: [],
@@ -278,7 +278,7 @@ export default function Home() {
   const handleCreateBlankProject = async () => {
     if (!pendingBlankTitle.trim()) return;
     const id = Math.random().toString(36).slice(2, 9);
-    const newProject: import('@/features/projects/store/useProjectStore').Project = {
+    const newProject: Project = {
       id, title: pendingBlankTitle.trim(), type: 'blank', kind: 'blank',
       createdAt: Date.now(), size: 0, counter: 0, timer: 0,
       secs: [], notesHtml: '', images: [],
@@ -337,7 +337,7 @@ export default function Home() {
 
   // Carica le imageUrls per un progetto dalla IDB / Supabase
   const loadImageUrls = async (project: Project): Promise<string[]> => {
-    if (project.type !== 'images') return [];
+    if (project.type !== 'images' && project.type !== 'tutorial' && project.type !== 'blank') return [];
     const imgs = project.images ?? [];
     const urls: string[] = [];
     const supabase = user ? createClient() : null;
@@ -642,31 +642,35 @@ export default function Home() {
                         <Pencil size={15} className="text-[#7B5CF6]" />
                         Rinomina
                       </button>
-                      <button
-                        onClick={() => handleCardExportPdf(project)}
-                        disabled={cardExporting === project.id}
-                        className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm font-bold text-[#1C1C1E] hover:bg-[#F4F4F8] rounded-xl disabled:opacity-50"
-                      >
-                        <FileDown size={15} className="text-[#7B5CF6]" />
-                        {cardExporting === project.id ? 'Generando…' : 'Scarica PDF'}
-                      </button>
-                      <button
-                        onClick={() => handleCardExportZip(project)}
-                        disabled={cardExporting === project.id}
-                        className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm font-bold text-[#1C1C1E] hover:bg-[#F4F4F8] rounded-xl disabled:opacity-50"
-                      >
-                        <Archive size={15} className="text-[#7B5CF6]" />
-                        {cardExporting === project.id ? 'Generando…' : 'Scarica ZIP'}
-                      </button>
-                      {canShareFiles && (
-                        <button
-                          onClick={() => handleShareWithCanva(project)}
-                          disabled={cardExporting === project.id}
-                          className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm font-bold text-[#1C1C1E] hover:bg-[#F4F4F8] rounded-xl disabled:opacity-50"
-                        >
-                          <ExternalLink size={15} className="text-[#7B5CF6]" />
-                          {cardExporting === project.id ? 'Generando…' : 'Condividi con Canva'}
-                        </button>
+                      {project.type !== 'tutorial' && (
+                        <>
+                          <button
+                            onClick={() => handleCardExportPdf(project)}
+                            disabled={cardExporting === project.id}
+                            className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm font-bold text-[#1C1C1E] hover:bg-[#F4F4F8] rounded-xl disabled:opacity-50"
+                          >
+                            <FileDown size={15} className="text-[#7B5CF6]" />
+                            {cardExporting === project.id ? 'Generando…' : 'Scarica PDF'}
+                          </button>
+                          <button
+                            onClick={() => handleCardExportZip(project)}
+                            disabled={cardExporting === project.id}
+                            className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm font-bold text-[#1C1C1E] hover:bg-[#F4F4F8] rounded-xl disabled:opacity-50"
+                          >
+                            <Archive size={15} className="text-[#7B5CF6]" />
+                            {cardExporting === project.id ? 'Generando…' : 'Scarica ZIP'}
+                          </button>
+                          {canShareFiles && (
+                            <button
+                              onClick={() => handleShareWithCanva(project)}
+                              disabled={cardExporting === project.id}
+                              className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm font-bold text-[#1C1C1E] hover:bg-[#F4F4F8] rounded-xl disabled:opacity-50"
+                            >
+                              <ExternalLink size={15} className="text-[#7B5CF6]" />
+                              {cardExporting === project.id ? 'Generando…' : 'Condividi con Canva'}
+                            </button>
+                          )}
+                        </>
                       )}
                       {project.type === 'tutorial' && project.videoId && (
                         <a

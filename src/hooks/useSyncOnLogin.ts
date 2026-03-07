@@ -42,11 +42,12 @@ export function useSyncOnLogin(user: User | null) {
 
                 // 1. Merge remote → store locale
                 remote.forEach(p => {
+                    const pType = (p.type ?? 'pdf') as 'pdf' | 'images' | 'tutorial' | 'blank'
                     const mapped = {
                         id: p.id,
                         title: p.title,
-                        type: (p.type ?? 'pdf') as 'pdf' | 'images',
-                        kind: (p.type === 'pdf' ? 'pdf' : 'image') as 'pdf' | 'image',
+                        type: pType,
+                        kind: (pType === 'pdf' ? 'pdf' : pType === 'tutorial' ? 'tutorial' : pType === 'blank' ? 'blank' : 'image') as 'pdf' | 'image' | 'tutorial' | 'blank',
                         createdAt: p.created_at ? new Date(p.created_at).getTime() : Date.now(),
                         size: p.size ?? 0,
                         counter: p.counter ?? 0,
@@ -54,7 +55,11 @@ export function useSyncOnLogin(user: User | null) {
                         secs: p.secs ?? [],
                         notesHtml: p.notes_html ?? '',
                         thumbDataURL: p.thumb_url ?? undefined,
+                        thumbUrl: p.thumb_url ?? undefined,
                         url: p.file_url ?? undefined,
+                        videoId: p.video_id ?? undefined,
+                        playlistId: p.playlist_id ?? undefined,
+                        transcriptData: p.transcript_data ?? undefined,
                         images: (p.images ?? []).map((img: { id?: string } | string) =>
                             ({ id: typeof img === 'string' ? img : (img.id ?? '') })
                         ),
@@ -65,22 +70,25 @@ export function useSyncOnLogin(user: User | null) {
                 })
 
                 // 2. Carica su Supabase i progetti creati prima del login (non ancora sincronizzati)
-                // Un progetto è pre-login se non è in Supabase E non ha url Supabase Storage
-                const preLoginProjects = projects.filter(p => !remoteIds.has(p.id) && !p.url)
+                // I tutorial/blank non hanno file, vengono caricati direttamente senza tentare upload Storage
+                const preLoginProjects = projects.filter(p => !remoteIds.has(p.id) && (p.type === 'tutorial' || p.type === 'blank' || !p.url))
                 for (const p of preLoginProjects) {
                     if (!isMounted) break
                     try {
                         const storagePath = `${user.id}/${p.id}/main`
                         let fileUrl: string | null = null
 
-                        const dbRecord = await luDB.getFile(p.id)
-                        if (dbRecord?.blob) {
-                            const { error: upErr } = await supabase.storage
-                                .from('project-files')
-                                .upload(storagePath, dbRecord.blob, { upsert: true })
-                            if (!upErr) {
-                                fileUrl = supabase.storage.from('project-files')
-                                    .getPublicUrl(storagePath).data.publicUrl
+                        // Tutorial e blank non hanno file su Storage — salta upload
+                        if (p.type !== 'tutorial' && p.type !== 'blank') {
+                            const dbRecord = await luDB.getFile(p.id)
+                            if (dbRecord?.blob) {
+                                const { error: upErr } = await supabase.storage
+                                    .from('project-files')
+                                    .upload(storagePath, dbRecord.blob, { upsert: true })
+                                if (!upErr) {
+                                    fileUrl = supabase.storage.from('project-files')
+                                        .getPublicUrl(storagePath).data.publicUrl
+                                }
                             }
                         }
 
@@ -90,13 +98,15 @@ export function useSyncOnLogin(user: User | null) {
                             title: p.title,
                             type: p.type,
                             file_url: fileUrl,
-                            thumb_url: p.thumbDataURL ?? null,
+                            thumb_url: p.thumbDataURL ?? p.thumbUrl ?? null,
                             size: p.size,
                             counter: p.counter,
                             timer_seconds: p.timer,
                             notes_html: p.notesHtml,
                             secs: p.secs,
                             images: (p.images ?? []).map(img => ({ id: img.id })),
+                            video_id: p.videoId ?? null,
+                            playlist_id: p.playlistId ?? null,
                         })
                         if (!dbErr && fileUrl && isMounted) {
                             useProjectStore.getState().updateProject(p.id, { url: fileUrl })
@@ -122,18 +132,24 @@ export function useSyncOnLogin(user: User | null) {
                 // Usa p.url come marcatore affidabile di "già sincronizzato in passato"
                 // (i progetti pre-login non hanno url, quindi non vengono toccati)
                 projects.forEach(p => {
-                    if (!remoteIds.has(p.id) && p.url?.startsWith('https://')) {
+                    // Rimuovi localmente solo i progetti già sincronizzati con Supabase (hanno url o thumbUrl/videoId per i tutorial)
+                    const wasSynced = p.url?.startsWith('https://') ||
+                        (p.type === 'tutorial' && p.videoId) ||
+                        (p.type === 'blank' && remoteIds.has(p.id))
+                    if (!remoteIds.has(p.id) && wasSynced) {
                         deleteProject(p.id)
                     }
                 })
             })
 
-        // --- Tutorials ---
+        // --- Tutorials legacy (tabella tutorials in Supabase) ---
+        // I tutorial storici vengono letti e aggiunti direttamente a projects[] come type='tutorial'
+        // (non più a tutorials[] — retrocompatibilità con dati esistenti su Supabase)
         supabase
             .from('tutorials')
             .select('*')
             .eq('user_id', user.id)
-            .then(async ({ data, error }) => {
+            .then(({ data, error }) => {
                 if (!isMounted) return
                 if (error) {
                     console.error('[SyncOnLogin] tutorials error:', error.message)
@@ -141,57 +157,35 @@ export function useSyncOnLogin(user: User | null) {
                 }
 
                 const remote = data ?? []
-                console.log(`[SyncOnLogin] ${remote.length} tutorial su Supabase`)
+                if (remote.length === 0) return
+                console.log(`[SyncOnLogin] ${remote.length} tutorial legacy su Supabase → migrazione a projects`)
 
-                const { tutorials, addTutorial, updateTutorial } = useProjectStore.getState()
-                const localIds = new Set(tutorials.map(t => t.id))
-                const remoteIds = new Set(remote.map(t => t.id))
+                const { projects: currentProjects, addProject, updateProject } = useProjectStore.getState()
+                const localProjectIds = new Set(currentProjects.map(p => p.id))
 
-                // 1. Merge remote → store locale
                 remote.forEach(t => {
+                    const thumbUrl = t.thumb_url ?? (t.video_id ? `https://img.youtube.com/vi/${t.video_id}/hqdefault.jpg` : '')
                     const mapped = {
                         id: t.id,
                         title: t.title ?? '',
-                        url: t.url ?? '',
-                        videoId: t.video_id ?? '',
-                        playlistId: t.playlist_id ?? '',
-                        thumbUrl: t.thumb_url ?? '',
+                        type: 'tutorial' as const,
+                        kind: 'tutorial' as const,
                         createdAt: t.created_at ? new Date(t.created_at).getTime() : Date.now(),
+                        size: 0,
                         counter: t.counter ?? 0,
                         timer: t.timer_seconds ?? 0,
                         secs: t.secs ?? [],
                         notesHtml: t.notes_html ?? '',
+                        images: [],
+                        videoId: t.video_id ?? '',
+                        playlistId: t.playlist_id ?? '',
+                        thumbUrl,
+                        thumbDataURL: thumbUrl,
                         transcriptData: t.transcript_data ?? null,
                     }
-                    if (localIds.has(t.id)) updateTutorial(t.id, mapped)
-                    else addTutorial(mapped)
+                    if (localProjectIds.has(t.id)) updateProject(t.id, mapped)
+                    else addProject(mapped)
                 })
-
-                // 2. Carica su Supabase i tutorial creati prima del login
-                const preLoginTutorials = tutorials.filter(t => !remoteIds.has(t.id))
-                for (const t of preLoginTutorials) {
-                    if (!isMounted) break
-                    supabase.from('tutorials').upsert({
-                        id: t.id,
-                        user_id: user.id,
-                        title: t.title,
-                        url: t.url,
-                        video_id: t.videoId,
-                        playlist_id: t.playlistId,
-                        thumb_url: t.thumbUrl,
-                        counter: t.counter,
-                        timer_seconds: t.timer,
-                        secs: t.secs,
-                        notes_html: t.notesHtml,
-                    }).then(({ error: e }) => {
-                        if (e) console.warn('[SyncOnLogin] tutorial upload fallito:', e.message)
-                    })
-                }
-
-                // Nota: non eliminiamo tutorial locali basandoci sulla lista Supabase perché
-                // i tutorial YouTube hanno thumbUrl 'https://...' anche se pre-login
-                // (impossibile distinguerli da quelli già sincronizzati).
-                // Le eliminazioni remote sono gestite dal Realtime in tempo reale.
             })
 
         return () => { isMounted = false }
