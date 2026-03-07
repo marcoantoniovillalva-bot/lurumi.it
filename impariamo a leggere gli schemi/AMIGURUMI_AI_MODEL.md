@@ -19,10 +19,10 @@ Creare un modello AI proprietario capace di:
 
 | # | Blocco | Impatto | Stato |
 |---|--------|---------|-------|
-| 1 | **`pattern-math.ts` non esiste** | È il cuore del sistema: Schema Creator, RLHF loop e inserimento dati dipendono tutti da esso | ❌ Da fare |
-| 2 | **Tabelle DB non create** | `training_patterns` e `model_feedback` non esistono ancora su Supabase | ❌ Da fare |
-| 3 | **Errore nel ground truth (braccio Luly G3)** | Il giro 3 del braccio riporta [18pb] — valore inusualmente largo. Inserire dati sbagliati nel ground truth avvelena il training | ⚠️ Verificare con Erika |
-| 4 | **JSON con range di giri** | I giri con range (`"round": "8-11"`) vanno espansi in giri individuali nel DB per permettere associazione immagine per giro | ❌ Da fare al momento dell'inserimento |
+| 1 | **`pattern-math.ts` non esiste** | È il cuore del sistema: Schema Creator, RLHF loop e inserimento dati dipendono tutti da esso | ✅ Completato 2026-03-07 |
+| 2 | **Tabelle DB non create** | `training_patterns` e `model_feedback` non esistono ancora su Supabase | ✅ Completato 2026-03-07 |
+| 3 | **Errore nel ground truth (braccio Luly G3)** | Il giro 3 del braccio riporta [18pb] — valore inusualmente largo. Inserire dati sbagliati nel ground truth avvelena il training | ⚠️ Verificare con Erika (braccio non ancora inserito per questo motivo) |
+| 4 | **JSON con range di giri** | I giri con range (`"round": "8-11"`) vanno espansi in giri individuali nel DB per permettere associazione immagine per giro | ✅ Gestito in `validatePart()` — `expandRoundRange()` li espande automaticamente |
 
 ---
 
@@ -232,7 +232,10 @@ CREATE TABLE model_feedback (
 
 > **Ordine obbligatorio:** Step 0 → Step 1 → Step 2 → Step 3+. Non saltare step.
 
-### Step 0 — `pattern-math.ts` (prerequisito di tutto)
+### Step 0 — `pattern-math.ts` ✅ COMPLETATO 2026-03-07
+
+File: `src/lib/pattern-math.ts` — validator + normalizzatore trilingue completo.
+Funzioni: `normalizeStitch`, `validateRound`, `validatePart`, `estimateSizeCm`, `distributiveFormula`, `generateStandardSphere`, `expandRoundRange`
 
 Da costruire **prima di ogni altra cosa** — è il cuore del sistema:
 ```typescript
@@ -245,7 +248,10 @@ distributiveFormula(from: number, to: number): string  // "da 12 a 18 → (1sc, 
 
 Senza questo file: lo Schema Creator non può validare in tempo reale, il pannello RLHF non può fare il check automatico, e i dati non possono essere verificati prima dell'inserimento nel DB.
 
-### Step 1 — Tabelle DB per Training Data
+### Step 1 — Tabelle DB per Training Data ✅ COMPLETATO 2026-03-07
+
+Migration: `supabase/migrations/20260307000001_training_data.sql`
+Tabelle create su Supabase: `training_patterns` + `model_feedback` con RLS.
 
 ```sql
 CREATE TABLE training_patterns (
@@ -287,7 +293,10 @@ CREATE TABLE model_feedback (
 }]
 ```
 
-### Step 2 — Inserimento Ground Truth nel DB
+### Step 2 — Inserimento Ground Truth nel DB ✅ PARZIALMENTE COMPLETATO 2026-03-07
+
+4 schemi inseriti: Fiore (beginner), Stivaletto Luly (intermediate), Testa Luly (intermediate), Piede+Gamba Luly (advanced).
+❌ Braccio Luly NON inserito — G3 [18pb] da verificare con Erika prima dell'inserimento.
 
 Prima di inserire i 4 schemi JSON:
 1. **Verificare con Erika il G3 del braccio Luly** — [18pb] sembra errato (valore inusuale per un braccio)
@@ -380,10 +389,10 @@ Pronti per training: 59
 - [x] Vocabolario canonico definito (libro Erika)
 - [x] 4 schemi ground truth in formato JSON (libro Erika)
 - [x] Invarianti matematici documentati
-- [ ] **Scrivere `pattern-math.ts`** — validator + normalizzatore (priorità assoluta)
-- [ ] **Creare tabelle DB** `training_patterns` + `model_feedback` su Supabase
-- [ ] **Verificare con Erika G3 braccio Luly** — [18pb] sembra errato, blocca inserimento ground truth
-- [ ] **Inserire 4 schemi JSON nel DB** con `status='ground_truth'` (solo dopo verifica braccio)
+- [x] **`pattern-math.ts` scritto** — validator + normalizzatore trilingue IT/EN/ES (2026-03-07)
+- [x] **Tabelle DB create** `training_patterns` + `model_feedback` su Supabase (2026-03-07)
+- [x] **4 schemi JSON inseriti nel DB** con `status='ground_truth'`: Fiore, Stivaletto, Testa Luly, Piede+Gamba (2026-03-07)
+- [ ] **Verificare con Erika G3 braccio Luly** — [18pb] sembra errato → braccio NON inserito fino a verifica
 - [ ] Erika aggiunge schemi Livello 1 (sfere pure, cilindri, ovali) — ~10 schemi
 
 ### Fase 1 — Tool nell'App (2-3 mesi)
@@ -497,6 +506,14 @@ Se in futuro Canva risolve il problema OAuth, si può riaggiungere l'upload auto
 ---
 
 ## Note Sessioni
+
+### 2026-03-07 — Sessione 5 (build Fase 0)
+- `pattern-math.ts` era già completo dalla sessione precedente — confermato e spuntato
+- Creato migration `20260307000001_training_data.sql` — tabelle `training_patterns` + `model_feedback` su Supabase
+- Inseriti 4 schemi ground truth nel DB (Fiore, Stivaletto, Testa Luly, Piede+Gamba)
+- Braccio Luly NON inserito — G3 [18pb] ancora da verificare con Erika
+- Tutti i blocchi aperti di Fase 0 completati tranne la verifica braccio (dipende da Erika)
+- Prossimo step: Schema Creator nell'app (Fase 1, Step 3)
 
 ### 2026-03-06 — Sessione 4 (revisione critica)
 - Identificati 4 blocchi aperti: `pattern-math.ts` mancante, tabelle DB non create, errore G3 braccio Luly, range giri da espandere

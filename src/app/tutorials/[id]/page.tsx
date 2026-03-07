@@ -787,8 +787,7 @@ export default function TutorialDetail() {
             <div className="bg-white rounded-[32px] border border-[#EEF0F4] overflow-hidden shadow-sm mb-8">
                 {/* Toolbar */}
                 <div className="p-3 bg-white border-b border-[#EEF0F4] flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                        <span className="text-sm font-black text-[#1C1C1E]">Immagini</span>
+                    <div className="flex items-center gap-1.5">
                         {imageUrls.length > 0 && (
                             <span className="text-[13px] font-black text-[#1C1C1E] bg-[#FAFAFC] px-3 py-1.5 rounded-lg border border-[#EEF0F4]">
                                 {currentImgPage} / {imageUrls.length}
