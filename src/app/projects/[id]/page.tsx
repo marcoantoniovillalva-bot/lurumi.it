@@ -32,12 +32,26 @@ export default function ProjectDetail() {
     const project = projects.find(p => p.id === id);
 
     const syncProject = (fields: Record<string, unknown>) => {
-        if (!user || !id) return;
+        if (!user || !id || !project) return;
         const supabase = createClient();
+        // Upsert anziché update: garantisce che i tutorial legacy (solo in tabella tutorials)
+        // vengano migrati automaticamente in projects al primo salvataggio di qualsiasi campo.
         supabase.from('projects')
-            .update(fields)
-            .eq('id', id)
-            .eq('user_id', user.id)
+            .upsert({
+                id,
+                user_id: user.id,
+                title: project.title,
+                type: project.type,
+                video_id: project.videoId ?? null,
+                playlist_id: project.playlistId ?? null,
+                thumb_url: project.thumbUrl ?? project.thumbDataURL ?? null,
+                counter: project.counter,
+                timer_seconds: project.timer,
+                notes_html: project.notesHtml,
+                secs: project.secs,
+                images: (project.images ?? []).map(img => ({ id: img.id })),
+                ...fields, // sovrascrive i campi aggiornati
+            })
             .then(({ error }) => { if (error) console.warn('project sync failed:', error.message); });
     };
 
@@ -531,7 +545,7 @@ export default function ProjectDetail() {
                         cv.height = Math.round(img.height * scale);
                         cv.getContext('2d')!.drawImage(img, 0, 0, cv.width, cv.height);
                         resolve(cv.toDataURL('image/jpeg', 0.7));
-                        URL.revokeObjectURL(objectUrl);
+                        // NON revocare objectUrl qui — è ancora usato da imageUrls per la visualizzazione
                     };
                     img.onerror = () => resolve('');
                     img.src = objectUrl;
@@ -543,17 +557,17 @@ export default function ProjectDetail() {
         }
 
         // Carica su Supabase Storage e sincronizza lista immagini nel DB
+        // syncProject usa upsert → funziona anche per tutorial legacy non ancora in tabella projects
         if (user) {
             const supabase = createClient();
             const storagePath = `${user.id}/${project.id}/${imgId}`;
             supabase.storage.from('project-files').upload(storagePath, file, { upsert: true })
                 .then(({ error: storageErr }) => {
                     if (storageErr) { console.warn('Image upload failed:', storageErr.message); return; }
-                    supabase.from('projects').update({
+                    syncProject({
                         images: updatedImages.map(img => ({ id: img.id })),
                         ...(thumbDataURL ? { thumb_url: thumbDataURL } : {}),
-                    }).eq('id', project.id).eq('user_id', user.id)
-                        .then(({ error }) => { if (error) console.warn('Images DB sync failed:', error.message); });
+                    });
                 });
         }
     };
