@@ -642,35 +642,31 @@ export default function Home() {
                         <Pencil size={15} className="text-[#7B5CF6]" />
                         Rinomina
                       </button>
-                      {project.type !== 'tutorial' && (
-                        <>
-                          <button
-                            onClick={() => handleCardExportPdf(project)}
-                            disabled={cardExporting === project.id}
-                            className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm font-bold text-[#1C1C1E] hover:bg-[#F4F4F8] rounded-xl disabled:opacity-50"
-                          >
-                            <FileDown size={15} className="text-[#7B5CF6]" />
-                            {cardExporting === project.id ? 'Generando…' : 'Scarica PDF'}
-                          </button>
-                          <button
-                            onClick={() => handleCardExportZip(project)}
-                            disabled={cardExporting === project.id}
-                            className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm font-bold text-[#1C1C1E] hover:bg-[#F4F4F8] rounded-xl disabled:opacity-50"
-                          >
-                            <Archive size={15} className="text-[#7B5CF6]" />
-                            {cardExporting === project.id ? 'Generando…' : 'Scarica ZIP'}
-                          </button>
-                          {canShareFiles && (
-                            <button
-                              onClick={() => handleShareWithCanva(project)}
-                              disabled={cardExporting === project.id}
-                              className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm font-bold text-[#1C1C1E] hover:bg-[#F4F4F8] rounded-xl disabled:opacity-50"
-                            >
-                              <ExternalLink size={15} className="text-[#7B5CF6]" />
-                              {cardExporting === project.id ? 'Generando…' : 'Condividi con Canva'}
-                            </button>
-                          )}
-                        </>
+                      <button
+                        onClick={() => handleCardExportPdf(project)}
+                        disabled={cardExporting === project.id}
+                        className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm font-bold text-[#1C1C1E] hover:bg-[#F4F4F8] rounded-xl disabled:opacity-50"
+                      >
+                        <FileDown size={15} className="text-[#7B5CF6]" />
+                        {cardExporting === project.id ? 'Generando…' : 'Scarica PDF'}
+                      </button>
+                      <button
+                        onClick={() => handleCardExportZip(project)}
+                        disabled={cardExporting === project.id}
+                        className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm font-bold text-[#1C1C1E] hover:bg-[#F4F4F8] rounded-xl disabled:opacity-50"
+                      >
+                        <Archive size={15} className="text-[#7B5CF6]" />
+                        {cardExporting === project.id ? 'Generando…' : 'Scarica ZIP'}
+                      </button>
+                      {canShareFiles && (
+                        <button
+                          onClick={() => handleShareWithCanva(project)}
+                          disabled={cardExporting === project.id}
+                          className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm font-bold text-[#1C1C1E] hover:bg-[#F4F4F8] rounded-xl disabled:opacity-50"
+                        >
+                          <ExternalLink size={15} className="text-[#7B5CF6]" />
+                          {cardExporting === project.id ? 'Generando…' : 'Condividi con Canva'}
+                        </button>
                       )}
                       {project.type === 'tutorial' && project.videoId && (
                         <a

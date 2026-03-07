@@ -96,9 +96,14 @@ export default function ProjectDetail() {
     const [copySuccess, setCopySuccess] = useState(false);
     const [copyChunkIdx, setCopyChunkIdx] = useState<number | null>(null);
     const [currentVideoTime, setCurrentVideoTime] = useState(0);
+    // D3 — Aggiungi YouTube a progetto esistente
+    const [showAddYouTubeModal, setShowAddYouTubeModal] = useState(false);
+    const [addYouTubeUrl, setAddYouTubeUrl] = useState('');
+    const [addYouTubeError, setAddYouTubeError] = useState('');
     const timePollerRef = useRef<NodeJS.Timeout | null>(null);
     const activeSegmentRef = useRef<HTMLDivElement | null>(null);
     const ytPlayerRef = useRef<any>(null);
+    const iframeRef = useRef<HTMLIFrameElement>(null);
     const lpStartPos = useRef<{ x: number; y: number } | null>(null);
     const imgDragState = useRef<{ from: number; over: number | null } | null>(null);
 
@@ -341,6 +346,13 @@ export default function ProjectDetail() {
         };
     }, [transcriptOpen, project?.videoId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+    // Auto-scroll segmento attivo nella trascrizione
+    useEffect(() => {
+        if (activeSegmentRef.current && transcriptOpen) {
+            activeSegmentRef.current.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+    }, [currentVideoTime]); // eslint-disable-line react-hooks/exhaustive-deps
+
     // Redirect se il progetto viene eliminato su un altro dispositivo mentre siamo qui
     useEffect(() => {
         if (hasLoadedRef.current && !project) {
@@ -390,30 +402,50 @@ export default function ProjectDetail() {
     }
 
     // ── Transcript helpers ────────────────────────────────────────────────────
-    const handleFetchTranscript = async () => {
+    const copyTextToClipboard = async (text: string): Promise<boolean> => {
+        try {
+            await navigator.clipboard.writeText(text);
+            return true;
+        } catch {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+            document.body.appendChild(ta);
+            ta.focus(); ta.select();
+            try { document.execCommand('copy'); return true; } catch { return false; }
+            finally { document.body.removeChild(ta); }
+        }
+    };
+
+    const generateTranscript = async (translate: boolean) => {
         if (!project?.videoId) return;
-        setTranscriptAction('original');
+        setTranscriptAction(translate ? 'translate' : 'original');
         setTranscriptError('');
         try {
-            const res = await fetch(`/api/tutorials/transcript?videoId=${project.videoId}`);
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'Errore trascrizione');
-            setTranscriptCost(data.nextCost ?? 0);
+            // Se traduciamo e abbiamo già i segmenti, non ri-fetchiamo
+            let segments = (translate && transcriptData?.transcript) ? transcriptData.transcript : null;
+            if (!segments) {
+                const res = await fetch(`/api/tutorials/transcript?videoId=${project.videoId}`);
+                const data = await res.json();
+                if (!res.ok || !data.success) throw new Error(data.error || 'Errore trascrizione');
+                setTranscriptCost(data.nextCost ?? 0);
+                segments = data.segments;
+            }
             const saveRes = await fetch('/api/tutorials/transcript', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ tutorialId: id, transcript: data.segments, translate: false, table: 'projects' }),
+                body: JSON.stringify({ tutorialId: id, transcript: segments, translate, table: 'projects' }),
             });
-            if (saveRes.ok) {
-                const newData: TranscriptData = {
-                    transcript: data.segments,
-                    translated: null,
-                    generated_at: new Date().toISOString(),
-                    has_translation: false,
-                };
-                setTranscriptData(newData);
-                updateProject(id as string, { transcriptData: newData });
-            }
+            const saveData = await saveRes.json();
+            if (!saveRes.ok) throw new Error(saveData.error || 'Errore salvataggio');
+            const newData: TranscriptData = {
+                transcript: segments!,
+                translated: saveData.translated ?? transcriptData?.translated ?? null,
+                generated_at: new Date().toISOString(),
+                has_translation: !!(saveData.translated || (!translate && transcriptData?.has_translation)),
+            };
+            setTranscriptData(newData);
+            updateProject(id as string, { transcriptData: newData });
         } catch (err: any) {
             setTranscriptError(err.message || 'Errore nel recupero della trascrizione.');
         } finally {
@@ -421,38 +453,11 @@ export default function ProjectDetail() {
         }
     };
 
-    const handleTranslateTranscript = async () => {
-        if (!transcriptData?.transcript) return;
-        setTranscriptAction('translate');
-        setTranscriptError('');
-        try {
-            const res = await fetch('/api/tutorials/transcript', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ tutorialId: id, transcript: transcriptData.transcript, translate: true, table: 'projects' }),
-            });
-            const data = await res.json();
-            if (!res.ok || !data.success) throw new Error(data.error || 'Errore traduzione');
-            const newData: TranscriptData = { ...transcriptData, translated: data.translated, has_translation: true };
-            setTranscriptData(newData);
-            updateProject(id as string, { transcriptData: newData });
-        } catch (err: any) {
-            setTranscriptError(err.message || 'Errore nella traduzione.');
-        } finally {
-            setTranscriptAction(null);
-        }
-    };
-
-    const CHUNK_SIZE = 10;
     const activeSegs = transcriptData
         ? (transcriptView === 'translated' && transcriptData.has_translation
             ? transcriptData.translated ?? transcriptData.transcript
             : transcriptData.transcript)
         : [];
-    const chunks: TranscriptSegment[][] = [];
-    for (let i = 0; i < activeSegs.length; i += CHUNK_SIZE) {
-        chunks.push(activeSegs.slice(i, i + CHUNK_SIZE));
-    }
     const formatTranscriptTime = (s: number) => {
         const m = Math.floor(s / 60);
         const sec = Math.floor(s % 60);
@@ -461,17 +466,36 @@ export default function ProjectDetail() {
     const seekTo = (startSec: number) => {
         try { ytPlayerRef.current?.seekTo?.(startSec, true); } catch {}
     };
-    const copyChunk = async (idx: number) => {
-        const text = chunks[idx].map(s => s.text).join(' ');
-        await navigator.clipboard.writeText(text).catch(() => {});
-        setCopyChunkIdx(idx);
-        setTimeout(() => setCopyChunkIdx(null), 2000);
+    const COPY_CHUNK = 5000;
+    const handleCopyChunk = async (idx: number) => {
+        const fullText = activeSegs.map(s => s.text).join('\n');
+        const totalChunks = Math.ceil(fullText.length / COPY_CHUNK);
+        const chunk = fullText.slice(idx * COPY_CHUNK, (idx + 1) * COPY_CHUNK);
+        await copyTextToClipboard(chunk);
+        if (idx + 1 >= totalChunks) {
+            setCopyChunkIdx(null);
+            setCopySuccess(true);
+            setTimeout(() => setCopySuccess(false), 2500);
+        } else {
+            setCopyChunkIdx(idx + 1);
+        }
     };
-    const copyAll = async () => {
-        const text = activeSegs.map(s => s.text).join(' ');
-        await navigator.clipboard.writeText(text).catch(() => {});
-        setCopySuccess(true);
-        setTimeout(() => setCopySuccess(false), 2000);
+    const copyAll = () => { setCopyChunkIdx(0); };
+
+    // ── parseYouTubeUrl helper ────────────────────────────────────────────────
+    const parseYouTubeUrl = (url: string): { videoId: string; playlistId: string } | null => {
+        try {
+            const u = new URL(url);
+            let videoId = '';
+            let playlistId = u.searchParams.get('list') || '';
+            if (u.hostname.includes('youtu.be')) videoId = u.pathname.slice(1).split('/')[0];
+            else if (u.hostname.includes('youtube.com')) {
+                if (u.pathname.startsWith('/watch')) videoId = u.searchParams.get('v') || '';
+                else if (u.pathname.startsWith('/shorts/')) videoId = u.pathname.split('/')[2];
+            }
+            if (!videoId && !playlistId) return null;
+            return { videoId, playlistId };
+        } catch { return null; }
     };
 
     const formatTime = (seconds: number) => {
@@ -493,6 +517,31 @@ export default function ProjectDetail() {
         setImageUrls(prev => [...prev, objectUrl]);
         setTotalPages(updatedImages.length);
 
+        // Genera thumbnail se è la prima immagine (progetto senza thumbnail)
+        let thumbDataURL: string | undefined;
+        if (!project.thumbDataURL && (project.images?.length ?? 0) === 0) {
+            try {
+                thumbDataURL = await new Promise<string>((resolve) => {
+                    const img = new window.Image();
+                    img.onload = () => {
+                        const maxDim = 120;
+                        const scale = Math.min(maxDim / img.width, maxDim / img.height, 1);
+                        const cv = document.createElement('canvas');
+                        cv.width = Math.round(img.width * scale);
+                        cv.height = Math.round(img.height * scale);
+                        cv.getContext('2d')!.drawImage(img, 0, 0, cv.width, cv.height);
+                        resolve(cv.toDataURL('image/jpeg', 0.7));
+                        URL.revokeObjectURL(objectUrl);
+                    };
+                    img.onerror = () => resolve('');
+                    img.src = objectUrl;
+                });
+                if (thumbDataURL) {
+                    updateProject(project.id, { thumbDataURL });
+                }
+            } catch { /* silently skip */ }
+        }
+
         // Carica su Supabase Storage e sincronizza lista immagini nel DB
         if (user) {
             const supabase = createClient();
@@ -502,6 +551,7 @@ export default function ProjectDetail() {
                     if (storageErr) { console.warn('Image upload failed:', storageErr.message); return; }
                     supabase.from('projects').update({
                         images: updatedImages.map(img => ({ id: img.id })),
+                        ...(thumbDataURL ? { thumb_url: thumbDataURL } : {}),
                     }).eq('id', project.id).eq('user_id', user.id)
                         .then(({ error }) => { if (error) console.warn('Images DB sync failed:', error.message); });
                 });
@@ -689,31 +739,27 @@ export default function ProjectDetail() {
                             <RotateCcw size={13} strokeWidth={3} />
                         </button>
                     </div>
-                    {project.type !== 'tutorial' && (
-                        <>
-                            <div className="flex flex-col items-center gap-0.5">
-                                <button
-                                    onClick={handleExportZip}
-                                    className="w-10 h-10 flex items-center justify-center bg-white border border-[#EEF0F4] rounded-xl text-[#7B5CF6] active:scale-95 transition-transform shadow-sm"
-                                    title="Esporta ZIP"
-                                >
-                                    <Archive size={20} />
-                                </button>
-                                <span className="text-[9px] font-black uppercase tracking-widest text-[#7B5CF6]">zip</span>
-                            </div>
-                            <div className="flex flex-col items-center gap-0.5">
-                                <button
-                                    onClick={handleExportPdf}
-                                    disabled={exportingPdf}
-                                    className="w-10 h-10 flex items-center justify-center bg-white border border-[#EEF0F4] rounded-xl text-[#7B5CF6] active:scale-95 transition-transform shadow-sm disabled:opacity-50"
-                                    title="Esporta PDF editabile"
-                                >
-                                    <FileDown size={20} />
-                                </button>
-                                <span className="text-[9px] font-black uppercase tracking-widest text-[#7B5CF6]">pdf</span>
-                            </div>
-                        </>
-                    )}
+                    <div className="flex flex-col items-center gap-0.5">
+                        <button
+                            onClick={handleExportZip}
+                            className="w-10 h-10 flex items-center justify-center bg-white border border-[#EEF0F4] rounded-xl text-[#7B5CF6] active:scale-95 transition-transform shadow-sm"
+                            title="Esporta ZIP"
+                        >
+                            <Archive size={20} />
+                        </button>
+                        <span className="text-[9px] font-black uppercase tracking-widest text-[#7B5CF6]">zip</span>
+                    </div>
+                    <div className="flex flex-col items-center gap-0.5">
+                        <button
+                            onClick={handleExportPdf}
+                            disabled={exportingPdf}
+                            className="w-10 h-10 flex items-center justify-center bg-white border border-[#EEF0F4] rounded-xl text-[#7B5CF6] active:scale-95 transition-transform shadow-sm disabled:opacity-50"
+                            title="Esporta PDF editabile"
+                        >
+                            <FileDown size={20} />
+                        </button>
+                        <span className="text-[9px] font-black uppercase tracking-widest text-[#7B5CF6]">pdf</span>
+                    </div>
                 </div>
             </div>
 
@@ -732,9 +778,14 @@ export default function ProjectDetail() {
                 <div className="mb-6">
                     <div className="relative pb-[56.25%] rounded-[24px] overflow-hidden bg-black shadow-sm">
                         <iframe
+                            ref={iframeRef}
                             id="yt-player-project"
                             className="absolute inset-0 w-full h-full"
-                            src={`https://www.youtube.com/embed/${project.videoId}?enablejsapi=1&rel=0`}
+                            src={project.videoId
+                                ? `https://www.youtube.com/embed/${project.videoId}?rel=0&modestbranding=1&playsinline=1&enablejsapi=1`
+                                : project.playlistId
+                                    ? `https://www.youtube.com/embed/videoseries?list=${project.playlistId}&rel=0&modestbranding=1&playsinline=1`
+                                    : ''}
                             allowFullScreen
                             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                         />
@@ -763,7 +814,7 @@ export default function ProjectDetail() {
                                         </p>
                                         {transcriptError && <p className="text-xs text-red-500 font-medium mb-3">{transcriptError}</p>}
                                         <button
-                                            onClick={handleFetchTranscript}
+                                            onClick={() => generateTranscript(false)}
                                             disabled={!!transcriptAction}
                                             className="h-10 px-6 bg-[#7B5CF6] text-white rounded-xl font-bold text-sm disabled:opacity-50 flex items-center gap-2 mx-auto"
                                         >
@@ -789,7 +840,7 @@ export default function ProjectDetail() {
                                                     </button>
                                                 ) : (
                                                     <button
-                                                        onClick={handleTranslateTranscript}
+                                                        onClick={() => generateTranscript(true)}
                                                         disabled={!!transcriptAction}
                                                         className="h-8 px-3 rounded-lg text-xs font-black bg-[#FAFAFC] text-[#7B5CF6] flex items-center gap-1 disabled:opacity-50"
                                                     >
@@ -803,40 +854,39 @@ export default function ProjectDetail() {
                                                 className="h-8 px-3 rounded-lg text-xs font-black bg-[#FAFAFC] text-[#9AA2B1] flex items-center gap-1 transition-colors hover:text-[#7B5CF6]"
                                             >
                                                 {copySuccess ? <Check size={13} className="text-green-500" /> : <Copy size={13} />}
-                                                Copia tutto
+                                                {copyChunkIdx !== null ? `Copia (${copyChunkIdx + 1})…` : 'Copia tutto'}
                                             </button>
                                         </div>
                                         {transcriptError && <p className="text-xs text-red-500 font-medium mb-2">{transcriptError}</p>}
-                                        <div className="max-h-72 overflow-y-auto flex flex-col gap-3" ref={activeSegmentRef}>
-                                            {chunks.map((chunk, ci) => {
-                                                const chunkStart = chunk[0]?.start ?? 0;
-                                                const isActive = currentVideoTime >= chunkStart &&
-                                                    (ci === chunks.length - 1 || currentVideoTime < (chunks[ci + 1]?.[0]?.start ?? Infinity));
+                                        <div className="max-h-72 overflow-y-auto flex flex-col gap-1.5">
+                                            {activeSegs.map((seg, si) => {
+                                                const nextStart = activeSegs[si + 1]?.start ?? Infinity;
+                                                const isActive = currentVideoTime >= seg.start && currentVideoTime < nextStart;
                                                 return (
                                                     <div
-                                                        key={ci}
-                                                        className={`rounded-xl p-3 transition-colors ${isActive ? 'bg-[#F4EEFF] border border-[#E6DAFF]' : 'bg-[#FAFAFC]'}`}
+                                                        key={si}
+                                                        ref={isActive ? activeSegmentRef : undefined}
+                                                        className={`rounded-xl px-3 py-2 transition-colors cursor-pointer ${isActive ? 'bg-[#F4EEFF] border border-[#E6DAFF]' : 'hover:bg-[#FAFAFC]'}`}
+                                                        onClick={() => seekTo(seg.start)}
                                                     >
-                                                        <div className="flex items-center justify-between mb-1.5">
-                                                            <button
-                                                                onClick={() => seekTo(chunkStart)}
-                                                                className="text-[11px] font-black text-[#7B5CF6] uppercase tracking-widest hover:underline"
-                                                            >
-                                                                {formatTranscriptTime(chunkStart)}
-                                                            </button>
-                                                            <button
-                                                                onClick={() => copyChunk(ci)}
-                                                                className="text-[#9AA2B1] hover:text-[#7B5CF6] transition-colors"
-                                                            >
-                                                                {copyChunkIdx === ci ? <Check size={13} className="text-green-500" /> : <Copy size={13} />}
-                                                            </button>
-                                                        </div>
-                                                        <p className="text-sm text-[#1C1C1E] leading-relaxed font-medium">
-                                                            {chunk.map(s => s.text).join(' ')}
-                                                        </p>
+                                                        <span className="text-[10px] font-black text-[#7B5CF6] uppercase tracking-widest mr-2">
+                                                            {formatTranscriptTime(seg.start)}
+                                                        </span>
+                                                        <span className="text-sm text-[#1C1C1E] leading-relaxed font-medium">
+                                                            {seg.text}
+                                                        </span>
                                                     </div>
                                                 );
                                             })}
+                                        </div>
+                                        <div className="mt-3 flex justify-center">
+                                            <button
+                                                onClick={() => handleCopyChunk(copyChunkIdx ?? 0)}
+                                                className="h-8 px-4 rounded-lg text-xs font-black bg-[#FAFAFC] text-[#9AA2B1] flex items-center gap-1.5 hover:text-[#7B5CF6] transition-colors"
+                                            >
+                                                {copySuccess ? <Check size={13} className="text-green-500" /> : <Copy size={13} />}
+                                                {copySuccess ? 'Copiato!' : copyChunkIdx !== null ? `Copia blocco ${copyChunkIdx + 1}…` : 'Copia testo'}
+                                            </button>
                                         </div>
                                     </>
                                 )}
@@ -854,6 +904,19 @@ export default function ProjectDetail() {
                         <ExternalLink size={12} />
                         Apri su YouTube
                     </a>
+                </div>
+            )}
+
+            {/* D3 — Aggiungi YouTube (solo per progetti senza videoId) */}
+            {!project.videoId && (
+                <div className="mb-6">
+                    <button
+                        onClick={() => { setAddYouTubeUrl(''); setAddYouTubeError(''); setShowAddYouTubeModal(true); }}
+                        className="w-full flex items-center justify-center gap-2 h-11 bg-white border border-[#EEF0F4] rounded-2xl text-[#9AA2B1] font-bold text-sm hover:border-red-200 hover:text-red-500 transition-colors shadow-sm"
+                    >
+                        <Youtube size={16} />
+                        Aggiungi video YouTube
+                    </button>
                 </div>
             )}
 
@@ -1281,6 +1344,45 @@ export default function ProjectDetail() {
                                 className="flex-[2] h-12 bg-[#7B5CF6] text-white rounded-2xl font-bold shadow-lg"
                             >
                                 Crea
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Modal Aggiungi YouTube */}
+            {showAddYouTubeModal && (
+                <div className="fixed inset-0 z-[10000] flex items-end justify-center bg-black/40" onClick={() => setShowAddYouTubeModal(false)}>
+                    <div className="w-full max-w-2xl bg-white rounded-t-[32px] p-6 pb-10 shadow-2xl animate-in slide-in-from-bottom duration-300" onClick={e => e.stopPropagation()}>
+                        <div className="w-12 h-1.5 bg-[#EEF0F4] rounded-full mx-auto mb-6" />
+                        <div className="flex items-center gap-2.5 mb-5">
+                            <Youtube size={20} className="text-red-500" />
+                            <h3 className="text-xl font-black">Aggiungi Video YouTube</h3>
+                        </div>
+                        <input
+                            autoFocus
+                            type="url"
+                            placeholder="Incolla il link YouTube (es. youtube.com/watch?v=...)"
+                            value={addYouTubeUrl}
+                            onChange={e => { setAddYouTubeUrl(e.target.value); setAddYouTubeError(''); }}
+                            className="w-full h-12 px-4 bg-[#FAFAFC] border border-[#E6DAFF] rounded-xl outline-none focus:border-[#7B5CF6] font-medium mb-2 text-sm"
+                        />
+                        {addYouTubeError && <p className="text-xs text-red-500 font-medium mb-3">{addYouTubeError}</p>}
+                        <div className="flex gap-3 mt-4">
+                            <button onClick={() => setShowAddYouTubeModal(false)} className="flex-1 h-12 bg-white border border-[#EEF0F4] rounded-2xl font-bold text-[#9AA2B1]">Annulla</button>
+                            <button
+                                onClick={() => {
+                                    const parsed = parseYouTubeUrl(addYouTubeUrl.trim());
+                                    if (!parsed) { setAddYouTubeError('URL YouTube non valido. Prova un link come youtube.com/watch?v=...'); return; }
+                                    const { videoId, playlistId } = parsed;
+                                    const thumbUrl = videoId ? `https://img.youtube.com/vi/${videoId}/hqdefault.jpg` : undefined;
+                                    updateProject(project.id, { videoId, playlistId: playlistId || undefined, thumbUrl, thumbDataURL: thumbUrl });
+                                    syncProject({ video_id: videoId || null, playlist_id: playlistId || null, thumb_url: thumbUrl || null });
+                                    setShowAddYouTubeModal(false);
+                                }}
+                                className="flex-[2] h-12 bg-[#7B5CF6] text-white rounded-2xl font-bold shadow-lg"
+                            >
+                                Aggiungi
                             </button>
                         </div>
                     </div>
