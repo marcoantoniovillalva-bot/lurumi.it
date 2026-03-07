@@ -3063,6 +3063,12 @@ export function AdminDashboard() {
                     subtitle="Campagne, sequenze nurturing e inbox ricevute"
                     onClick={() => setActiveSection('email')}
                 />
+                <SectionCard
+                    icon={<Sparkles size={20} className="text-[#7B5CF6]" />}
+                    title="Schema Creator"
+                    subtitle="Crea schemi amigurumi con validator matematico live"
+                    onClick={() => { window.location.href = '/admin/schema-creator' }}
+                />
             </div>
         </div>
     );
