@@ -180,8 +180,13 @@ export function useSyncOnLogin(user: User | null) {
             // Usa allRemoteIds (projects + tutorials) così i tutorial legacy non vengono mai toccati.
             // Skip i progetti appena sincronizzati in step 3: allRemoteIds era costruita prima,
             // quindi non li include ancora, ma sono stati appena upsertati e NON vanno eliminati.
+            // Skip i progetti creati di recente (< 10 min): evita falsi positivi per i progetti
+            // condivisi via YouTube share target il cui upsert potrebbe non aver ancora completato.
+            const RECENT_MS = 10 * 60 * 1000 // 10 minuti
             projects.forEach(p => {
                 if (syncedInStep3.has(p.id)) return
+                const recentlyCreated = (Date.now() - p.createdAt) < RECENT_MS
+                if (recentlyCreated) return
                 const wasSynced = p.url?.startsWith('https://') ||
                     (p.type === 'tutorial' && p.videoId) ||
                     (p.type === 'blank' && allRemoteIds.has(p.id))

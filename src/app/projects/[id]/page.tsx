@@ -652,7 +652,11 @@ export default function ProjectDetail() {
         setExportingPdf(true);
         try {
             const { generatePatternPdf } = await import('@/lib/pdf-export');
-            const pdfBytes = await generatePatternPdf(project, imageUrls);
+            const pdfBytes = await generatePatternPdf({
+                ...project,
+                // Passa il link YouTube come campo url — pdf-export.ts lo mostra in copertina
+                url: project.videoId ? `https://www.youtube.com/watch?v=${project.videoId}` : project.url,
+            }, imageUrls);
             const blob = new Blob([pdfBytes.buffer as ArrayBuffer], { type: 'application/pdf' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -674,6 +678,7 @@ export default function ProjectDetail() {
             `Progetto: ${project.title}`,
             `Creato: ${new Date(project.createdAt).toLocaleDateString('it-IT')}`,
             `Tempo totale: ${formatTime(elapsedRef.current)}`,
+            project.videoId ? `Video tutorial: https://www.youtube.com/watch?v=${project.videoId}` : '',
             project.secs.length > 0
                 ? `Giri secondari: ${project.secs.map(s => `${s.name}: ${s.value}`).join(', ')}`
                 : '',
@@ -986,7 +991,7 @@ export default function ProjectDetail() {
                             <ChevronLeft size={20} strokeWidth={3} />
                         </button>
                         <span className="text-[13px] font-black text-[#1C1C1E] bg-[#FAFAFC] px-3 py-1.5 rounded-lg border border-[#EEF0F4]">
-                            {currentPage} / {totalPages || 1}
+                            {totalPages > 0 ? currentPage : 0} / {totalPages}
                         </span>
                         <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} className="w-9 h-9 flex items-center justify-center bg-[#FAFAFC] rounded-lg text-[#1C1C1E] active:scale-90 transition-all">
                             <ChevronRight size={20} strokeWidth={3} />
