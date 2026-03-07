@@ -32,7 +32,13 @@ export default function ProjectDetail() {
     const project = projects.find(p => p.id === id);
 
     const syncProject = (fields: Record<string, unknown>) => {
-        if (!user || !id || !project) return;
+        if (!user || !id) return;
+        // Legge lo stato CORRENTE dallo store per evitare il bug di stale closure:
+        // il timer (setInterval) cattura la versione di syncProject al momento della sua creazione,
+        // quindi senza questa lettura fresca invierebbe a Supabase i valori vecchi (es. secs:[])
+        // sovrascrivendo le modifiche fatte dopo l'avvio del timer.
+        const currentProject = useProjectStore.getState().projects.find(p => p.id === (id as string));
+        if (!currentProject) return;
         const supabase = createClient();
         // Upsert anziché update: garantisce che i tutorial legacy (solo in tabella tutorials)
         // vengano migrati automaticamente in projects al primo salvataggio di qualsiasi campo.
@@ -40,16 +46,16 @@ export default function ProjectDetail() {
             .upsert({
                 id,
                 user_id: user.id,
-                title: project.title,
-                type: project.type,
-                video_id: project.videoId ?? null,
-                playlist_id: project.playlistId ?? null,
-                thumb_url: project.thumbUrl ?? project.thumbDataURL ?? null,
-                counter: project.counter,
-                timer_seconds: project.timer,
-                notes_html: project.notesHtml,
-                secs: project.secs,
-                images: (project.images ?? []).map(img => ({ id: img.id })),
+                title: currentProject.title,
+                type: currentProject.type,
+                video_id: currentProject.videoId ?? null,
+                playlist_id: currentProject.playlistId ?? null,
+                thumb_url: currentProject.thumbUrl ?? currentProject.thumbDataURL ?? null,
+                counter: currentProject.counter,
+                timer_seconds: currentProject.timer,
+                notes_html: currentProject.notesHtml,
+                secs: currentProject.secs,
+                images: (currentProject.images ?? []).map(img => ({ id: img.id })),
                 ...fields, // sovrascrive i campi aggiornati
             })
             .then(({ error }) => { if (error) console.warn('project sync failed:', error.message); });
