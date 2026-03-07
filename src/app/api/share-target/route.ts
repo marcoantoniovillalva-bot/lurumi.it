@@ -14,8 +14,8 @@ export async function POST(req: NextRequest) {
         const ytMatch = combined.match(/https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be)\/\S+/)
 
         if (ytMatch) {
-            const params = new URLSearchParams({ title, text, url: ytMatch[0] })
-            return NextResponse.redirect(new URL(`/tutorials/share?${params}`, req.url), 303)
+            const params = new URLSearchParams({ type: 'youtube', title, url: ytMatch[0] })
+            return NextResponse.redirect(new URL(`/share?${params}`, req.url), 303)
         }
 
         // Generic URL share — redirect to /share page with params

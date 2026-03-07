@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { useProjectStore, Tutorial } from '@/features/projects/store/useProjectStore'
+import { useProjectStore, Project } from '@/features/projects/store/useProjectStore'
 import { useAuth } from '@/hooks/useAuth'
 import { createClient } from '@/lib/supabase/client'
 import { Youtube, Loader2, AlertCircle } from 'lucide-react'
@@ -23,10 +23,12 @@ function parseYouTube(url: string): { videoId: string; playlistId: string } | nu
     } catch { return null }
 }
 
+// Pagina mantenuta per retrocompatibilità (SW vecchi possono ancora indirizzare qui).
+// Crea un progetto tipo 'tutorial' nella tabella projects (non più nella tabella tutorials).
 export default function TutorialSharePage() {
     const router = useRouter()
     const searchParams = useSearchParams()
-    const { addTutorial } = useProjectStore()
+    const { addProject } = useProjectStore()
     const { user } = useAuth()
     const [status, setStatus] = useState<'loading' | 'error'>('loading')
     const [errorMsg, setErrorMsg] = useState('')
@@ -34,10 +36,8 @@ export default function TutorialSharePage() {
     useEffect(() => {
         const title = searchParams.get('title') || ''
         const text = searchParams.get('text') || ''
-        // YouTube share sends the URL in 'url' param, sometimes in 'text'
         const rawUrl = searchParams.get('url') || text || ''
 
-        // Extract YouTube URL from text (may be mixed with other text)
         const urlMatch = rawUrl.match(/https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be)\/\S+/)
         const url = urlMatch ? urlMatch[0] : rawUrl
 
@@ -55,41 +55,49 @@ export default function TutorialSharePage() {
         }
 
         const { videoId, playlistId } = parsed
-        const tutorial: Tutorial = {
+        const thumbUrl = videoId
+            ? `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`
+            : 'https://placehold.co/120x120?text=Playlist'
+
+        const newProject: Project = {
             id: Math.random().toString(36).slice(2, 9),
             title: title || 'Tutorial YouTube',
-            url,
-            videoId,
-            playlistId,
-            thumbUrl: videoId
-                ? `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`
-                : 'https://placehold.co/120x120?text=Playlist',
+            type: 'tutorial',
+            kind: 'tutorial',
             createdAt: Date.now(),
+            size: 0,
             counter: 0,
             timer: 0,
             secs: [],
             notesHtml: '',
+            images: [],
+            videoId,
+            playlistId,
+            thumbUrl,
+            thumbDataURL: thumbUrl,
         }
 
-        addTutorial(tutorial)
+        addProject(newProject)
 
         if (user) {
             const supabase = createClient()
-            supabase.from('tutorials').upsert({
-                id: tutorial.id,
+            supabase.from('projects').upsert({
+                id: newProject.id,
                 user_id: user.id,
-                title: tutorial.title,
-                url: tutorial.url,
-                video_id: tutorial.videoId,
-                playlist_id: tutorial.playlistId,
-                thumb_url: tutorial.thumbUrl,
+                title: newProject.title,
+                type: 'tutorial',
+                video_id: videoId,
+                playlist_id: playlistId,
+                thumb_url: thumbUrl,
                 counter: 0,
                 timer_seconds: 0,
                 notes_html: '',
+                secs: [],
+                images: [],
             }).then(({ error }) => { if (error) console.warn('Share tutorial sync failed:', error.message) })
         }
 
-        router.replace(`/tutorials/${tutorial.id}`)
+        router.replace(`/projects/${newProject.id}`)
     }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
     if (status === 'error') {
@@ -100,10 +108,10 @@ export default function TutorialSharePage() {
                     <h2 className="text-xl font-black text-[#1C1C1E] mb-2">Link non valido</h2>
                     <p className="text-sm text-[#9AA2B1] font-medium mb-6">{errorMsg}</p>
                     <button
-                        onClick={() => router.replace('/tutorials')}
+                        onClick={() => router.replace('/')}
                         className="w-full h-12 bg-[#7B5CF6] text-white rounded-2xl font-bold"
                     >
-                        Vai ai Tutorial
+                        Vai ai Progetti
                     </button>
                 </div>
             </div>

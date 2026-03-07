@@ -5,9 +5,10 @@ import {
     ArrowLeft, Minus, Plus, RotateCcw, Timer, Share2,
     ChevronLeft, ChevronRight, StickyNote, Trash2,
     Plus as PlusIcon, Camera, Save, Maximize2, Archive, Pencil,
-    GripVertical, ChevronUp, ChevronDown, FileDown, X, Sparkles, CheckCircle2
+    GripVertical, ChevronUp, ChevronDown, FileDown, X, Sparkles, CheckCircle2,
+    Youtube, Languages, Loader2, Copy, Check, FileText, ExternalLink
 } from "lucide-react";
-import { useProjectStore, Project, RoundCounter as RoundCounterType, ProjectImage } from "@/features/projects/store/useProjectStore";
+import { useProjectStore, Project, RoundCounter as RoundCounterType, ProjectImage, TranscriptData, TranscriptSegment } from "@/features/projects/store/useProjectStore";
 import { luDB } from "@/lib/db";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
@@ -81,6 +82,20 @@ export default function ProjectDetail() {
     const wasTimerRunningRef = useRef(false);
     const lastTapRef = useRef(0);
     const longPressRef = useRef<NodeJS.Timeout | null>(null);
+
+    // Transcript + YouTube state (per progetti con videoId)
+    const [transcriptOpen, setTranscriptOpen] = useState(false);
+    const [transcriptView, setTranscriptView] = useState<'original' | 'translated'>('original');
+    const [transcriptAction, setTranscriptAction] = useState<'original' | 'translate' | null>(null);
+    const [transcriptError, setTranscriptError] = useState('');
+    const [transcriptData, setTranscriptData] = useState<TranscriptData | null>(null);
+    const [transcriptCost, setTranscriptCost] = useState(0);
+    const [copySuccess, setCopySuccess] = useState(false);
+    const [copyChunkIdx, setCopyChunkIdx] = useState<number | null>(null);
+    const [currentVideoTime, setCurrentVideoTime] = useState(0);
+    const timePollerRef = useRef<NodeJS.Timeout | null>(null);
+    const activeSegmentRef = useRef<HTMLDivElement | null>(null);
+    const ytPlayerRef = useRef<any>(null);
     const lpStartPos = useRef<{ x: number; y: number } | null>(null);
     const imgDragState = useRef<{ from: number; over: number | null } | null>(null);
 
@@ -91,6 +106,7 @@ export default function ProjectDetail() {
         elapsedRef.current = project.timer || 0;
         setNotes(project.notesHtml || "");
         setHintVisible(true);
+        if (project.transcriptData) setTranscriptData(project.transcriptData);
         const t = setTimeout(() => setHintVisible(false), 4000);
         return () => clearTimeout(t);
     }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -128,7 +144,7 @@ export default function ProjectDetail() {
 
     // Immagini — con fallback da Supabase Storage; si riattiva quando arrivano nuove immagini via Realtime
     useEffect(() => {
-        if (!project || project.type !== 'images') return;
+        if (!project || (project.type !== 'images' && project.type !== 'tutorial' && project.type !== 'blank')) return;
         const loadImages = async () => {
             try {
                 const imgs = project.images ?? [];
@@ -237,6 +253,10 @@ export default function ProjectDetail() {
                     updates.notesHtml = remote.notes_html ?? '';
                     setNotes(remote.notes_html ?? '');
                 }
+                if (remote.transcript_data) {
+                    updates.transcriptData = remote.transcript_data;
+                    setTranscriptData(remote.transcript_data);
+                }
                 updateProject(id as string, updates);
             })
             .subscribe();
@@ -274,6 +294,49 @@ export default function ProjectDetail() {
         }
         return () => clearInterval(interval);
     }, [isTimerRunning, id, updateProject]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // YouTube IFrame API: polling tempo corrente quando la trascrizione è aperta
+    useEffect(() => {
+        if (!transcriptOpen || !project?.videoId) return;
+        const initPlayer = () => {
+            if (!(window as any).YT?.Player) return;
+            if (ytPlayerRef.current) {
+                timePollerRef.current = setInterval(() => {
+                    try {
+                        const t = ytPlayerRef.current?.getCurrentTime?.();
+                        if (typeof t === 'number') setCurrentVideoTime(t);
+                    } catch {}
+                }, 500);
+                return;
+            }
+            ytPlayerRef.current = new (window as any).YT.Player('yt-player-project', {
+                events: {
+                    onReady: () => {
+                        timePollerRef.current = setInterval(() => {
+                            try {
+                                const t = ytPlayerRef.current?.getCurrentTime?.();
+                                if (typeof t === 'number') setCurrentVideoTime(t);
+                            } catch {}
+                        }, 500);
+                    },
+                },
+            });
+        };
+        if ((window as any).YT?.Player) {
+            initPlayer();
+        } else {
+            const existing = document.querySelector('script[src*="iframe_api"]');
+            if (!existing) {
+                const tag = document.createElement('script');
+                tag.src = 'https://www.youtube.com/iframe_api';
+                document.head.appendChild(tag);
+            }
+            (window as any).onYouTubeIframeAPIReady = initPlayer;
+        }
+        return () => {
+            if (timePollerRef.current) { clearInterval(timePollerRef.current); timePollerRef.current = null; }
+        };
+    }, [transcriptOpen, project?.videoId]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Redirect se il progetto viene eliminato su un altro dispositivo mentre siamo qui
     useEffect(() => {
@@ -322,6 +385,91 @@ export default function ProjectDetail() {
         if (hasLoadedRef.current) return null; // redirect in corso
         return <div className="p-10 text-center font-bold">Progetto non trovato</div>;
     }
+
+    // ── Transcript helpers ────────────────────────────────────────────────────
+    const handleFetchTranscript = async () => {
+        if (!project?.videoId) return;
+        setTranscriptAction('original');
+        setTranscriptError('');
+        try {
+            const res = await fetch(`/api/tutorials/transcript?videoId=${project.videoId}`);
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Errore trascrizione');
+            setTranscriptCost(data.nextCost ?? 0);
+            const saveRes = await fetch('/api/tutorials/transcript', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tutorialId: id, transcript: data.segments, translate: false, table: 'projects' }),
+            });
+            if (saveRes.ok) {
+                const newData: TranscriptData = {
+                    transcript: data.segments,
+                    translated: null,
+                    generated_at: new Date().toISOString(),
+                    has_translation: false,
+                };
+                setTranscriptData(newData);
+                updateProject(id as string, { transcriptData: newData });
+            }
+        } catch (err: any) {
+            setTranscriptError(err.message || 'Errore nel recupero della trascrizione.');
+        } finally {
+            setTranscriptAction(null);
+        }
+    };
+
+    const handleTranslateTranscript = async () => {
+        if (!transcriptData?.transcript) return;
+        setTranscriptAction('translate');
+        setTranscriptError('');
+        try {
+            const res = await fetch('/api/tutorials/transcript', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tutorialId: id, transcript: transcriptData.transcript, translate: true, table: 'projects' }),
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) throw new Error(data.error || 'Errore traduzione');
+            const newData: TranscriptData = { ...transcriptData, translated: data.translated, has_translation: true };
+            setTranscriptData(newData);
+            updateProject(id as string, { transcriptData: newData });
+        } catch (err: any) {
+            setTranscriptError(err.message || 'Errore nella traduzione.');
+        } finally {
+            setTranscriptAction(null);
+        }
+    };
+
+    const CHUNK_SIZE = 10;
+    const activeSegs = transcriptData
+        ? (transcriptView === 'translated' && transcriptData.has_translation
+            ? transcriptData.translated ?? transcriptData.transcript
+            : transcriptData.transcript)
+        : [];
+    const chunks: TranscriptSegment[][] = [];
+    for (let i = 0; i < activeSegs.length; i += CHUNK_SIZE) {
+        chunks.push(activeSegs.slice(i, i + CHUNK_SIZE));
+    }
+    const formatTranscriptTime = (s: number) => {
+        const m = Math.floor(s / 60);
+        const sec = Math.floor(s % 60);
+        return `${m}:${String(sec).padStart(2, '0')}`;
+    };
+    const seekTo = (startSec: number) => {
+        try { ytPlayerRef.current?.seekTo?.(startSec, true); } catch {}
+    };
+    const copyChunk = async (idx: number) => {
+        const text = chunks[idx].map(s => s.text).join(' ');
+        await navigator.clipboard.writeText(text).catch(() => {});
+        setCopyChunkIdx(idx);
+        setTimeout(() => setCopyChunkIdx(null), 2000);
+    };
+    const copyAll = async () => {
+        const text = activeSegs.map(s => s.text).join(' ');
+        await navigator.clipboard.writeText(text).catch(() => {});
+        setCopySuccess(true);
+        setTimeout(() => setCopySuccess(false), 2000);
+    };
 
     const formatTime = (seconds: number) => {
         const h = Math.floor(seconds / 3600);
@@ -564,10 +712,143 @@ export default function ProjectDetail() {
 
             <header className="mb-6">
                 <h1 className="text-3xl font-black text-[#1C1C1E] mb-1">{project.title}</h1>
-                <p className="text-[#9AA2B1] text-sm font-bold uppercase tracking-widest">
-                    {project.type === 'pdf' ? 'Pattern PDF' : 'Galleria Immagini'}
+                <p className="text-[#9AA2B1] text-sm font-bold uppercase tracking-widest flex items-center gap-1.5">
+                    {project.type === 'pdf' ? 'Pattern PDF'
+                        : project.type === 'tutorial' ? <><Youtube size={13} className="text-red-400" /> Tutorial YouTube</>
+                        : project.type === 'blank' ? 'Progetto'
+                        : 'Galleria Immagini'}
                 </p>
             </header>
+
+            {/* YouTube Player — visibile solo per progetti con videoId */}
+            {project.videoId && (
+                <div className="mb-6">
+                    <div className="relative pb-[56.25%] rounded-[24px] overflow-hidden bg-black shadow-sm">
+                        <iframe
+                            id="yt-player-project"
+                            className="absolute inset-0 w-full h-full"
+                            src={`https://www.youtube.com/embed/${project.videoId}?enablejsapi=1&rel=0`}
+                            allowFullScreen
+                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                        />
+                    </div>
+
+                    {/* Pannello Trascrizione */}
+                    <div className="mt-3 bg-white rounded-[24px] border border-[#EEF0F4] overflow-hidden shadow-sm">
+                        <button
+                            className="w-full flex items-center justify-between px-5 py-4"
+                            onClick={() => setTranscriptOpen(o => !o)}
+                        >
+                            <div className="flex items-center gap-2.5 text-[#7B5CF6]">
+                                <FileText size={18} strokeWidth={2.5} />
+                                <span className="font-black text-sm uppercase tracking-wider">Trascrizione</span>
+                            </div>
+                            {transcriptOpen ? <ChevronUp size={18} className="text-[#9AA2B1]" /> : <ChevronDown size={18} className="text-[#9AA2B1]" />}
+                        </button>
+
+                        {transcriptOpen && (
+                            <div className="border-t border-[#EEF0F4] px-5 pb-5 pt-4">
+                                {!transcriptData ? (
+                                    <div className="text-center py-6">
+                                        <p className="text-sm text-[#9AA2B1] font-medium mb-4">
+                                            Genera la trascrizione del video per seguire il tutorial passo passo.
+                                            {transcriptCost > 0 && <span className="block mt-1 text-amber-500 font-bold text-xs">Costo: {transcriptCost} credito/i AI</span>}
+                                        </p>
+                                        {transcriptError && <p className="text-xs text-red-500 font-medium mb-3">{transcriptError}</p>}
+                                        <button
+                                            onClick={handleFetchTranscript}
+                                            disabled={!!transcriptAction}
+                                            className="h-10 px-6 bg-[#7B5CF6] text-white rounded-xl font-bold text-sm disabled:opacity-50 flex items-center gap-2 mx-auto"
+                                        >
+                                            {transcriptAction === 'original' ? <><Loader2 size={15} className="animate-spin" /> Caricamento...</> : 'Genera trascrizione'}
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <>
+                                        <div className="flex items-center justify-between mb-3">
+                                            <div className="flex gap-1.5">
+                                                <button
+                                                    onClick={() => setTranscriptView('original')}
+                                                    className={`h-8 px-3 rounded-lg text-xs font-black transition-all ${transcriptView === 'original' ? 'bg-[#7B5CF6] text-white' : 'bg-[#FAFAFC] text-[#9AA2B1]'}`}
+                                                >
+                                                    Originale
+                                                </button>
+                                                {transcriptData.has_translation ? (
+                                                    <button
+                                                        onClick={() => setTranscriptView('translated')}
+                                                        className={`h-8 px-3 rounded-lg text-xs font-black transition-all ${transcriptView === 'translated' ? 'bg-[#7B5CF6] text-white' : 'bg-[#FAFAFC] text-[#9AA2B1]'}`}
+                                                    >
+                                                        Italiano
+                                                    </button>
+                                                ) : (
+                                                    <button
+                                                        onClick={handleTranslateTranscript}
+                                                        disabled={!!transcriptAction}
+                                                        className="h-8 px-3 rounded-lg text-xs font-black bg-[#FAFAFC] text-[#7B5CF6] flex items-center gap-1 disabled:opacity-50"
+                                                    >
+                                                        {transcriptAction === 'translate' ? <Loader2 size={13} className="animate-spin" /> : <Languages size={13} />}
+                                                        Traduci in italiano
+                                                    </button>
+                                                )}
+                                            </div>
+                                            <button
+                                                onClick={copyAll}
+                                                className="h-8 px-3 rounded-lg text-xs font-black bg-[#FAFAFC] text-[#9AA2B1] flex items-center gap-1 transition-colors hover:text-[#7B5CF6]"
+                                            >
+                                                {copySuccess ? <Check size={13} className="text-green-500" /> : <Copy size={13} />}
+                                                Copia tutto
+                                            </button>
+                                        </div>
+                                        {transcriptError && <p className="text-xs text-red-500 font-medium mb-2">{transcriptError}</p>}
+                                        <div className="max-h-72 overflow-y-auto flex flex-col gap-3" ref={activeSegmentRef}>
+                                            {chunks.map((chunk, ci) => {
+                                                const chunkStart = chunk[0]?.start ?? 0;
+                                                const isActive = currentVideoTime >= chunkStart &&
+                                                    (ci === chunks.length - 1 || currentVideoTime < (chunks[ci + 1]?.[0]?.start ?? Infinity));
+                                                return (
+                                                    <div
+                                                        key={ci}
+                                                        className={`rounded-xl p-3 transition-colors ${isActive ? 'bg-[#F4EEFF] border border-[#E6DAFF]' : 'bg-[#FAFAFC]'}`}
+                                                    >
+                                                        <div className="flex items-center justify-between mb-1.5">
+                                                            <button
+                                                                onClick={() => seekTo(chunkStart)}
+                                                                className="text-[11px] font-black text-[#7B5CF6] uppercase tracking-widest hover:underline"
+                                                            >
+                                                                {formatTranscriptTime(chunkStart)}
+                                                            </button>
+                                                            <button
+                                                                onClick={() => copyChunk(ci)}
+                                                                className="text-[#9AA2B1] hover:text-[#7B5CF6] transition-colors"
+                                                            >
+                                                                {copyChunkIdx === ci ? <Check size={13} className="text-green-500" /> : <Copy size={13} />}
+                                                            </button>
+                                                        </div>
+                                                        <p className="text-sm text-[#1C1C1E] leading-relaxed font-medium">
+                                                            {chunk.map(s => s.text).join(' ')}
+                                                        </p>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Link apri su YouTube */}
+                    <a
+                        href={`https://www.youtube.com/watch?v=${project.videoId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-2 flex items-center justify-center gap-1.5 text-xs font-bold text-[#9AA2B1] hover:text-red-500 transition-colors"
+                    >
+                        <ExternalLink size={12} />
+                        Apri su YouTube
+                    </a>
+                </div>
+            )}
 
             {/* Main Counter — più compatto su mobile */}
             <div className="bg-white rounded-xl md:rounded-2xl p-2 md:p-4 shadow-[0_12px_40px_rgba(0,0,0,0.03)] border border-[#EEF0F4] text-center mb-6">
@@ -606,7 +887,7 @@ export default function ProjectDetail() {
                 </div>
             </div>
 
-            {/* Viewer */}
+            {/* Viewer — galleria immagini / PDF / placeholder per blank */}
             <div className="bg-white rounded-[32px] border border-[#EEF0F4] overflow-hidden shadow-sm mb-8">
                 {/* Toolbar — no zoom buttons */}
                 <div className="p-3 bg-white border-b border-[#EEF0F4] flex items-center justify-between">

@@ -110,48 +110,44 @@ I vecchi tutorial in `tutorials` restano lì ma vengono letti e presentati come 
 
 ### FASE A — Preparazione (nessun impatto visibile sull'utente)
 
-- [ ] **A1** — Estendere l'interfaccia `Project` con i campi YouTube opzionali (`videoId?`, `playlistId?`, `thumbUrl?`, `transcriptData?`) e aggiungere `type: 'tutorial' | 'blank'`
-- [ ] **A2** — Aggiungere funzione di migrazione client-side in `useProjectStore`: al mount, se `tutorials[]` non è vuoto, convertire ogni Tutorial in Project e spostarlo in `projects[]`, poi svuotare `tutorials[]`
-- [ ] **A3** — Aggiungere redirect `/tutorials/[id]` → `/projects/[id]` (file `src/app/tutorials/[id]/route.ts` oppure `page.tsx` con redirect)
+- [x] **A1** — Estendere l'interfaccia `Project` con i campi YouTube opzionali (`videoId?`, `playlistId?`, `thumbUrl?`, `transcriptData?`) e aggiungere `type: 'tutorial' | 'blank'`
+- [x] **A2** — Aggiungere funzione di migrazione client-side in `useProjectStore`: al mount, se `tutorials[]` non è vuoto, convertire ogni Tutorial in Project e spostarlo in `projects[]`, poi svuotare `tutorials[]`
+- [x] **A3** — Redirect `/tutorials/[id]` → `/projects/[id]` via `page.tsx` con `router.replace`
 
 ### FASE B — Tabbar
 
-- [ ] **B1** — Sostituire tab Tutorial con tab Profilo in `Tabbar.tsx` (`/tutorials` → `/profilo`, icona `Youtube` → `User`)
-- [ ] **B2** — Aggiornare `isActive` logic per Profilo
+- [x] **B1** — Sostituire tab Tutorial con tab Profilo in `Tabbar.tsx` (`/tutorials` → `/profilo`, icona `Youtube` → `User`)
+- [x] **B2** — Aggiornare `isActive` logic per Profilo
 
 ### FASE C — Modal "+" nei Progetti
 
-- [ ] **C1** — Nella pagina progetti (`/`, presumibilmente `src/app/page.tsx`), sostituire l'attuale FAB "+" con un FAB che apre un **modal di scelta tipo** in stile Lurumi (bottom sheet)
-- [ ] **C2** — Modal 3 opzioni:
+- [x] **C1** — Nella pagina progetti (`/`, presumibilmente `src/app/page.tsx`), sostituire l'attuale FAB "+" con un FAB che apre un **modal di scelta tipo** in stile Lurumi (bottom sheet)
+- [x] **C2** — Modal 3 opzioni:
   - **PDF / Immagine** → comportamento attuale (apre file picker / fotocamera)
   - **Tutorial YouTube** → apre sheet con input URL YouTube + titolo (comportamento attuale di `/tutorials`)
   - **Solo titolo** → input titolo → crea progetto `type='blank'`
-- [ ] **C3** — Logica creazione progetto YouTube: parsing URL, creazione Project con `type='tutorial'`, salvataggio in tabella `projects` Supabase
+- [x] **C3** — Logica creazione progetto YouTube: parsing URL, creazione Project con `type='tutorial'`, salvataggio in tabella `projects` Supabase
 
 ### FASE D — Pagina progetto (`/projects/[id]`)
 
-- [ ] **D1** — Aggiungere rendering condizionale per `type='tutorial'`: mostra il player YouTube embed (come attuale `/tutorials/[id]`)
-- [ ] **D2** — Aggiungere rendering per `type='blank'`: layout identico a immagini ma galleria vuota con pulsante "Aggiungi prima immagine"
-- [ ] **D3** — Aggiungere funzione "Aggiungi video YouTube" ai progetti PDF/immagini: bottone nel menu azioni che permette di associare un videoId al progetto esistente (aggiorna `type` e aggiunge campi YouTube)
-- [ ] **D4** — Trascript: se `type='tutorial'` (o project con `videoId`), mostrare il pannello trascrizione come in `/tutorials/[id]`
-- [ ] **D5** — Gestire il "Contribuisci schema" anche per progetti di tipo tutorial e blank (se hanno secs)
+- [x] **D1** — Rendering condizionale per `type='tutorial'`: player YouTube embed in cima + pannello trascrizione
+- [x] **D2** — `type='blank'`: layout identico a immagini (galleria vuota con empty state Camera)
+- [ ] **D3** — "Aggiungi video YouTube" ai progetti PDF/immagini: bottone per associare videoId (non ancora implementato)
+- [x] **D4** — Trascrizione per tutti i progetti con `videoId`: fetch + traduzione + sync Supabase a `projects` table
+- [x] **D5** — "Contribuisci schema" funziona per tutti i tipi (controllo `secs.length > 0` già presente)
 
 ### FASE E — Pagina lista Progetti (`/`)
 
-- [ ] **E1** — Le card dei progetti mostrano icona diversa per tipo:
-  - PDF: icona documento rosso (come ora)
-  - Immagini: icona immagine viola (come ora)
-  - Tutorial: thumbnail YouTube con icona play
-  - Blank: icona cartella vuota
-- [ ] **E2** — Il menu "..." dei progetti tutorial include "Apri su YouTube" (come ora nei tutorial)
+- [x] **E1** — Card con icona per tipo: PDF (FileText rosso), Immagini (testo), Tutorial (thumbnail YouTube + icona play), Blank (FolderOpen viola)
+- [x] **E2** — Menu "..." dei tutorial include "Apri su YouTube"
 
 ### FASE F — Share target
 
-- [ ] **F1** — Aggiornare `/app/api/share-target/route.ts`: i link YouTube ora reindirizzano a `/share?type=youtube&url=...&title=...` invece di `/tutorials/share`
-- [ ] **F2** — Aggiornare `/app/share/page.tsx`: gestire `type=youtube` → crea Project con `type='tutorial'` → redirect a `/projects/[id]`
-- [ ] **F3** — Rimuovere (o rendere redirect) la pagina `/tutorials/share`
-- [ ] **F4** — Verificare che la condivisione da telefono di PDF, immagini e link YouTube funzioni end-to-end
-- [ ] **F5** — Fix bug share: nella pagina `image-pick-project` (step `image-pick-project` in `/share`), aggiungere anche progetti `type='tutorial'` e `type='blank'` come destinazioni valide per le immagini
+- [x] **F1** — `api/share-target/route.ts`: YouTube → `/share?type=youtube&...`
+- [x] **F2** — `share/page.tsx`: gestisce `type=youtube` → crea Project tutorial → `/projects/[id]`
+- [x] **F3** — `tutorials/share/page.tsx`: riscritta per creare Project (non Tutorial) — retrocompat SW vecchi
+- [ ] **F4** — Test end-to-end condivisione da telefono (da verificare manualmente)
+- [x] **F5** — `image-pick-project` ora include tutorial e blank come destinazioni valide
 
 ### FASE G — Realtime sync
 
@@ -160,10 +156,10 @@ I vecchi tutorial in `tutorials` restano lì ma vengono letti e presentati come 
 
 ### FASE H — Pulizia
 
-- [ ] **H1** — Rimuovere `src/app/tutorials/page.tsx` (o convertirlo in redirect a `/`)
-- [ ] **H2** — Decidere se mantenere `src/app/tutorials/[id]/page.tsx` come redirect o rimuoverlo dopo la migrazione
-- [ ] **H3** — Mantenere la tabella `tutorials` in Supabase (non droppare — dati storici), ma smettere di scrivere nuovi record lì
-- [ ] **H4** — Aggiornare `robots.txt` e `sitemap.ts` per riflettere le nuove URL
+- [x] **H1** — `tutorials/page.tsx` → redirect a `/`
+- [x] **H2** — `tutorials/[id]/page.tsx` → redirect a `/projects/[id]`
+- [x] **H3** — Tabella `tutorials` mantenuta (non droppata); nuovi progetti YouTube vanno in `projects`
+- [ ] **H4** — Aggiornare `robots.txt` e `sitemap.ts` (non urgente)
 
 ---
 
@@ -209,3 +205,4 @@ ALTER TABLE projects
 | Data | Step | Note |
 |------|------|------|
 | 2026-03-07 | Piano creato | In attesa risposte D1-D4 |
+| 2026-03-07 | Fasi A–H completate (escluso D3, G1-G2, H4) | TS 0 errori · SQL migration · Store esteso · Tabbar · Redirect · Modal + · Share target · Trascrizione · YouTube player |

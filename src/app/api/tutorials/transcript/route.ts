@@ -143,10 +143,11 @@ async function translateChunk(groq: OpenAI, texts: string[]): Promise<string[]> 
 // ── POST: riceve segmenti → traduce → salva su Supabase ──────────────────────
 export async function POST(req: NextRequest) {
     try {
-        const { tutorialId, transcript, translate = false } = await req.json() as {
+        const { tutorialId, transcript, translate = false, table = 'tutorials' } = await req.json() as {
             tutorialId: string
             transcript: TranscriptSegment[]
             translate?: boolean
+            table?: 'tutorials' | 'projects'
         }
 
         if (!tutorialId || !transcript?.length) {
@@ -179,7 +180,7 @@ export async function POST(req: NextRequest) {
         }
 
         const db = createServiceClient()
-        await db.from('tutorials').update({ transcript_data: transcriptData })
+        await db.from(table).update({ transcript_data: transcriptData })
             .eq('id', tutorialId).eq('user_id', user.id)
 
         return NextResponse.json({ success: true, translated: translated ?? null })

@@ -19,8 +19,8 @@ export interface ProjectImage {
 export interface Project {
     id: string
     title: string
-    type: 'pdf' | 'images'
-    kind: 'pdf' | 'image'
+    type: 'pdf' | 'images' | 'tutorial' | 'blank'
+    kind: 'pdf' | 'image' | 'tutorial' | 'blank'
     createdAt: number
     size: number
     blob?: Blob
@@ -32,6 +32,11 @@ export interface Project {
     notesHtml: string
     images: ProjectImage[]
     coverImageId?: string
+    // Campi YouTube — solo per progetti con video
+    videoId?: string
+    playlistId?: string
+    thumbUrl?: string
+    transcriptData?: TranscriptData | null
 }
 
 export interface TranscriptSegment {
@@ -67,16 +72,20 @@ export interface Tutorial {
 interface ProjectState {
     projects: Project[]
     tutorials: Tutorial[]
+    tutorialsMigrated: boolean
 
     // Project Actions
     addProject: (project: Project) => void
     updateProject: (id: string, updates: Partial<Project>) => void
     deleteProject: (id: string) => void
 
-    // Tutorial Actions
+    // Tutorial Actions (mantenute per retrocompatibilità)
     addTutorial: (tutorial: Tutorial) => void
     updateTutorial: (id: string, updates: Partial<Tutorial>) => void
     deleteTutorial: (id: string) => void
+
+    // Migration
+    migrateIfNeeded: () => void
 
     // Utility
     getProject: (id: string) => Project | undefined
@@ -119,6 +128,7 @@ export const useProjectStore = create<ProjectState>()(
         (set, get) => ({
             projects: [],
             tutorials: [],
+            tutorialsMigrated: false,
 
             addProject: (project) => set((state) => ({
                 projects: [project, ...state.projects]
@@ -144,6 +154,38 @@ export const useProjectStore = create<ProjectState>()(
                 tutorials: state.tutorials.filter((t) => t.id !== id)
             })),
 
+            // Migrazione automatica: converte tutorials[] → projects[] con type='tutorial'
+            // Viene chiamata una sola volta al mount della home page
+            migrateIfNeeded: () => set((state) => {
+                if (state.tutorialsMigrated || !state.tutorials || state.tutorials.length === 0) {
+                    return { tutorialsMigrated: true }
+                }
+                const migrated: Project[] = state.tutorials.map(t => ({
+                    id: t.id,
+                    title: t.title,
+                    type: 'tutorial' as const,
+                    kind: 'tutorial' as const,
+                    createdAt: t.createdAt,
+                    size: 0,
+                    counter: t.counter,
+                    timer: t.timer,
+                    secs: t.secs,
+                    notesHtml: t.notesHtml,
+                    images: t.images ?? [],
+                    coverImageId: t.coverImageId,
+                    videoId: t.videoId,
+                    playlistId: t.playlistId,
+                    thumbUrl: t.thumbUrl,
+                    thumbDataURL: t.thumbUrl, // usa thumbnail YouTube come anteprima
+                    transcriptData: t.transcriptData,
+                }))
+                return {
+                    projects: [...migrated, ...state.projects],
+                    tutorials: [],
+                    tutorialsMigrated: true,
+                }
+            }),
+
             getProject: (id) => get().projects.find((p) => p.id === id),
             getTutorial: (id) => get().tutorials.find((t) => t.id === id),
         }),
@@ -161,6 +203,7 @@ export const useProjectStore = create<ProjectState>()(
                     ...t,
                     images: (t.images ?? []).map(img => ({ id: img.id })),
                 })),
+                tutorialsMigrated: state.tutorialsMigrated,
             }),
         }
     )

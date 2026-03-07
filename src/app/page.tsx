@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useRef, useState, useEffect } from "react";
-import { Search, ListFilter, Plus, MoreVertical, Pencil, Trash2, FileDown, Archive, ExternalLink, Check, X } from "lucide-react";
+import { Search, ListFilter, Plus, MoreVertical, Pencil, Trash2, FileDown, Archive, ExternalLink, Check, X, Youtube, FolderOpen, FileText } from "lucide-react";
 import { useProjectStore, Project } from "@/features/projects/store/useProjectStore";
 import { luDB } from "@/lib/db";
 import Link from "next/link";
@@ -30,12 +30,30 @@ function EmptyProjectsState() {
   );
 }
 
+function parseYouTubeUrl(url: string): { videoId: string; playlistId: string } | null {
+  try {
+    const u = new URL(url)
+    let videoId = ''
+    let playlistId = u.searchParams.get('list') || ''
+    if (u.hostname.includes('youtu.be')) videoId = u.pathname.slice(1).split('/')[0]
+    else if (u.hostname.includes('youtube.com')) {
+      if (u.pathname.startsWith('/watch')) videoId = u.searchParams.get('v') || ''
+      else if (u.pathname.startsWith('/shorts/')) videoId = u.pathname.split('/')[2]
+    }
+    if (!videoId && !playlistId) return null
+    return { videoId, playlistId }
+  } catch { return null }
+}
+
 export default function Home() {
-  const { projects, addProject, deleteProject, updateProject } = useProjectStore();
+  const { projects, addProject, deleteProject, updateProject, migrateIfNeeded } = useProjectStore();
   const { user } = useAuth();
   const { getUrl } = useCharacterTheme();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const supabase = createClient();
+
+  // Migrazione automatica tutorials → projects al primo mount
+  useEffect(() => { migrateIfNeeded(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Realtime: sincronizza lista progetti da altri dispositivi/tab
   useEffect(() => {
@@ -48,15 +66,19 @@ export default function Home() {
         const p = payload.new as Record<string, any>;
         const exists = useProjectStore.getState().projects.some(x => x.id === p.id);
         if (!exists) {
+          const pType = (p.type ?? 'pdf') as 'pdf' | 'images' | 'tutorial' | 'blank';
           addProject({
             id: p.id, title: p.title,
-            type: (p.type ?? 'pdf') as 'pdf' | 'images',
-            kind: (p.type === 'pdf' ? 'pdf' : 'image') as 'pdf' | 'image',
+            type: pType,
+            kind: (pType === 'pdf' ? 'pdf' : pType === 'tutorial' ? 'tutorial' : pType === 'blank' ? 'blank' : 'image') as 'pdf' | 'image' | 'tutorial' | 'blank',
             createdAt: p.created_at ? new Date(p.created_at).getTime() : Date.now(),
             size: p.size ?? 0, counter: p.counter ?? 0, timer: p.timer_seconds ?? 0,
             secs: p.secs ?? [], notesHtml: p.notes_html ?? '',
             thumbDataURL: p.thumb_url ?? undefined,
+            thumbUrl: p.thumb_url ?? undefined,
             url: p.file_url ?? undefined,
+            videoId: p.video_id ?? undefined,
+            playlistId: p.playlist_id ?? undefined,
             images: (p.images ?? []).map((img: any) => ({ id: typeof img === 'string' ? img : (img.id ?? '') })),
           });
         }
@@ -83,6 +105,17 @@ export default function Home() {
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Modal selezione tipo nuovo progetto
+  const [showNewModal, setShowNewModal] = useState(false);
+  // Opzione YouTube
+  const [pendingYtUrl, setPendingYtUrl] = useState('');
+  const [pendingYtTitle, setPendingYtTitle] = useState('');
+  const [pendingYtError, setPendingYtError] = useState('');
+  // Opzione Solo titolo (blank)
+  const [pendingBlankTitle, setPendingBlankTitle] = useState('');
+  // Step all'interno del modal
+  const [modalStep, setModalStep] = useState<'choice' | 'youtube' | 'blank'>('choice');
 
   // Pending file waiting for name
   const [pendingFile, setPendingFile] = useState<File | null>(null);
@@ -212,6 +245,54 @@ export default function Home() {
     setPendingFile(null);
     setPendingName('');
     setPendingThumb('');
+  };
+
+  const handleCreateYouTubeProject = async () => {
+    const parsed = parseYouTubeUrl(pendingYtUrl.trim());
+    if (!parsed) { setPendingYtError('URL YouTube non valido. Prova un link come youtube.com/watch?v=...'); return; }
+    const { videoId, playlistId } = parsed;
+    const thumbUrl = videoId
+      ? `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`
+      : 'https://placehold.co/120x120?text=Playlist';
+    const id = Math.random().toString(36).slice(2, 9);
+    const title = pendingYtTitle.trim() || 'Tutorial YouTube';
+    const newProject: import('@/features/projects/store/useProjectStore').Project = {
+      id, title, type: 'tutorial', kind: 'tutorial',
+      createdAt: Date.now(), size: 0, counter: 0, timer: 0,
+      secs: [], notesHtml: '', images: [],
+      videoId, playlistId, thumbUrl, thumbDataURL: thumbUrl,
+    };
+    addProject(newProject);
+    if (user) {
+      supabase.from('projects').upsert({
+        id, user_id: user.id, title, type: 'tutorial',
+        video_id: videoId, playlist_id: playlistId, thumb_url: thumbUrl,
+        counter: 0, timer_seconds: 0, notes_html: '', secs: [], images: [],
+      }).then(({ error }) => { if (error) console.warn('YouTube project upsert failed:', error.message); });
+    }
+    setShowNewModal(false);
+    setPendingYtUrl(''); setPendingYtTitle(''); setPendingYtError('');
+    setModalStep('choice');
+  };
+
+  const handleCreateBlankProject = async () => {
+    if (!pendingBlankTitle.trim()) return;
+    const id = Math.random().toString(36).slice(2, 9);
+    const newProject: import('@/features/projects/store/useProjectStore').Project = {
+      id, title: pendingBlankTitle.trim(), type: 'blank', kind: 'blank',
+      createdAt: Date.now(), size: 0, counter: 0, timer: 0,
+      secs: [], notesHtml: '', images: [],
+    };
+    addProject(newProject);
+    if (user) {
+      supabase.from('projects').upsert({
+        id, user_id: user.id, title: newProject.title, type: 'blank',
+        counter: 0, timer_seconds: 0, notes_html: '', secs: [], images: [],
+      }).then(({ error }) => { if (error) console.warn('Blank project upsert failed:', error.message); });
+    }
+    setShowNewModal(false);
+    setPendingBlankTitle('');
+    setModalStep('choice');
   };
 
   const handleDelete = async (id: string) => {
@@ -490,9 +571,24 @@ export default function Home() {
               className="flex items-center gap-4 bg-white p-3 rounded-[24px] shadow-sm border border-[#EEF0F4] animate-in fade-in slide-in-from-bottom-2 duration-300 active:scale-[0.98] transition-all"
             >
               <Link href={`/projects/${project.id}`} className="flex-1 flex items-center gap-4 min-w-0">
-                <div className="w-16 h-16 rounded-2xl bg-[#F4EEFF] flex-shrink-0 overflow-hidden flex items-center justify-center">
+                <div className="w-16 h-16 rounded-2xl bg-[#F4EEFF] flex-shrink-0 overflow-hidden flex items-center justify-center relative">
                   {project.thumbDataURL ? (
-                    <img src={project.thumbDataURL} alt="" className="w-full h-full object-cover" />
+                    <>
+                      <img src={project.thumbDataURL} alt="" className="w-full h-full object-cover" />
+                      {project.type === 'tutorial' && (
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/20">
+                          <div className="w-6 h-6 bg-white/90 rounded-full flex items-center justify-center">
+                            <Youtube size={12} className="text-red-500 ml-0.5" />
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  ) : project.type === 'tutorial' ? (
+                    <Youtube size={24} className="text-red-500" />
+                  ) : project.type === 'blank' ? (
+                    <FolderOpen size={24} className="text-[#7B5CF6]" />
+                  ) : project.type === 'pdf' ? (
+                    <FileText size={24} className="text-red-500" />
                   ) : (
                     <span className="text-xs font-bold text-[#7B5CF6] uppercase">{project.type}</span>
                   )}
@@ -514,7 +610,11 @@ export default function Home() {
                     <>
                       <h3 className="text-[17px] font-bold text-[#1C1C1E] truncate mb-0.5">{project.title}</h3>
                       <p className="text-[12px] font-bold text-[#9AA2B1] uppercase tracking-widest flex items-center gap-2">
-                        {new Date(project.createdAt).toLocaleDateString('it-IT')}
+                        {project.type === 'tutorial' ? (
+                          <span className="text-red-400 flex items-center gap-1"><Youtube size={11} /> YouTube</span>
+                        ) : project.type === 'blank' ? (
+                          <span className="text-[#7B5CF6]">Progetto</span>
+                        ) : new Date(project.createdAt).toLocaleDateString('it-IT')}
                         <span className="w-1 h-1 rounded-full bg-[#EEF0F4]" />
                         {project.counter} giri
                       </p>
@@ -568,6 +668,18 @@ export default function Home() {
                           {cardExporting === project.id ? 'Generando…' : 'Condividi con Canva'}
                         </button>
                       )}
+                      {project.type === 'tutorial' && project.videoId && (
+                        <a
+                          href={`https://www.youtube.com/watch?v=${project.videoId}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={() => setMenuId(null)}
+                          className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm font-bold text-[#1C1C1E] hover:bg-[#F4F4F8] rounded-xl"
+                        >
+                          <ExternalLink size={15} className="text-red-500" />
+                          Apri su YouTube
+                        </a>
+                      )}
                       <div className="h-px bg-[#F4F4F8] my-1" />
                       <button
                         onClick={() => handleDelete(project.id)}
@@ -598,13 +710,131 @@ export default function Home() {
       <div className="fixed bottom-[calc(80px+env(safe-area-inset-bottom))] right-5 z-50 lg:right-[calc(50%-640px+20px)]">
         <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" accept="application/pdf,image/*" />
         <button
-          onClick={() => fileInputRef.current?.click()}
+          onClick={() => { setModalStep('choice'); setShowNewModal(true); }}
           className="w-16 h-16 bg-[#7B5CF6] text-white rounded-[24px] shadow-[0_8px_24px_rgba(123,92,246,0.35)] flex items-center justify-center active:scale-90 transition-transform"
-          aria-label="Carica Progetto"
+          aria-label="Nuovo Progetto"
         >
           <Plus size={32} />
         </button>
       </div>
+
+      {/* Modal nuovo progetto */}
+      {showNewModal && (
+        <div className="fixed inset-0 z-[10000] flex items-end justify-center bg-black/40" onClick={() => { setShowNewModal(false); setModalStep('choice'); }}>
+          <div className="w-full max-w-2xl bg-white rounded-t-[32px] p-6 pb-10 shadow-2xl animate-in slide-in-from-bottom duration-300" onClick={e => e.stopPropagation()}>
+            <div className="w-12 h-1.5 bg-[#EEF0F4] rounded-full mx-auto mb-6" />
+
+            {modalStep === 'choice' && (
+              <>
+                <h3 className="text-2xl font-black mb-2">Nuovo Progetto</h3>
+                <p className="text-[#9AA2B1] text-sm mb-6">Scegli come vuoi iniziare.</p>
+                <div className="flex flex-col gap-3">
+                  <button
+                    onClick={() => { setShowNewModal(false); fileInputRef.current?.click(); }}
+                    className="flex items-center gap-4 p-4 bg-[#FAFAFC] border border-[#EEF0F4] rounded-2xl text-left active:scale-[0.98] transition-transform"
+                  >
+                    <div className="w-12 h-12 bg-red-50 rounded-2xl flex items-center justify-center shrink-0">
+                      <FileText size={22} className="text-red-500" />
+                    </div>
+                    <div>
+                      <p className="font-black text-[#1C1C1E]">PDF / Immagine</p>
+                      <p className="text-xs text-[#9AA2B1] font-medium mt-0.5">Carica uno schema o una foto dal dispositivo</p>
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => { setPendingYtUrl(''); setPendingYtTitle(''); setPendingYtError(''); setModalStep('youtube'); }}
+                    className="flex items-center gap-4 p-4 bg-[#FAFAFC] border border-[#EEF0F4] rounded-2xl text-left active:scale-[0.98] transition-transform"
+                  >
+                    <div className="w-12 h-12 bg-red-50 rounded-2xl flex items-center justify-center shrink-0">
+                      <Youtube size={22} className="text-red-500" />
+                    </div>
+                    <div>
+                      <p className="font-black text-[#1C1C1E]">Tutorial YouTube</p>
+                      <p className="text-xs text-[#9AA2B1] font-medium mt-0.5">Aggiungi un video YouTube con player e trascrizione</p>
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => { setPendingBlankTitle(''); setModalStep('blank'); }}
+                    className="flex items-center gap-4 p-4 bg-[#FAFAFC] border border-[#EEF0F4] rounded-2xl text-left active:scale-[0.98] transition-transform"
+                  >
+                    <div className="w-12 h-12 bg-[#F4EEFF] rounded-2xl flex items-center justify-center shrink-0">
+                      <FolderOpen size={22} className="text-[#7B5CF6]" />
+                    </div>
+                    <div>
+                      <p className="font-black text-[#1C1C1E]">Solo titolo</p>
+                      <p className="text-xs text-[#9AA2B1] font-medium mt-0.5">Crea un progetto vuoto e aggiungi immagini dopo</p>
+                    </div>
+                  </button>
+                </div>
+              </>
+            )}
+
+            {modalStep === 'youtube' && (
+              <>
+                <button onClick={() => setModalStep('choice')} className="text-[#9AA2B1] text-sm font-bold mb-4">← Indietro</button>
+                <h3 className="text-2xl font-black mb-2">Tutorial YouTube</h3>
+                <p className="text-[#9AA2B1] text-sm mb-5">Incolla il link del video YouTube.</p>
+                <label className="text-xs font-black text-[#1C1C1E] uppercase tracking-widest mb-1.5 block">Link YouTube *</label>
+                <input
+                  autoFocus
+                  type="url"
+                  placeholder="https://www.youtube.com/watch?v=..."
+                  value={pendingYtUrl}
+                  onChange={e => { setPendingYtUrl(e.target.value); setPendingYtError(''); }}
+                  className="w-full h-12 px-4 bg-[#FAFAFC] border border-[#E6DAFF] rounded-xl outline-none focus:border-[#7B5CF6] font-medium mb-3 text-[#1C1C1E]"
+                />
+                {pendingYtError && <p className="text-xs text-red-500 font-medium mb-3">{pendingYtError}</p>}
+                <label className="text-xs font-black text-[#1C1C1E] uppercase tracking-widest mb-1.5 block">Titolo (opzionale)</label>
+                <input
+                  type="text"
+                  placeholder="Es. Elefantino Amigurumi"
+                  value={pendingYtTitle}
+                  onChange={e => setPendingYtTitle(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleCreateYouTubeProject()}
+                  className="w-full h-12 px-4 bg-[#FAFAFC] border border-[#E6DAFF] rounded-xl outline-none focus:border-[#7B5CF6] font-medium mb-5 text-[#1C1C1E]"
+                />
+                <div className="flex gap-3">
+                  <button onClick={() => setShowNewModal(false)} className="flex-1 h-12 bg-white border border-[#EEF0F4] rounded-2xl font-bold text-[#9AA2B1]">Annulla</button>
+                  <button
+                    onClick={handleCreateYouTubeProject}
+                    disabled={!pendingYtUrl.trim()}
+                    className="flex-[2] h-12 bg-[#7B5CF6] text-white rounded-2xl font-bold shadow-lg shadow-[#7B5CF6]/30 active:scale-95 transition-transform disabled:opacity-40"
+                  >
+                    Aggiungi Tutorial
+                  </button>
+                </div>
+              </>
+            )}
+
+            {modalStep === 'blank' && (
+              <>
+                <button onClick={() => setModalStep('choice')} className="text-[#9AA2B1] text-sm font-bold mb-4">← Indietro</button>
+                <h3 className="text-2xl font-black mb-2">Nuovo Progetto</h3>
+                <p className="text-[#9AA2B1] text-sm mb-5">Dai un nome al progetto. Puoi aggiungere immagini dopo.</p>
+                <input
+                  autoFocus
+                  type="text"
+                  placeholder="Es. Orsetto Bruno"
+                  value={pendingBlankTitle}
+                  onChange={e => setPendingBlankTitle(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleCreateBlankProject()}
+                  className="w-full h-12 px-4 bg-[#FAFAFC] border border-[#E6DAFF] rounded-xl outline-none focus:border-[#7B5CF6] font-medium mb-5 text-[#1C1C1E]"
+                />
+                <div className="flex gap-3">
+                  <button onClick={() => setShowNewModal(false)} className="flex-1 h-12 bg-white border border-[#EEF0F4] rounded-2xl font-bold text-[#9AA2B1]">Annulla</button>
+                  <button
+                    onClick={handleCreateBlankProject}
+                    disabled={!pendingBlankTitle.trim()}
+                    className="flex-[2] h-12 bg-[#7B5CF6] text-white rounded-2xl font-bold shadow-lg shadow-[#7B5CF6]/30 active:scale-95 transition-transform disabled:opacity-40"
+                  >
+                    Crea Progetto
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

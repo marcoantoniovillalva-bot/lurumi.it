@@ -11,6 +11,22 @@ import { Loader2, AlertCircle, FileText, ImageIcon, Plus, Check, FolderOpen } fr
 
 type Step = 'loading' | 'pdf-name' | 'image-choice' | 'image-pick-project' | 'processing' | 'error'
 
+function parseYouTubeUrl(url: string): { videoId: string; playlistId: string } | null {
+    try {
+        const u = new URL(url)
+        let videoId = ''
+        let playlistId = u.searchParams.get('list') || ''
+        if (u.hostname.includes('youtu.be')) {
+            videoId = u.pathname.slice(1).split('/')[0]
+        } else if (u.hostname.includes('youtube.com')) {
+            if (u.pathname.startsWith('/watch')) videoId = u.searchParams.get('v') || ''
+            else if (u.pathname.startsWith('/shorts/')) videoId = u.pathname.split('/')[2]
+        }
+        if (!videoId && !playlistId) return null
+        return { videoId, playlistId }
+    } catch { return null }
+}
+
 function generateThumbnail(file: File): Promise<string> {
     return new Promise((resolve) => {
         const img = new window.Image()
@@ -73,10 +89,60 @@ export default function SharePage() {
         const urlParam = searchParams.get('url') || ''
         const textParam = searchParams.get('text') || ''
 
-        // Redirect YouTube URLs
-        const ytMatch = (urlParam || textParam).match(/https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be)\/\S+/)
-        if (ytMatch && type !== 'file') {
-            router.replace(`/tutorials/share?title=${encodeURIComponent(titleParam)}&url=${encodeURIComponent(ytMatch[0])}`)
+        // Gestisci link YouTube — crea direttamente un progetto tipo tutorial
+        if (type === 'youtube' || (type !== 'file' && (urlParam || textParam).match(/https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be)\/\S+/))) {
+            const rawUrl = urlParam || textParam
+            const ytMatch = rawUrl.match(/https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be)\/\S+/)
+            const url = ytMatch ? ytMatch[0] : rawUrl
+            if (url) {
+                const parsed = parseYouTubeUrl(url)
+                if (parsed) {
+                    const { videoId, playlistId } = parsed
+                    const newId = Math.random().toString(36).slice(2, 9)
+                    const thumbUrl = videoId
+                        ? `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`
+                        : 'https://placehold.co/120x120?text=Playlist'
+                    const newProject: Project = {
+                        id: newId,
+                        title: titleParam || 'Tutorial YouTube',
+                        type: 'tutorial',
+                        kind: 'tutorial',
+                        createdAt: Date.now(),
+                        size: 0,
+                        counter: 0,
+                        timer: 0,
+                        secs: [],
+                        notesHtml: '',
+                        images: [],
+                        videoId,
+                        playlistId,
+                        thumbUrl,
+                        thumbDataURL: thumbUrl,
+                    }
+                    addProject(newProject)
+                    if (user) {
+                        const supabase = createClient()
+                        supabase.from('projects').upsert({
+                            id: newId,
+                            user_id: user.id,
+                            title: newProject.title,
+                            type: 'tutorial',
+                            video_id: videoId,
+                            playlist_id: playlistId,
+                            thumb_url: thumbUrl,
+                            counter: 0,
+                            timer_seconds: 0,
+                            notes_html: '',
+                            secs: [],
+                            images: [],
+                        }).then(({ error }) => { if (error) console.warn('YouTube project sync failed:', error.message) })
+                    }
+                    router.replace(`/projects/${newId}`)
+                    return
+                }
+            }
+            setErrorMsg('Link YouTube non riconosciuto. Condividi il link direttamente dal menu del video.')
+            setStep('error')
             return
         }
 
@@ -344,7 +410,7 @@ export default function SharePage() {
     }
 
     if (step === 'image-pick-project') {
-        const imageProjects = projects.filter(p => p.type === 'images')
+        const imageProjects = projects.filter(p => p.type === 'images' || p.type === 'tutorial' || p.type === 'blank')
         return (
             <div className="min-h-screen flex flex-col p-6 pt-10 max-w-md mx-auto">
                 <h2 className="text-2xl font-black text-[#1C1C1E] mb-1">Scegli il progetto</h2>

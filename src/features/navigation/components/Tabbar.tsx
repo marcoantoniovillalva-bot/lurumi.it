@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { LayoutGrid, FolderOpen, Youtube } from "lucide-react";
+import { LayoutGrid, FolderOpen, User } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -11,7 +11,7 @@ export const Tabbar = () => {
     const tabs = [
         { name: "Utensili", icon: LayoutGrid, path: "/tools", id: "utensili" },
         { name: "Progetti", icon: FolderOpen, path: "/", id: "pdf" },
-        { name: "Tutorial", icon: Youtube, path: "/tutorials", id: "progetti" },
+        { name: "Profilo", icon: User, path: "/profilo", id: "profilo" },
     ];
 
     return (
@@ -19,7 +19,7 @@ export const Tabbar = () => {
             <div className="mx-auto flex max-w-sm sm:max-w-md justify-around gap-1">
                 {tabs.map((tab) => {
                     const isActive = (tab.path === "/" && (pathname === "/" || pathname.startsWith("/projects"))) ||
-                        (tab.path === "/tutorials" && pathname.startsWith("/tutorials")) ||
+                        (tab.path === "/profilo" && pathname.startsWith("/profilo")) ||
                         (tab.path === "/tools" && pathname.startsWith("/tools"));
 
                     return (
