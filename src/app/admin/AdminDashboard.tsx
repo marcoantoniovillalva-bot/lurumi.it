@@ -3093,7 +3093,245 @@ function SectionValidationQueue({ onBack }: { onBack: () => void }) {
 
 /* ─── fine Coda Validazione ─────────────────────────────────── */
 
-type Section = null | 'peak' | 'users' | 'events' | 'ai-costs' | 'support' | 'library' | 'newsletter' | 'email' | 'validation-queue';
+/* ─── Classificatore Foto: Reale vs IA ──────────────────────── */
+
+interface ClassifyResult {
+    label: 'REALE' | 'IA';
+    confidence: 'high' | 'medium' | 'low';
+    reasons: string[];
+    isReal: boolean;
+}
+
+function SectionImageClassifier({ onBack }: { onBack: () => void }) {
+    const [imageUrl, setImageUrl] = useState('');
+    const [previewUrl, setPreviewUrl] = useState('');
+    const [analyzing, setAnalyzing] = useState(false);
+    const [result, setResult] = useState<ClassifyResult | null>(null);
+    const [error, setError] = useState('');
+    const fileInputRef = useRef<HTMLInputElement>(null);
+
+    const handleFile = (file: File) => {
+        const reader = new FileReader();
+        reader.onload = e => {
+            const dataUrl = e.target?.result as string;
+            setImageUrl(dataUrl);
+            setPreviewUrl(dataUrl);
+            setResult(null);
+            setError('');
+        };
+        reader.readAsDataURL(file);
+    };
+
+    const handleAnalyze = async () => {
+        const url = imageUrl.trim();
+        if (!url) return;
+        setAnalyzing(true);
+        setResult(null);
+        setError('');
+        try {
+            const res = await fetch('/api/training/classify-image', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ imageUrl: url }),
+            });
+            const json = await res.json();
+            if (json.success) {
+                setResult(json);
+            } else {
+                setError(json.error ?? 'Errore sconosciuto');
+            }
+        } catch (e: any) {
+            setError(e.message);
+        } finally {
+            setAnalyzing(false);
+        }
+    };
+
+    const confidenceLabel = (c: string) =>
+        c === 'high' ? 'Alta certezza' : c === 'medium' ? 'Certezza media' : 'Bassa certezza';
+
+    return (
+        <>
+            <div className="flex items-center gap-3 mb-6">
+                <button onClick={onBack} className="w-9 h-9 flex items-center justify-center rounded-xl bg-[#FAFAFC] border border-[#EEF0F4]">
+                    <ArrowLeft size={18} className="text-[#1C1C1E]" />
+                </button>
+                <div>
+                    <h2 className="text-xl font-black text-[#1C1C1E]">Classificatore Immagini</h2>
+                    <p className="text-xs text-[#9AA2B1] font-medium">Analizza se una foto di amigurumi è reale o generata da IA</p>
+                </div>
+            </div>
+
+            <div className="flex flex-col gap-5">
+                {/* Upload / URL input */}
+                <div className="bg-white rounded-[24px] border border-[#EEF0F4] shadow-sm p-5 flex flex-col gap-4">
+                    <div>
+                        <label className="text-xs font-black text-[#1C1C1E] uppercase tracking-widest mb-1.5 block">URL immagine</label>
+                        <div className="flex gap-2">
+                            <input
+                                type="text"
+                                value={imageUrl.startsWith('data:') ? '' : imageUrl}
+                                onChange={e => {
+                                    setImageUrl(e.target.value);
+                                    setPreviewUrl(e.target.value);
+                                    setResult(null);
+                                    setError('');
+                                }}
+                                placeholder="https://... oppure carica da file sotto"
+                                className="flex-1 h-11 px-4 bg-[#FAFAFC] border border-[#EEF0F4] rounded-xl text-sm font-medium focus:outline-none focus:border-[#7B5CF6]"
+                            />
+                        </div>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                        <div className="flex-1 h-px bg-[#EEF0F4]" />
+                        <span className="text-xs text-[#9AA2B1] font-bold">oppure</span>
+                        <div className="flex-1 h-px bg-[#EEF0F4]" />
+                    </div>
+
+                    <button
+                        onClick={() => fileInputRef.current?.click()}
+                        className="w-full h-11 border-2 border-dashed border-[#E6DAFF] rounded-2xl text-sm font-bold text-[#7B5CF6] hover:bg-[#F4EEFF] transition-colors"
+                    >
+                        Carica immagine dal dispositivo
+                    </button>
+                    <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={e => {
+                            const f = e.target.files?.[0];
+                            if (f) handleFile(f);
+                            e.target.value = '';
+                        }}
+                    />
+                </div>
+
+                {/* Preview */}
+                {previewUrl && (
+                    <div className="bg-white rounded-[24px] border border-[#EEF0F4] shadow-sm p-4 flex flex-col gap-3">
+                        <p className="text-xs font-black text-[#9AA2B1] uppercase tracking-widest">Anteprima</p>
+                        <div className="w-full aspect-square max-h-64 rounded-2xl overflow-hidden bg-[#FAFAFC] flex items-center justify-center">
+                            <img
+                                src={previewUrl}
+                                alt="preview"
+                                className="max-w-full max-h-full object-contain"
+                                onError={() => setPreviewUrl('')}
+                            />
+                        </div>
+                        <button
+                            onClick={handleAnalyze}
+                            disabled={analyzing || !imageUrl.trim()}
+                            className="w-full h-12 bg-[#7B5CF6] text-white rounded-2xl font-bold text-sm shadow-md disabled:opacity-50 flex items-center justify-center gap-2 active:scale-95 transition-all"
+                        >
+                            {analyzing ? (
+                                <>
+                                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                    Analisi in corso...
+                                </>
+                            ) : (
+                                <>
+                                    <Sparkles size={16} />
+                                    Analizza immagine
+                                </>
+                            )}
+                        </button>
+                    </div>
+                )}
+
+                {!previewUrl && imageUrl.trim() && (
+                    <button
+                        onClick={handleAnalyze}
+                        disabled={analyzing}
+                        className="w-full h-12 bg-[#7B5CF6] text-white rounded-2xl font-bold text-sm shadow-md disabled:opacity-50 flex items-center justify-center gap-2 active:scale-95 transition-all"
+                    >
+                        {analyzing ? (
+                            <>
+                                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                Analisi in corso...
+                            </>
+                        ) : (
+                            <>
+                                <Sparkles size={16} />
+                                Analizza immagine
+                            </>
+                        )}
+                    </button>
+                )}
+
+                {/* Errore */}
+                {error && (
+                    <div className="bg-red-50 border border-red-100 rounded-2xl px-4 py-3 text-sm font-bold text-red-500">
+                        {error}
+                    </div>
+                )}
+
+                {/* Risultato */}
+                {result && (
+                    <div className={`rounded-[24px] border shadow-sm p-5 flex flex-col gap-4 ${result.isReal ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+                        {/* Badge principale */}
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-md ${result.isReal ? 'bg-green-500' : 'bg-red-400'}`}>
+                                    <span className="text-white text-2xl font-black">
+                                        {result.isReal ? '✓' : '✗'}
+                                    </span>
+                                </div>
+                                <div>
+                                    <p className={`text-2xl font-black ${result.isReal ? 'text-green-700' : 'text-red-600'}`}>
+                                        {result.label}
+                                    </p>
+                                    <p className={`text-xs font-bold ${result.isReal ? 'text-green-600' : 'text-red-400'}`}>
+                                        {confidenceLabel(result.confidence)}
+                                    </p>
+                                </div>
+                            </div>
+                            <div className={`px-3 py-1 rounded-full text-xs font-black ${
+                                result.confidence === 'high'
+                                    ? result.isReal ? 'bg-green-200 text-green-800' : 'bg-red-200 text-red-700'
+                                    : 'bg-[#EEF0F4] text-[#9AA2B1]'
+                            }`}>
+                                {result.confidence.toUpperCase()}
+                            </div>
+                        </div>
+
+                        {/* Motivazioni */}
+                        {result.reasons.length > 0 && (
+                            <div>
+                                <p className={`text-xs font-black uppercase tracking-widest mb-2 ${result.isReal ? 'text-green-700' : 'text-red-600'}`}>
+                                    Motivazioni
+                                </p>
+                                <div className="flex flex-col gap-1.5">
+                                    {result.reasons.map((r, i) => (
+                                        <div key={i} className={`flex items-start gap-2 text-sm font-medium ${result.isReal ? 'text-green-800' : 'text-red-700'}`}>
+                                            <span className="mt-0.5 shrink-0">{result.isReal ? '✓' : '✗'}</span>
+                                            <span>{r}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Azioni */}
+                        <div className="flex gap-2 pt-1">
+                            <button
+                                onClick={() => { setResult(null); setImageUrl(''); setPreviewUrl(''); }}
+                                className="flex-1 h-10 bg-white border border-[#EEF0F4] rounded-2xl font-bold text-sm text-[#6B7280] active:scale-95 transition-all"
+                            >
+                                Analizza altra
+                            </button>
+                        </div>
+                    </div>
+                )}
+            </div>
+        </>
+    );
+}
+
+/* ─── fine Classificatore ────────────────────────────────────── */
+
+type Section = null | 'peak' | 'users' | 'events' | 'ai-costs' | 'support' | 'library' | 'newsletter' | 'email' | 'validation-queue' | 'image-classifier';
 
 export function AdminDashboard() {
     const [stats, setStats] = useState<Stats | null>(null);
@@ -3181,6 +3419,14 @@ export function AdminDashboard() {
         );
     }
 
+    if (activeSection === 'image-classifier') {
+        return (
+            <div className="max-w-2xl mx-auto px-4 pt-6 pb-24">
+                <SectionImageClassifier onBack={() => setActiveSection(null)} />
+            </div>
+        );
+    }
+
     /* ── Home Dashboard ── */
     return (
         <div className="max-w-2xl mx-auto px-4 pt-6 pb-24">
@@ -3258,6 +3504,12 @@ export function AdminDashboard() {
                     title="Coda Validazione"
                     subtitle="Revisiona e approva gli schemi inviati dagli utenti"
                     onClick={() => setActiveSection('validation-queue')}
+                />
+                <SectionCard
+                    icon={<Shield size={20} className="text-amber-500" />}
+                    title="Classificatore Immagini"
+                    subtitle="Analizza se una foto amigurumi è reale o generata da IA"
+                    onClick={() => setActiveSection('image-classifier')}
                 />
             </div>
         </div>
