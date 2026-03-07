@@ -27,6 +27,7 @@ import {
     ChevronLeft,
     ChevronRight,
     X,
+    Pencil,
 } from "lucide-react";
 import { useProjectStore, Tutorial, RoundCounter as RoundCounterType, TranscriptSegment, TranscriptData, ProjectImage } from "@/features/projects/store/useProjectStore";
 import { useParams, useRouter } from "next/navigation";
@@ -816,6 +817,18 @@ export default function TutorialDetail() {
                         >
                             <Plus size={18} strokeWidth={3} />
                         </button>
+                        {imageUrls.length > 0 && (tutorial.images ?? [])[currentImgPage - 1] && (
+                            <button
+                                onClick={() => {
+                                    const imgId = (tutorial.images ?? [])[currentImgPage - 1]?.id;
+                                    if (imgId) router.push(`/tutorials/${id}/edit-image/${imgId}`);
+                                }}
+                                className="w-9 h-9 flex items-center justify-center bg-[#FFF4E0] text-orange-500 rounded-lg"
+                                title="Modifica immagine"
+                            >
+                                <Pencil size={16} strokeWidth={3} />
+                            </button>
+                        )}
                         {imageUrls.length > 0 && (
                             <button
                                 onClick={handleDeleteCurrentImage}
