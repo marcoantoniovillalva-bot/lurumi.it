@@ -75,10 +75,14 @@ export function useSyncOnLogin(user: User | null) {
             })
 
             // 2. Merge tutorial legacy → store locale come type='tutorial'
+            // SKIP se il tutorial è già gestito da remoteProjects (tabella projects più aggiornata):
+            // la tabella tutorials non ha il campo images, quindi sovrascrivere con images:[]
+            // cancellerebbe le immagini aggiunte dall'utente dopo la migrazione.
             if (remoteTutorials.length > 0) {
                 const { projects: currentProjects } = useProjectStore.getState()
                 const localProjectIds = new Set(currentProjects.map(p => p.id))
                 remoteTutorials.forEach(t => {
+                    if (remoteProjectIds.has(t.id)) return // già aggiornato da step 1 con dati completi
                     const thumbUrl = t.thumb_url ?? (t.video_id ? `https://img.youtube.com/vi/${t.video_id}/hqdefault.jpg` : '')
                     const mapped = {
                         id: t.id,
