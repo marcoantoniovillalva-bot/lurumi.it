@@ -3633,7 +3633,158 @@ function SectionModelTest({ onBack }: { onBack: () => void }) {
 
 /* ─── fine Test Modello ──────────────────────────────────────── */
 
-type Section = null | 'peak' | 'users' | 'events' | 'ai-costs' | 'support' | 'library' | 'newsletter' | 'email' | 'validation-queue' | 'image-classifier' | 'model-test';
+/* ─── Dataset Stats ──────────────────────────────────────────── */
+
+function SectionDatasetStats({ onBack }: { onBack: () => void }) {
+    const supabase = createClient();
+    const [stats, setStats] = useState<{
+        ground_truth: number;
+        validated: number;
+        pending: number;
+        rejected: number;
+        feedback_correct: number;
+        feedback_corrected: number;
+        total_training_ready: number;
+    } | null>(null);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        (async () => {
+            const [
+                { count: ground_truth },
+                { count: validated },
+                { count: pending },
+                { count: rejected },
+                { count: feedback_correct },
+                { count: feedback_corrected },
+            ] = await Promise.all([
+                supabase.from('training_patterns').select('id', { count: 'exact', head: true }).eq('status', 'ground_truth'),
+                supabase.from('training_patterns').select('id', { count: 'exact', head: true }).eq('status', 'validated'),
+                supabase.from('training_patterns').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
+                supabase.from('training_patterns').select('id', { count: 'exact', head: true }).eq('status', 'rejected'),
+                supabase.from('model_feedback').select('id', { count: 'exact', head: true }).eq('is_correct', true),
+                supabase.from('model_feedback').select('id', { count: 'exact', head: true }).eq('is_correct', false),
+            ]);
+
+            const gt = ground_truth ?? 0;
+            const val = validated ?? 0;
+            const fc = feedback_correct ?? 0;
+            const fCorr = feedback_corrected ?? 0;
+
+            setStats({
+                ground_truth: gt,
+                validated: val,
+                pending: pending ?? 0,
+                rejected: rejected ?? 0,
+                feedback_correct: fc,
+                feedback_corrected: fCorr,
+                total_training_ready: gt + val + fc + fCorr,
+            });
+            setLoading(false);
+        })();
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+    const MIN_FOR_FINETUNE = 100;
+    const pct = stats ? Math.min(100, Math.round((stats.total_training_ready / MIN_FOR_FINETUNE) * 100)) : 0;
+
+    return (
+        <>
+            <div className="flex items-center gap-3 mb-6">
+                <button onClick={onBack} className="w-9 h-9 flex items-center justify-center rounded-xl bg-[#FAFAFC] border border-[#EEF0F4]">
+                    <ArrowLeft size={18} className="text-[#1C1C1E]" />
+                </button>
+                <div>
+                    <h2 className="text-xl font-black text-[#1C1C1E]">Dataset Stats</h2>
+                    <p className="text-xs text-[#9AA2B1] font-medium">Stato del dataset di training per il modello AI Lurumi</p>
+                </div>
+            </div>
+
+            {loading ? (
+                <div className="flex items-center justify-center py-20">
+                    <div className="w-8 h-8 border-2 border-[#7B5CF6] border-t-transparent rounded-full animate-spin" />
+                </div>
+            ) : stats && (
+                <div className="flex flex-col gap-4">
+                    {/* Progress bar verso fine-tuning */}
+                    <div className="bg-white rounded-[24px] border border-[#EEF0F4] shadow-sm p-5">
+                        <div className="flex items-center justify-between mb-3">
+                            <p className="font-black text-sm text-[#1C1C1E]">Progresso verso fine-tuning</p>
+                            <span className={`text-sm font-black ${pct >= 100 ? 'text-green-600' : 'text-[#7B5CF6]'}`}>{pct}%</span>
+                        </div>
+                        <div className="w-full h-3 bg-[#EEF0F4] rounded-full overflow-hidden">
+                            <div
+                                className={`h-full rounded-full transition-all ${pct >= 100 ? 'bg-green-500' : 'bg-[#7B5CF6]'}`}
+                                style={{ width: `${pct}%` }}
+                            />
+                        </div>
+                        <p className="text-xs text-[#9AA2B1] mt-2 font-medium">
+                            {stats.total_training_ready} / {MIN_FOR_FINETUNE} esempi minimi per avviare il fine-tuning
+                        </p>
+                        {pct >= 100 && (
+                            <p className="text-xs font-black text-green-600 mt-1">🚀 Dataset pronto! Esegui lo script di export e avvia il training su RunPod.</p>
+                        )}
+                    </div>
+
+                    {/* Training patterns */}
+                    <div className="bg-white rounded-[24px] border border-[#EEF0F4] shadow-sm p-5">
+                        <p className="text-xs font-black text-[#9AA2B1] uppercase tracking-widest mb-4">Schemi (training_patterns)</p>
+                        <div className="grid grid-cols-2 gap-3">
+                            {[
+                                { label: 'Ground Truth (Erika)', value: stats.ground_truth, color: 'text-[#7B5CF6]', bg: 'bg-[#F4EEFF]' },
+                                { label: 'Validati da utenti', value: stats.validated, color: 'text-green-600', bg: 'bg-green-50' },
+                                { label: 'In coda', value: stats.pending, color: 'text-amber-600', bg: 'bg-amber-50' },
+                                { label: 'Rifiutati', value: stats.rejected, color: 'text-red-500', bg: 'bg-red-50' },
+                            ].map(item => (
+                                <div key={item.label} className={`${item.bg} rounded-2xl p-4`}>
+                                    <p className={`text-3xl font-black ${item.color}`}>{item.value}</p>
+                                    <p className="text-xs font-bold text-[#6B7280] mt-1">{item.label}</p>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Feedback RLHF */}
+                    <div className="bg-white rounded-[24px] border border-[#EEF0F4] shadow-sm p-5">
+                        <p className="text-xs font-black text-[#9AA2B1] uppercase tracking-widest mb-4">Feedback RLHF (model_feedback)</p>
+                        <div className="grid grid-cols-2 gap-3">
+                            {[
+                                { label: 'Feedback positivi', value: stats.feedback_correct, color: 'text-green-600', bg: 'bg-green-50' },
+                                { label: 'Dati correttivi', value: stats.feedback_corrected, color: 'text-blue-600', bg: 'bg-blue-50' },
+                            ].map(item => (
+                                <div key={item.label} className={`${item.bg} rounded-2xl p-4`}>
+                                    <p className={`text-3xl font-black ${item.color}`}>{item.value}</p>
+                                    <p className="text-xs font-bold text-[#6B7280] mt-1">{item.label}</p>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Totale training-ready */}
+                    <div className={`rounded-[24px] border shadow-sm p-5 ${stats.total_training_ready >= MIN_FOR_FINETUNE ? 'bg-green-50 border-green-200' : 'bg-[#F4EEFF] border-[#E6DAFF]'}`}>
+                        <p className="text-xs font-black text-[#9AA2B1] uppercase tracking-widest mb-1">Totale esempi pronti per training</p>
+                        <p className={`text-5xl font-black ${stats.total_training_ready >= MIN_FOR_FINETUNE ? 'text-green-600' : 'text-[#7B5CF6]'}`}>
+                            {stats.total_training_ready}
+                        </p>
+                        <p className="text-xs text-[#9AA2B1] mt-1 font-medium">
+                            = {stats.ground_truth} GT + {stats.validated} validati + {stats.feedback_correct + stats.feedback_corrected} feedback
+                        </p>
+                    </div>
+
+                    <button
+                        onClick={() => { setLoading(true); setStats(null); setTimeout(() => { setLoading(false); }, 500); location.reload(); }}
+                        className="w-full h-11 bg-[#FAFAFC] border border-[#EEF0F4] rounded-2xl font-bold text-sm text-[#6B7280] active:scale-95 transition-all"
+                    >
+                        Aggiorna
+                    </button>
+                </div>
+            )}
+        </>
+    );
+}
+
+/* ─── fine Dataset Stats ─────────────────────────────────────── */
+
+type Section = null | 'peak' | 'users' | 'events' | 'ai-costs' | 'support' | 'library' | 'newsletter' | 'email' | 'validation-queue' | 'image-classifier' | 'model-test' | 'dataset-stats';
 
 export function AdminDashboard() {
     const [stats, setStats] = useState<Stats | null>(null);
@@ -3737,6 +3888,14 @@ export function AdminDashboard() {
         );
     }
 
+    if (activeSection === 'dataset-stats') {
+        return (
+            <div className="max-w-2xl mx-auto px-4 pt-6 pb-24">
+                <SectionDatasetStats onBack={() => setActiveSection(null)} />
+            </div>
+        );
+    }
+
     /* ── Home Dashboard ── */
     return (
         <div className="max-w-2xl mx-auto px-4 pt-6 pb-24">
@@ -3826,6 +3985,12 @@ export function AdminDashboard() {
                     title="Test Modello + Feedback"
                     subtitle="Genera schemi, valida la matematica e correggi gli errori per il training"
                     onClick={() => setActiveSection('model-test')}
+                />
+                <SectionCard
+                    icon={<BarChart2 size={20} className="text-blue-500" />}
+                    title="Dataset Stats"
+                    subtitle="Contatori live: ground truth, validati, feedback RLHF, % verso fine-tuning"
+                    onClick={() => setActiveSection('dataset-stats')}
                 />
             </div>
         </div>
