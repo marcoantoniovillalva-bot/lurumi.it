@@ -46,8 +46,17 @@ export function useSyncOnLogin(user: User | null) {
             const allRemoteIds = new Set([...remoteProjectIds, ...remoteTutorialIds])
 
             // 1. Merge projects remoti → store locale
+            // Per progetti già presenti localmente usiamo un merge selettivo:
+            // i campi mutabili (secs, images, counter, timer, note, videoId) potrebbero
+            // essere stati modificati localmente ma non ancora sincronizzati su Supabase
+            // (es. refresh immediato dopo una modifica). In quel caso preferiamo il dato
+            // locale più ricco/recente per non perdere il lavoro dell'utente.
             remoteProjects.forEach(p => {
                 const pType = (p.type ?? 'pdf') as 'pdf' | 'images' | 'tutorial' | 'blank'
+                const remoteSecs = p.secs ?? []
+                const remoteImages = (p.images ?? []).map((img: { id?: string } | string) =>
+                    ({ id: typeof img === 'string' ? img : (img.id ?? '') })
+                )
                 const mapped = {
                     id: p.id,
                     title: p.title,
@@ -57,7 +66,7 @@ export function useSyncOnLogin(user: User | null) {
                     size: p.size ?? 0,
                     counter: p.counter ?? 0,
                     timer: p.timer_seconds ?? 0,
-                    secs: p.secs ?? [],
+                    secs: remoteSecs,
                     notesHtml: p.notes_html ?? '',
                     thumbDataURL: p.thumb_url ?? undefined,
                     thumbUrl: p.thumb_url ?? undefined,
@@ -65,13 +74,37 @@ export function useSyncOnLogin(user: User | null) {
                     videoId: p.video_id ?? undefined,
                     playlistId: p.playlist_id ?? undefined,
                     transcriptData: p.transcript_data ?? undefined,
-                    images: (p.images ?? []).map((img: { id?: string } | string) =>
-                        ({ id: typeof img === 'string' ? img : (img.id ?? '') })
-                    ),
+                    images: remoteImages,
                     coverImageId: p.cover_image_id ?? undefined,
                 }
-                if (localIds.has(p.id)) updateProject(p.id, mapped)
-                else addProject(mapped)
+                if (localIds.has(p.id)) {
+                    // Merge selettivo: per i campi mutabili preferisce il valore locale
+                    // se è più ricco di quello remoto (stantio), altrimenti usa il remoto
+                    // (che porta modifiche da altri dispositivi).
+                    const loc = projects.find(lp => lp.id === p.id)!
+                    updateProject(p.id, {
+                        // Campi strutturali: sempre da Supabase
+                        title: mapped.title,
+                        type: mapped.type,
+                        kind: mapped.kind,
+                        url: mapped.url ?? loc.url,
+                        thumbDataURL: mapped.thumbDataURL ?? loc.thumbDataURL,
+                        thumbUrl: mapped.thumbUrl ?? loc.thumbUrl,
+                        coverImageId: mapped.coverImageId ?? loc.coverImageId,
+                        transcriptData: mapped.transcriptData ?? loc.transcriptData,
+                        // Link YouTube: preferisce locale se già presente, altrimenti usa remoto
+                        videoId: loc.videoId ?? mapped.videoId,
+                        playlistId: loc.playlistId ?? mapped.playlistId,
+                        // Campi mutabili: usa il valore più ricco tra locale e remoto
+                        secs: loc.secs.length >= remoteSecs.length ? loc.secs : remoteSecs,
+                        images: loc.images.length >= remoteImages.length ? loc.images : remoteImages,
+                        counter: Math.max(loc.counter, mapped.counter),
+                        timer: Math.max(loc.timer, mapped.timer),
+                        notesHtml: loc.notesHtml || mapped.notesHtml,
+                    })
+                } else {
+                    addProject(mapped)
+                }
             })
 
             // 2. Merge tutorial legacy → store locale come type='tutorial'

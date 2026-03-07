@@ -564,6 +564,8 @@ export default function ProjectDetail() {
 
         // Carica su Supabase Storage e sincronizza lista immagini nel DB
         // syncProject usa upsert → funziona anche per tutorial legacy non ancora in tabella projects
+        // NON passiamo images nei fields: syncProject legge lo stato corrente dallo store
+        // (che potrebbe avere più immagini rispetto alla closure captata qui).
         if (user) {
             const supabase = createClient();
             const storagePath = `${user.id}/${project.id}/${imgId}`;
@@ -571,7 +573,6 @@ export default function ProjectDetail() {
                 .then(({ error: storageErr }) => {
                     if (storageErr) { console.warn('Image upload failed:', storageErr.message); return; }
                     syncProject({
-                        images: updatedImages.map(img => ({ id: img.id })),
                         ...(thumbDataURL ? { thumb_url: thumbDataURL } : {}),
                     });
                 });
