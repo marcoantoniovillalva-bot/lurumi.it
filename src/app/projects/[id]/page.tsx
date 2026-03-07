@@ -24,8 +24,11 @@ import { loadPdfjs } from "@/lib/pdfjs";
 export default function ProjectDetail() {
     const { id } = useParams();
     const router = useRouter();
-    const { projects, updateProject } = useProjectStore();
+    const { projects, updateProject, migrateIfNeeded } = useProjectStore();
     const { user } = useAuth();
+
+    // Garantisce la migrazione tutorials→projects anche se l'utente apre direttamente /projects/[id]
+    useEffect(() => { migrateIfNeeded(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
     const project = projects.find(p => p.id === id);
 
     const syncProject = (fields: Record<string, unknown>) => {
@@ -686,27 +689,31 @@ export default function ProjectDetail() {
                             <RotateCcw size={13} strokeWidth={3} />
                         </button>
                     </div>
-                    <div className="flex flex-col items-center gap-0.5">
-                        <button
-                            onClick={handleExportZip}
-                            className="w-10 h-10 flex items-center justify-center bg-white border border-[#EEF0F4] rounded-xl text-[#7B5CF6] active:scale-95 transition-transform shadow-sm"
-                            title="Esporta ZIP"
-                        >
-                            <Archive size={20} />
-                        </button>
-                        <span className="text-[9px] font-black uppercase tracking-widest text-[#7B5CF6]">zip</span>
-                    </div>
-                    <div className="flex flex-col items-center gap-0.5">
-                        <button
-                            onClick={handleExportPdf}
-                            disabled={exportingPdf}
-                            className="w-10 h-10 flex items-center justify-center bg-white border border-[#EEF0F4] rounded-xl text-[#7B5CF6] active:scale-95 transition-transform shadow-sm disabled:opacity-50"
-                            title="Esporta PDF editabile"
-                        >
-                            <FileDown size={20} />
-                        </button>
-                        <span className="text-[9px] font-black uppercase tracking-widest text-[#7B5CF6]">pdf</span>
-                    </div>
+                    {project.type !== 'tutorial' && (
+                        <>
+                            <div className="flex flex-col items-center gap-0.5">
+                                <button
+                                    onClick={handleExportZip}
+                                    className="w-10 h-10 flex items-center justify-center bg-white border border-[#EEF0F4] rounded-xl text-[#7B5CF6] active:scale-95 transition-transform shadow-sm"
+                                    title="Esporta ZIP"
+                                >
+                                    <Archive size={20} />
+                                </button>
+                                <span className="text-[9px] font-black uppercase tracking-widest text-[#7B5CF6]">zip</span>
+                            </div>
+                            <div className="flex flex-col items-center gap-0.5">
+                                <button
+                                    onClick={handleExportPdf}
+                                    disabled={exportingPdf}
+                                    className="w-10 h-10 flex items-center justify-center bg-white border border-[#EEF0F4] rounded-xl text-[#7B5CF6] active:scale-95 transition-transform shadow-sm disabled:opacity-50"
+                                    title="Esporta PDF editabile"
+                                >
+                                    <FileDown size={20} />
+                                </button>
+                                <span className="text-[9px] font-black uppercase tracking-widest text-[#7B5CF6]">pdf</span>
+                            </div>
+                        </>
+                    )}
                 </div>
             </div>
 

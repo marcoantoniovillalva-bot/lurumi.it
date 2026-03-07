@@ -40,11 +40,11 @@ self.addEventListener('fetch', (event) => {
             return Response.redirect(`/share?${params}`, 303)
         }
 
-        // Nessun file: controlla se è un URL YouTube → invia a /tutorials/share
+        // Nessun file: controlla se è un URL YouTube → crea progetto tipo tutorial
         const ytMatch = String(urlParam || text).match(/https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be)\/\S+/)
         if (ytMatch) {
-            const params = new URLSearchParams({ title: String(title), text: String(text), url: ytMatch[0] })
-            return Response.redirect(`/tutorials/share?${params}`, 303)
+            const params = new URLSearchParams({ type: 'youtube', title: String(title), url: ytMatch[0] })
+            return Response.redirect(`/share?${params}`, 303)
         }
 
         // Fallback generico
