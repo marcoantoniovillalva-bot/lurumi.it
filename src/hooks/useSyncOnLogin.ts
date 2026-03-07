@@ -95,19 +95,28 @@ export function useSyncOnLogin(user: User | null) {
                         timer: t.timer_seconds ?? 0,
                         secs: t.secs ?? [],
                         notesHtml: t.notes_html ?? '',
-                        images: [],
+                        images: [] as { id: string }[],
                         videoId: t.video_id ?? '',
                         playlistId: t.playlist_id ?? '',
                         thumbUrl,
                         thumbDataURL: thumbUrl,
                         transcriptData: t.transcript_data ?? null,
                     }
-                    if (localProjectIds.has(t.id)) updateProject(t.id, mapped)
-                    else addProject(mapped)
+                    if (localProjectIds.has(t.id)) {
+                        // La tabella tutorials NON ha il campo images.
+                        // Non sovrascrivere le immagini locali con [] altrimenti spariscono al refresh.
+                        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                        const { images: _ignored, ...fieldsWithoutImages } = mapped
+                        updateProject(t.id, fieldsWithoutImages)
+                    } else {
+                        addProject(mapped)
+                    }
                 })
             }
 
             // 3. Carica su Supabase i progetti creati prima del login (non ancora sincronizzati)
+            // syncedInStep3 traccia gli ID appena upsertati: lo step 4 non deve eliminarli.
+            const syncedInStep3 = new Set<string>()
             const preLoginProjects = projects.filter(p => !allRemoteIds.has(p.id) && (p.type === 'tutorial' || p.type === 'blank' || !p.url))
             for (const p of preLoginProjects) {
                 if (!isMounted) break
@@ -144,8 +153,12 @@ export function useSyncOnLogin(user: User | null) {
                         video_id: p.videoId ?? null,
                         playlist_id: p.playlistId ?? null,
                     })
-                    if (!dbErr && fileUrl && isMounted) {
-                        useProjectStore.getState().updateProject(p.id, { url: fileUrl })
+                    if (!dbErr) {
+                        // Segna come sincronizzato — step 4 non deve eliminarlo dal store locale
+                        syncedInStep3.add(p.id)
+                        if (fileUrl && isMounted) {
+                            useProjectStore.getState().updateProject(p.id, { url: fileUrl })
+                        }
                     }
 
                     const extraImgs = (p.images ?? []).filter(img => img.id !== p.id)
@@ -164,8 +177,11 @@ export function useSyncOnLogin(user: User | null) {
             }
 
             // 4. Rimuove localmente i progetti eliminati da Supabase
-            // Usa allRemoteIds (projects + tutorials) così i tutorial legacy non vengono mai toccati
+            // Usa allRemoteIds (projects + tutorials) così i tutorial legacy non vengono mai toccati.
+            // Skip i progetti appena sincronizzati in step 3: allRemoteIds era costruita prima,
+            // quindi non li include ancora, ma sono stati appena upsertati e NON vanno eliminati.
             projects.forEach(p => {
+                if (syncedInStep3.has(p.id)) return
                 const wasSynced = p.url?.startsWith('https://') ||
                     (p.type === 'tutorial' && p.videoId) ||
                     (p.type === 'blank' && allRemoteIds.has(p.id))
