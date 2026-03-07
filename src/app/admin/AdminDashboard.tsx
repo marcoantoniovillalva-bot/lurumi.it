@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
     Shield, BarChart2, Plus, Edit2, Trash2,
     ChevronDown, ChevronUp, ExternalLink, X, Save, ToggleLeft, ToggleRight,
@@ -3331,7 +3331,309 @@ function SectionImageClassifier({ onBack }: { onBack: () => void }) {
 
 /* ─── fine Classificatore ────────────────────────────────────── */
 
-type Section = null | 'peak' | 'users' | 'events' | 'ai-costs' | 'support' | 'library' | 'newsletter' | 'email' | 'validation-queue' | 'image-classifier';
+/* ─── Pannello Test Modello + Feedback RLHF ─────────────────── */
+
+type ModelPart = {
+    name: string;
+    color?: string;
+    start_type?: string;
+    rounds: { round: number | string; instruction: string; stitch_count: number }[];
+};
+
+function SectionModelTest({ onBack }: { onBack: () => void }) {
+    const [prompt, setPrompt] = useState('');
+    const [generating, setGenerating] = useState(false);
+    const [modelParts, setModelParts] = useState<ModelPart[] | null>(null);
+    const [editedParts, setEditedParts] = useState<ModelPart[] | null>(null);
+    const [correcting, setCorrecting] = useState(false);
+    const [saving, setSaving] = useState(false);
+    const [saved, setSaved] = useState(false);
+    const [genError, setGenError] = useState('');
+
+    // Lazy import di validatePart per non aumentare il bundle iniziale
+    const [validatePart, setValidatePart] = useState<((rounds: ModelPart['rounds']) => { valid: boolean; rounds: { round: number | string; ok: boolean; errors: string[] }[]; totalErrors: number }) | null>(null);
+
+    useEffect(() => {
+        import('@/lib/pattern-math').then(m => setValidatePart(() => m.validatePart));
+    }, []);
+
+    const validations = useMemo(() => {
+        if (!validatePart || !modelParts) return null;
+        return (correcting ? editedParts : modelParts)?.map(part => validatePart(part.rounds));
+    }, [validatePart, modelParts, editedParts, correcting]);
+
+    const totalMathErrors = useMemo(() =>
+        validations?.reduce((s, v) => s + v.totalErrors, 0) ?? 0
+    , [validations]);
+
+    const handleGenerate = async () => {
+        if (!prompt.trim()) return;
+        setGenerating(true);
+        setModelParts(null);
+        setEditedParts(null);
+        setCorrecting(false);
+        setSaved(false);
+        setGenError('');
+        try {
+            const res = await fetch('/api/training/generate-schema', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompt: prompt.trim() }),
+            });
+            const json = await res.json();
+            if (json.success) {
+                setModelParts(json.parts);
+                setEditedParts(JSON.parse(JSON.stringify(json.parts)));
+            } else {
+                setGenError(json.error ?? 'Errore generazione');
+            }
+        } finally {
+            setGenerating(false);
+        }
+    };
+
+    const handleSaveFeedback = async (isCorrect: boolean) => {
+        if (!modelParts) return;
+        setSaving(true);
+        try {
+            const correctedResponse = !isCorrect && correcting ? editedParts : null;
+            await fetch('/api/training/save-feedback', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    prompt: prompt.trim(),
+                    model_response: modelParts,
+                    is_correct: isCorrect,
+                    corrected_response: correctedResponse,
+                    math_check_passed: totalMathErrors === 0,
+                    math_errors: validations?.flatMap((v, pi) =>
+                        v.rounds.filter(r => !r.ok).map(r => ({
+                            part: modelParts[pi]?.name,
+                            round: r.round,
+                            errors: r.errors,
+                        }))
+                    ) ?? [],
+                }),
+            });
+            setSaved(true);
+            setModelParts(null);
+            setEditedParts(null);
+            setCorrecting(false);
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const updateRoundField = (partIdx: number, roundIdx: number, field: 'instruction' | 'stitch_count', value: string | number) => {
+        if (!editedParts) return;
+        const updated = editedParts.map((p, pi) =>
+            pi !== partIdx ? p : {
+                ...p,
+                rounds: p.rounds.map((r, ri) =>
+                    ri !== roundIdx ? r : { ...r, [field]: field === 'stitch_count' ? Number(value) : value }
+                ),
+            }
+        );
+        setEditedParts(updated);
+    };
+
+    const displayParts = correcting ? editedParts : modelParts;
+
+    return (
+        <>
+            <div className="flex items-center gap-3 mb-6">
+                <button onClick={onBack} className="w-9 h-9 flex items-center justify-center rounded-xl bg-[#FAFAFC] border border-[#EEF0F4]">
+                    <ArrowLeft size={18} className="text-[#1C1C1E]" />
+                </button>
+                <div>
+                    <h2 className="text-xl font-black text-[#1C1C1E]">Test Modello + Feedback</h2>
+                    <p className="text-xs text-[#9AA2B1] font-medium">Testa la generazione schemi e costruisci dati di training correttivi</p>
+                </div>
+            </div>
+
+            <div className="flex flex-col gap-5">
+                {/* Prompt input */}
+                <div className="bg-white rounded-[24px] border border-[#EEF0F4] shadow-sm p-5 flex flex-col gap-3">
+                    <label className="text-xs font-black text-[#1C1C1E] uppercase tracking-widest">Prompt</label>
+                    <textarea
+                        rows={3}
+                        value={prompt}
+                        onChange={e => setPrompt(e.target.value)}
+                        placeholder="Es: schema sfera 5cm cotone 2.5mm, oppure: testa coniglio con orecchie lunghe..."
+                        className="w-full px-4 py-3 bg-[#FAFAFC] border border-[#EEF0F4] rounded-2xl text-sm font-medium focus:outline-none focus:border-[#7B5CF6] resize-none"
+                        onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') handleGenerate(); }}
+                    />
+                    <button
+                        onClick={handleGenerate}
+                        disabled={generating || !prompt.trim()}
+                        className="w-full h-12 bg-[#7B5CF6] text-white rounded-2xl font-bold text-sm shadow-md disabled:opacity-50 flex items-center justify-center gap-2 active:scale-95 transition-all"
+                    >
+                        {generating ? (
+                            <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />Generazione...</>
+                        ) : (
+                            <><Sparkles size={16} />Genera schema</>
+                        )}
+                    </button>
+                    {genError && <p className="text-xs font-bold text-red-500">{genError}</p>}
+                </div>
+
+                {/* Saved confirmation */}
+                {saved && (
+                    <div className="bg-green-50 border border-green-200 rounded-[24px] p-5 flex items-center gap-3">
+                        <CheckCircle2 size={24} className="text-green-500 shrink-0" />
+                        <div>
+                            <p className="font-black text-green-700">Feedback salvato!</p>
+                            <p className="text-xs text-green-600 mt-0.5">Il dato è stato aggiunto al dataset di training. Inserisci un nuovo prompt per continuare.</p>
+                        </div>
+                    </div>
+                )}
+
+                {/* Schema generato */}
+                {displayParts && (
+                    <>
+                        {/* Math summary */}
+                        <div className={`rounded-[20px] px-4 py-3 flex items-center gap-3 ${totalMathErrors === 0 ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
+                            <span className={`text-lg font-black ${totalMathErrors === 0 ? 'text-green-600' : 'text-red-500'}`}>
+                                {totalMathErrors === 0 ? '✓' : '✗'}
+                            </span>
+                            <p className={`text-sm font-bold ${totalMathErrors === 0 ? 'text-green-700' : 'text-red-600'}`}>
+                                {totalMathErrors === 0
+                                    ? 'Schema matematicamente corretto'
+                                    : `${totalMathErrors} error${totalMathErrors === 1 ? 'e' : 'i'} matematico${totalMathErrors === 1 ? '' : 'i'} trovato${totalMathErrors === 1 ? '' : 'i'}`}
+                            </p>
+                            {correcting && (
+                                <span className="ml-auto text-xs font-black text-[#7B5CF6] uppercase">Modalità correzione</span>
+                            )}
+                        </div>
+
+                        {/* Parti */}
+                        {displayParts.map((part, partIdx) => {
+                            const partValidation = validations?.[partIdx];
+                            return (
+                                <div key={partIdx} className="bg-white rounded-[24px] border border-[#EEF0F4] shadow-sm overflow-hidden">
+                                    <div className="px-5 py-3 border-b border-[#EEF0F4] bg-[#FAFAFC] flex items-center gap-2">
+                                        <span className="font-black text-sm text-[#1C1C1E]">{part.name}</span>
+                                        {part.color && <span className="text-xs text-[#9AA2B1]">· {part.color}</span>}
+                                        {part.start_type && (
+                                            <span className="ml-auto text-xs font-bold text-[#7B5CF6] px-2 py-0.5 rounded-full bg-[#F4EEFF]">
+                                                {part.start_type === 'magic_ring' ? 'AM' : 'catena'}
+                                            </span>
+                                        )}
+                                    </div>
+
+                                    <div className="divide-y divide-[#EEF0F4]">
+                                        {part.rounds.map((r, roundIdx) => {
+                                            const rv = partValidation?.rounds[roundIdx];
+                                            const isOk = rv?.ok ?? true;
+                                            return (
+                                                <div key={roundIdx} className={`flex items-start gap-2 px-4 py-2 ${!isOk ? 'bg-red-50' : ''}`}>
+                                                    {/* Numero giro */}
+                                                    <span className="text-xs font-black text-[#9AA2B1] w-8 shrink-0 mt-2">
+                                                        G{r.round}
+                                                    </span>
+
+                                                    {/* Istruzione */}
+                                                    {correcting ? (
+                                                        <input
+                                                            type="text"
+                                                            value={r.instruction}
+                                                            onChange={e => updateRoundField(partIdx, roundIdx, 'instruction', e.target.value)}
+                                                            className="flex-1 text-sm font-medium bg-white border border-[#EEF0F4] rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#7B5CF6]"
+                                                        />
+                                                    ) : (
+                                                        <span className="flex-1 text-sm font-medium text-[#1C1C1E] py-1.5">{r.instruction}</span>
+                                                    )}
+
+                                                    {/* Conteggio */}
+                                                    {correcting ? (
+                                                        <input
+                                                            type="number"
+                                                            value={r.stitch_count}
+                                                            onChange={e => updateRoundField(partIdx, roundIdx, 'stitch_count', e.target.value)}
+                                                            className={`w-14 text-sm font-black text-center border rounded-lg px-1 py-1.5 focus:outline-none ${isOk ? 'border-[#EEF0F4] text-[#7B5CF6] focus:border-[#7B5CF6]' : 'border-red-300 text-red-600 bg-red-50 focus:border-red-400'}`}
+                                                        />
+                                                    ) : (
+                                                        <span className={`text-sm font-black w-12 text-right py-1.5 ${isOk ? 'text-[#7B5CF6]' : 'text-red-500'}`}>
+                                                            [{r.stitch_count}]
+                                                        </span>
+                                                    )}
+
+                                                    {/* Badge validazione */}
+                                                    <div className="w-6 shrink-0 flex items-center justify-center mt-1.5" title={rv?.errors?.join(' | ')}>
+                                                        {isOk
+                                                            ? <span className="text-green-500 text-sm">✓</span>
+                                                            : <span className="text-red-500 text-sm">✗</span>}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+
+                                    {/* Errori per la parte */}
+                                    {partValidation && partValidation.totalErrors > 0 && (
+                                        <div className="px-4 pb-3 pt-1 bg-red-50 border-t border-red-100">
+                                            {partValidation.rounds.filter(r => !r.ok).map((r, i) => (
+                                                <p key={i} className="text-xs font-medium text-red-600 mt-1">
+                                                    <span className="font-black">G{r.round}:</span> {r.errors.join(' · ')}
+                                                </p>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })}
+
+                        {/* Azioni feedback */}
+                        {!correcting ? (
+                            <div className="flex gap-3">
+                                <button
+                                    onClick={() => setCorrecting(true)}
+                                    disabled={saving}
+                                    className="flex-1 h-12 bg-red-50 text-red-500 border border-red-200 rounded-2xl font-bold text-sm active:scale-95 transition-all"
+                                >
+                                    ✗ Sbagliato — correggi
+                                </button>
+                                <button
+                                    onClick={() => handleSaveFeedback(true)}
+                                    disabled={saving}
+                                    className="flex-[2] h-12 bg-green-500 text-white rounded-2xl font-bold text-sm shadow-md active:scale-95 transition-all flex items-center justify-center gap-2"
+                                >
+                                    {saving ? <span className="animate-pulse">Salvataggio...</span> : '✓ Corretto — salva'}
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="flex gap-3">
+                                <button
+                                    onClick={() => { setCorrecting(false); setEditedParts(JSON.parse(JSON.stringify(modelParts))); }}
+                                    className="flex-1 h-12 bg-[#FAFAFC] text-[#6B7280] border border-[#EEF0F4] rounded-2xl font-bold text-sm"
+                                >
+                                    Annulla
+                                </button>
+                                <button
+                                    onClick={() => handleSaveFeedback(false)}
+                                    disabled={saving || totalMathErrors > 0}
+                                    className="flex-[2] h-12 bg-[#7B5CF6] text-white rounded-2xl font-bold text-sm shadow-md disabled:opacity-50 active:scale-95 transition-all flex items-center justify-center gap-2"
+                                >
+                                    {saving ? (
+                                        <span className="animate-pulse">Salvataggio...</span>
+                                    ) : totalMathErrors > 0 ? (
+                                        `Risolvi ${totalMathErrors} errori`
+                                    ) : (
+                                        'Salva risposta corretta'
+                                    )}
+                                </button>
+                            </div>
+                        )}
+                    </>
+                )}
+            </div>
+        </>
+    );
+}
+
+/* ─── fine Test Modello ──────────────────────────────────────── */
+
+type Section = null | 'peak' | 'users' | 'events' | 'ai-costs' | 'support' | 'library' | 'newsletter' | 'email' | 'validation-queue' | 'image-classifier' | 'model-test';
 
 export function AdminDashboard() {
     const [stats, setStats] = useState<Stats | null>(null);
@@ -3427,6 +3729,14 @@ export function AdminDashboard() {
         );
     }
 
+    if (activeSection === 'model-test') {
+        return (
+            <div className="max-w-2xl mx-auto px-4 pt-6 pb-24">
+                <SectionModelTest onBack={() => setActiveSection(null)} />
+            </div>
+        );
+    }
+
     /* ── Home Dashboard ── */
     return (
         <div className="max-w-2xl mx-auto px-4 pt-6 pb-24">
@@ -3510,6 +3820,12 @@ export function AdminDashboard() {
                     title="Classificatore Immagini"
                     subtitle="Analizza se una foto amigurumi è reale o generata da IA"
                     onClick={() => setActiveSection('image-classifier')}
+                />
+                <SectionCard
+                    icon={<MessageSquare size={20} className="text-[#7B5CF6]" />}
+                    title="Test Modello + Feedback"
+                    subtitle="Genera schemi, valida la matematica e correggi gli errori per il training"
+                    onClick={() => setActiveSection('model-test')}
                 />
             </div>
         </div>
