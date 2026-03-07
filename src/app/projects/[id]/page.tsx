@@ -5,7 +5,7 @@ import {
     ArrowLeft, Minus, Plus, RotateCcw, Timer, Share2,
     ChevronLeft, ChevronRight, StickyNote, Trash2,
     Plus as PlusIcon, Camera, Save, Maximize2, Archive, Pencil,
-    GripVertical, ChevronUp, ChevronDown, FileDown, X
+    GripVertical, ChevronUp, ChevronDown, FileDown, X, Sparkles, CheckCircle2
 } from "lucide-react";
 import { useProjectStore, Project, RoundCounter as RoundCounterType, ProjectImage } from "@/features/projects/store/useProjectStore";
 import { luDB } from "@/lib/db";
@@ -63,6 +63,12 @@ export default function ProjectDetail() {
     const [imgDragIdx, setImgDragIdx] = useState<number | null>(null);
     const [imgOverIdx, setImgOverIdx] = useState<number | null>(null);
     const [exportingPdf, setExportingPdf] = useState(false);
+    const [showContribuisci, setShowContribuisci] = useState(false);
+    const [contribTitle, setContribTitle] = useState('');
+    const [contribDifficulty, setContribDifficulty] = useState<'beginner' | 'intermediate' | 'advanced'>('beginner');
+    const [contribNotes, setContribNotes] = useState('');
+    const [contribSubmitting, setContribSubmitting] = useState(false);
+    const [contribDone, setContribDone] = useState(false);
 
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const renderTaskRef = useRef<any>(null);
@@ -1024,6 +1030,172 @@ export default function ProjectDetail() {
                     </div>
                 )}
             </div>
+
+            {/* Contribuisci schema — visible only with secs data */}
+            {project.secs.length > 0 && user && (
+                <div className="bg-gradient-to-br from-[#F4EEFF] to-[#EEF0F4] rounded-[32px] p-6 border border-[#E6DAFF] shadow-sm mb-10">
+                    <div className="flex items-start gap-3 mb-4">
+                        <div className="w-10 h-10 rounded-2xl bg-[#7B5CF6] flex items-center justify-center shrink-0 shadow-md">
+                            <Sparkles size={18} className="text-white" />
+                        </div>
+                        <div>
+                            <h3 className="font-black text-[#1C1C1E] text-sm">Contribuisci al Modello AI</h3>
+                            <p className="text-xs text-[#6B7280] mt-0.5 leading-relaxed">
+                                Hai compilato {project.secs.length} contator{project.secs.length === 1 ? 'e' : 'i'} per questo progetto.
+                                Condividi la struttura del tuo schema per aiutare ad addestrare il modello AI Lurumi.
+                            </p>
+                        </div>
+                    </div>
+                    <button
+                        onClick={() => {
+                            setContribTitle(project.title);
+                            setContribDone(false);
+                            setShowContribuisci(true);
+                        }}
+                        className="w-full h-11 bg-[#7B5CF6] text-white rounded-2xl font-bold text-sm shadow-md active:scale-95 transition-transform"
+                    >
+                        Condividi schema
+                    </button>
+                </div>
+            )}
+
+            {/* Modal Contribuisci */}
+            {showContribuisci && (
+                <div className="fixed inset-0 z-[10000] flex items-end md:items-center justify-center bg-black/50" onClick={() => setShowContribuisci(false)}>
+                    <div
+                        className="w-full max-w-lg bg-white rounded-t-[32px] md:rounded-[32px] shadow-2xl animate-in slide-in-from-bottom md:slide-in-from-bottom-0 duration-300 flex flex-col max-h-[90vh]"
+                        onClick={e => e.stopPropagation()}
+                    >
+                        <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#EEF0F4] shrink-0">
+                            <div className="flex items-center gap-2.5">
+                                <Sparkles size={18} className="text-[#7B5CF6]" />
+                                <h3 className="text-lg font-black text-[#1C1C1E]">Condividi Schema</h3>
+                            </div>
+                            <button onClick={() => setShowContribuisci(false)} className="w-8 h-8 flex items-center justify-center rounded-xl bg-[#FAFAFC] border border-[#EEF0F4] text-[#9AA2B1]">
+                                <X size={16} />
+                            </button>
+                        </div>
+
+                        {contribDone ? (
+                            <div className="flex flex-col items-center justify-center py-16 px-6 gap-4">
+                                <CheckCircle2 size={48} className="text-green-500" />
+                                <p className="font-black text-[#1C1C1E] text-lg text-center">Schema inviato!</p>
+                                <p className="text-sm text-[#6B7280] text-center">Il team Lurumi lo revisionerà e lo aggiungerà al dataset di training. Grazie!</p>
+                                <button onClick={() => setShowContribuisci(false)} className="mt-2 h-11 px-8 bg-[#7B5CF6] text-white rounded-2xl font-bold text-sm">
+                                    Chiudi
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="overflow-y-auto flex-1 px-6 py-4 flex flex-col gap-4">
+                                {/* Titolo */}
+                                <div>
+                                    <label className="text-xs font-black text-[#1C1C1E] uppercase tracking-widest mb-1.5 block">Titolo schema</label>
+                                    <input
+                                        type="text"
+                                        value={contribTitle}
+                                        onChange={e => setContribTitle(e.target.value)}
+                                        placeholder="Es. Orsetto Bruno, Testa Coniglio..."
+                                        className="w-full h-11 px-4 bg-[#FAFAFC] border border-[#EEF0F4] rounded-xl text-sm font-medium focus:outline-none focus:border-[#7B5CF6]"
+                                    />
+                                </div>
+
+                                {/* Difficoltà */}
+                                <div>
+                                    <label className="text-xs font-black text-[#1C1C1E] uppercase tracking-widest mb-1.5 block">Difficoltà</label>
+                                    <div className="flex gap-2">
+                                        {(['beginner', 'intermediate', 'advanced'] as const).map(d => (
+                                            <button
+                                                key={d}
+                                                onClick={() => setContribDifficulty(d)}
+                                                className={`flex-1 h-9 rounded-xl text-xs font-bold border transition-all ${contribDifficulty === d ? 'bg-[#7B5CF6] text-white border-[#7B5CF6]' : 'bg-[#FAFAFC] text-[#6B7280] border-[#EEF0F4]'}`}
+                                            >
+                                                {d === 'beginner' ? 'Facile' : d === 'intermediate' ? 'Medio' : 'Avanzato'}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* Parti rilevate dai contatori */}
+                                <div>
+                                    <label className="text-xs font-black text-[#1C1C1E] uppercase tracking-widest mb-1.5 block">
+                                        Parti rilevate ({project.secs.length})
+                                    </label>
+                                    <div className="bg-[#FAFAFC] rounded-2xl border border-[#EEF0F4] divide-y divide-[#EEF0F4]">
+                                        {project.secs.map(sec => (
+                                            <div key={sec.id} className="flex items-center justify-between px-4 py-2.5">
+                                                <span className="text-sm font-bold text-[#1C1C1E]">{sec.name}</span>
+                                                <span className="text-sm font-black text-[#7B5CF6]">{sec.value} giri</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* Note opzionali */}
+                                <div>
+                                    <label className="text-xs font-black text-[#1C1C1E] uppercase tracking-widest mb-1.5 block">Note aggiuntive (opzionale)</label>
+                                    <textarea
+                                        value={contribNotes}
+                                        onChange={e => setContribNotes(e.target.value)}
+                                        rows={3}
+                                        placeholder="Filato usato, misura uncinetto, note sullo schema..."
+                                        className="w-full px-4 py-3 bg-[#FAFAFC] border border-[#EEF0F4] rounded-xl text-sm font-medium focus:outline-none focus:border-[#7B5CF6] resize-none"
+                                    />
+                                </div>
+
+                                <p className="text-xs text-[#9AA2B1] leading-relaxed">
+                                    Inviando questo schema accetti che venga usato in forma anonima per addestrare il modello AI Lurumi. Puoi richiederne la rimozione in qualsiasi momento.
+                                </p>
+                            </div>
+                        )}
+
+                        {!contribDone && (
+                            <div className="px-6 pb-6 pt-3 shrink-0">
+                                <button
+                                    disabled={!contribTitle.trim() || contribSubmitting}
+                                    onClick={async () => {
+                                        if (!contribTitle.trim() || contribSubmitting) return;
+                                        setContribSubmitting(true);
+                                        try {
+                                            const parts = project.secs.map(sec => ({
+                                                name: sec.name,
+                                                rounds: [],
+                                                final_count: sec.value,
+                                                source: 'sec_counter',
+                                            }));
+                                            const res = await fetch('/api/training/submit-contribution', {
+                                                method: 'POST',
+                                                headers: { 'Content-Type': 'application/json' },
+                                                body: JSON.stringify({
+                                                    title: contribTitle.trim(),
+                                                    difficulty: contribDifficulty,
+                                                    admin_notes: contribNotes.trim() || null,
+                                                    project_id: project.id,
+                                                    parts,
+                                                }),
+                                            });
+                                            if (res.ok) {
+                                                setContribDone(true);
+                                            }
+                                        } finally {
+                                            setContribSubmitting(false);
+                                        }
+                                    }}
+                                    className="w-full h-12 bg-[#7B5CF6] text-white rounded-2xl font-bold shadow-lg disabled:opacity-50 flex items-center justify-center gap-2"
+                                >
+                                    {contribSubmitting ? (
+                                        <span className="animate-pulse">Invio in corso...</span>
+                                    ) : (
+                                        <>
+                                            <Sparkles size={16} />
+                                            Invia schema
+                                        </>
+                                    )}
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

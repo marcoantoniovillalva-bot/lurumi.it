@@ -6,6 +6,7 @@ import {
     ChevronDown, ChevronUp, ExternalLink, X, Save, ToggleLeft, ToggleRight,
     CalendarDays, ArrowLeft, Users, UserCheck, Clock, MessageSquare, Send, Bug,
     ChevronRight as ChevRight, BookOpen, FileText, GripVertical, Mail, Sparkles,
+    CheckCircle2,
 } from "lucide-react";
 import { FullscreenViewer } from "@/components/FullscreenViewer";
 import Link from "next/link";
@@ -2917,7 +2918,182 @@ function SectionNewsletter({ onBack }: { onBack: () => void }) {
     );
 }
 
-type Section = null | 'peak' | 'users' | 'events' | 'ai-costs' | 'support' | 'library' | 'newsletter' | 'email';
+/* ─── Coda Validazione Schemi ────────────────────────────────── */
+
+interface TrainingPattern {
+    id: string;
+    title: string;
+    difficulty: string;
+    category: string | null;
+    parts: { name: string; final_count?: number; rounds?: unknown[] }[];
+    admin_notes: string | null;
+    submitted_at: string;
+    status: string;
+    user_id: string;
+}
+
+function SectionValidationQueue({ onBack }: { onBack: () => void }) {
+    const supabase = createClient();
+    const [patterns, setPatterns] = useState<TrainingPattern[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [actionId, setActionId] = useState<string | null>(null);
+    const [expandedId, setExpandedId] = useState<string | null>(null);
+    const [editNotes, setEditNotes] = useState<Record<string, string>>({});
+
+    useEffect(() => {
+        loadPatterns();
+    }, []);
+
+    const loadPatterns = async () => {
+        setLoading(true);
+        const { data } = await supabase
+            .from('training_patterns')
+            .select('id, title, difficulty, category, parts, admin_notes, submitted_at, status, user_id')
+            .eq('status', 'pending')
+            .order('submitted_at', { ascending: true });
+        setPatterns(data ?? []);
+        setLoading(false);
+    };
+
+    const handleAction = async (id: string, newStatus: 'validated' | 'rejected', notes?: string) => {
+        setActionId(id);
+        try {
+            const { error } = await supabase
+                .from('training_patterns')
+                .update({
+                    status: newStatus,
+                    validated_at: new Date().toISOString(),
+                    admin_notes: notes || null,
+                })
+                .eq('id', id);
+            if (!error) setPatterns(prev => prev.filter(p => p.id !== id));
+        } finally {
+            setActionId(null);
+        }
+    };
+
+    return (
+        <>
+            <div className="flex items-center gap-3 mb-6">
+                <button onClick={onBack} className="w-9 h-9 flex items-center justify-center rounded-xl bg-[#FAFAFC] border border-[#EEF0F4]">
+                    <ArrowLeft size={18} className="text-[#1C1C1E]" />
+                </button>
+                <div>
+                    <h2 className="text-xl font-black text-[#1C1C1E]">Coda Validazione</h2>
+                    <p className="text-xs text-[#9AA2B1] font-medium">Schemi inviati dagli utenti in attesa di revisione</p>
+                </div>
+            </div>
+
+            {loading ? (
+                <div className="flex items-center justify-center py-20">
+                    <div className="w-8 h-8 border-2 border-[#7B5CF6] border-t-transparent rounded-full animate-spin" />
+                </div>
+            ) : patterns.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-20 gap-3 text-center">
+                    <div className="w-16 h-16 rounded-3xl bg-green-50 border border-green-100 flex items-center justify-center">
+                        <CheckCircle2 size={28} className="text-green-400" />
+                    </div>
+                    <p className="font-black text-[#1C1C1E]">Coda vuota</p>
+                    <p className="text-sm text-[#9AA2B1]">Nessuno schema in attesa di validazione.</p>
+                </div>
+            ) : (
+                <div className="flex flex-col gap-4">
+                    {patterns.map(p => {
+                        const isExpanded = expandedId === p.id;
+                        const isActing = actionId === p.id;
+                        const notes = editNotes[p.id] ?? (p.admin_notes || '');
+                        return (
+                            <div key={p.id} className="bg-white rounded-[24px] border border-[#EEF0F4] shadow-sm overflow-hidden">
+                                {/* Header row */}
+                                <div
+                                    className="flex items-start justify-between px-5 pt-4 pb-3 cursor-pointer"
+                                    onClick={() => setExpandedId(isExpanded ? null : p.id)}
+                                >
+                                    <div className="flex-1 min-w-0">
+                                        <p className="font-black text-[#1C1C1E] text-sm truncate">{p.title}</p>
+                                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                                            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                                                p.difficulty === 'beginner' ? 'bg-green-50 text-green-600' :
+                                                p.difficulty === 'intermediate' ? 'bg-amber-50 text-amber-600' :
+                                                'bg-red-50 text-red-500'
+                                            }`}>
+                                                {p.difficulty === 'beginner' ? 'Facile' : p.difficulty === 'intermediate' ? 'Medio' : 'Avanzato'}
+                                            </span>
+                                            <span className="text-xs text-[#9AA2B1]">{p.parts.length} parti</span>
+                                            <span className="text-xs text-[#9AA2B1]">{new Date(p.submitted_at).toLocaleDateString('it-IT')}</span>
+                                        </div>
+                                    </div>
+                                    <ChevronDown size={16} className={`text-[#9AA2B1] mt-1 shrink-0 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                                </div>
+
+                                {/* Expanded detail */}
+                                {isExpanded && (
+                                    <div className="px-5 pb-5 border-t border-[#EEF0F4] pt-3 flex flex-col gap-3">
+                                        {/* Parti */}
+                                        <div>
+                                            <p className="text-xs font-black text-[#9AA2B1] uppercase tracking-widest mb-2">Parti</p>
+                                            <div className="bg-[#FAFAFC] rounded-2xl border border-[#EEF0F4] divide-y divide-[#EEF0F4]">
+                                                {p.parts.map((part, i) => (
+                                                    <div key={i} className="flex items-center justify-between px-4 py-2">
+                                                        <span className="text-sm font-bold text-[#1C1C1E]">{part.name}</span>
+                                                        {part.final_count !== undefined && (
+                                                            <span className="text-sm font-black text-[#7B5CF6]">{part.final_count} giri</span>
+                                                        )}
+                                                        {part.rounds && part.rounds.length > 0 && (
+                                                            <span className="text-xs text-[#9AA2B1]">{part.rounds.length} giri dettagliati</span>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+
+                                        {/* Note admin */}
+                                        <div>
+                                            <p className="text-xs font-black text-[#9AA2B1] uppercase tracking-widest mb-1.5">Note admin</p>
+                                            <textarea
+                                                rows={2}
+                                                value={notes}
+                                                onChange={e => setEditNotes(prev => ({ ...prev, [p.id]: e.target.value }))}
+                                                placeholder="Aggiungi note di revisione..."
+                                                className="w-full px-3 py-2 bg-[#FAFAFC] border border-[#EEF0F4] rounded-xl text-sm font-medium focus:outline-none focus:border-[#7B5CF6] resize-none"
+                                            />
+                                        </div>
+
+                                        {/* Azioni */}
+                                        <div className="flex gap-2 pt-1">
+                                            <button
+                                                disabled={isActing}
+                                                onClick={() => handleAction(p.id, 'rejected', editNotes[p.id] ?? p.admin_notes ?? undefined)}
+                                                className="flex-1 h-10 bg-red-50 text-red-500 border border-red-100 rounded-2xl font-bold text-sm disabled:opacity-50 active:scale-95 transition-all"
+                                            >
+                                                {isActing ? '...' : 'Rifiuta'}
+                                            </button>
+                                            <button
+                                                disabled={isActing}
+                                                onClick={() => handleAction(p.id, 'validated', editNotes[p.id] ?? p.admin_notes ?? undefined)}
+                                                className="flex-[2] h-10 bg-green-500 text-white rounded-2xl font-bold text-sm disabled:opacity-50 active:scale-95 transition-all shadow-md"
+                                            >
+                                                {isActing ? (
+                                                    <span className="animate-pulse">Salvataggio...</span>
+                                                ) : (
+                                                    'Approva schema'
+                                                )}
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
+        </>
+    );
+}
+
+/* ─── fine Coda Validazione ─────────────────────────────────── */
+
+type Section = null | 'peak' | 'users' | 'events' | 'ai-costs' | 'support' | 'library' | 'newsletter' | 'email' | 'validation-queue';
 
 export function AdminDashboard() {
     const [stats, setStats] = useState<Stats | null>(null);
@@ -2997,6 +3173,14 @@ export function AdminDashboard() {
         );
     }
 
+    if (activeSection === 'validation-queue') {
+        return (
+            <div className="max-w-2xl mx-auto px-4 pt-6 pb-24">
+                <SectionValidationQueue onBack={() => setActiveSection(null)} />
+            </div>
+        );
+    }
+
     /* ── Home Dashboard ── */
     return (
         <div className="max-w-2xl mx-auto px-4 pt-6 pb-24">
@@ -3068,6 +3252,12 @@ export function AdminDashboard() {
                     title="Schema Creator"
                     subtitle="Crea schemi amigurumi con validator matematico live"
                     onClick={() => { window.location.href = '/admin/schema-creator' }}
+                />
+                <SectionCard
+                    icon={<FileText size={20} className="text-green-500" />}
+                    title="Coda Validazione"
+                    subtitle="Revisiona e approva gli schemi inviati dagli utenti"
+                    onClick={() => setActiveSection('validation-queue')}
                 />
             </div>
         </div>
