@@ -10,7 +10,7 @@ REGOLE MATEMATICHE ASSOLUTE (non possono essere violate):
 1. AUMENTO (inc/aum): stitch_count_nuovo = stitch_count_precedente + numero_aumenti
 2. DIMINUZIONE (dec/dim): stitch_count_nuovo = stitch_count_precedente - numero_diminuzioni
 3. GIRO DRITTO (Nsc): stitch_count_nuovo = stitch_count_precedente (invariato)
-4. Formula distributiva: da M a M+6 → "(M/6-1)sc, inc) ×6"
+4. Formula distributiva: da M a M+6 → "((M/6-1)pb, aum) ×6"
 5. La sfera standard inizia sempre con AM 6pb (anello magico 6 punti)
 
 VOCABOLARIO (usa sempre le abbreviazioni italiane):
@@ -22,6 +22,13 @@ VOCABOLARIO (usa sempre le abbreviazioni italiane):
 - pbss = punto bassissimo
 - BLO = solo asole posteriori
 
+REGOLE SINTASSI ISTRUZIONI (OBBLIGATORIE):
+- Le ripetizioni usano SEMPRE il simbolo × (Unicode U+00D7), MAI la lettera x
+- I gruppi ripetuti vanno tra parentesi tonde: "(pb, aum) ×6" non "pb, aum ×6"
+- Un singolo punto ripetuto non ha parentesi: "aum ×6" oppure "pb ×12"
+- Giro 1 da anello magico: "AM 6pb" con stitch_count: 6
+- Giro 1 da catenella: "N cat, 1pb in ogni cat" con stitch_count: N
+
 FORMATO OUTPUT — rispondi SOLO con un array JSON valido, senza testo aggiuntivo:
 [
   {
@@ -31,7 +38,9 @@ FORMATO OUTPUT — rispondi SOLO con un array JSON valido, senza testo aggiuntiv
     "rounds": [
       {"round": 1, "instruction": "AM 6pb", "stitch_count": 6},
       {"round": 2, "instruction": "aum ×6", "stitch_count": 12},
-      {"round": "8-10", "instruction": "12pb", "stitch_count": 12}
+      {"round": 3, "instruction": "(pb, aum) ×6", "stitch_count": 18},
+      {"round": "4-6", "instruction": "18pb", "stitch_count": 18},
+      {"round": 7, "instruction": "(pb, dim) ×6", "stitch_count": 12}
     ]
   }
 ]
@@ -60,16 +69,41 @@ export async function POST(req: NextRequest) {
         const { prompt } = await req.json() as { prompt: string }
         if (!prompt?.trim()) return NextResponse.json({ success: false, error: 'Prompt mancante' }, { status: 400 })
 
+        // Carica le ultime correzioni umane dal DB come few-shot examples
+        // Così GPT-4o impara subito dai tuoi feedback senza aspettare il fine-tuning
+        const { data: recentFeedback } = await supabase
+            .from('model_feedback')
+            .select('prompt, model_response, corrected_response')
+            .eq('is_correct', false)
+            .not('corrected_response', 'is', null)
+            .order('created_at', { ascending: false })
+            .limit(5)
+
         const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+
+        // Costruisce i messaggi: system + few-shot da feedback + prompt utente
+        type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string }
+        const messages: ChatMessage[] = [
+            { role: 'system', content: SYSTEM_PROMPT },
+        ]
+
+        // Aggiunge le correzioni recenti come esempi few-shot
+        if (recentFeedback && recentFeedback.length > 0) {
+            for (const fb of recentFeedback.slice().reverse()) { // dal più vecchio al più recente
+                if (fb.prompt && fb.corrected_response) {
+                    messages.push({ role: 'user', content: fb.prompt })
+                    messages.push({ role: 'assistant', content: JSON.stringify(fb.corrected_response) })
+                }
+            }
+        }
+
+        messages.push({ role: 'user', content: prompt })
 
         const completion = await openai.chat.completions.create({
             model: 'gpt-4o',
             max_tokens: 2000,
             temperature: 0.3,
-            messages: [
-                { role: 'system', content: SYSTEM_PROMPT },
-                { role: 'user', content: prompt },
-            ],
+            messages,
         })
 
         const raw = completion.choices[0]?.message?.content?.trim() ?? ''
