@@ -3610,14 +3610,20 @@ function SectionModelTest({ onBack }: { onBack: () => void }) {
                                     Annulla
                                 </button>
                                 <button
-                                    onClick={() => handleSaveFeedback(false)}
-                                    disabled={saving || totalMathErrors > 0}
-                                    className="flex-[2] h-12 bg-[#7B5CF6] text-white rounded-2xl font-bold text-sm shadow-md disabled:opacity-50 active:scale-95 transition-all flex items-center justify-center gap-2"
+                                    onClick={async () => {
+                                        if (totalMathErrors > 0) {
+                                            const ok = confirm(`Il validatore segnala ancora ${totalMathErrors} errore${totalMathErrors !== 1 ? 'i' : ''} matematico${totalMathErrors !== 1 ? 'i' : ''}. Salvare comunque la correzione?`);
+                                            if (!ok) return;
+                                        }
+                                        handleSaveFeedback(false);
+                                    }}
+                                    disabled={saving}
+                                    className={`flex-[2] h-12 text-white rounded-2xl font-bold text-sm shadow-md disabled:opacity-50 active:scale-95 transition-all flex items-center justify-center gap-2 ${totalMathErrors > 0 ? 'bg-orange-500' : 'bg-[#7B5CF6]'}`}
                                 >
                                     {saving ? (
                                         <span className="animate-pulse">Salvataggio...</span>
                                     ) : totalMathErrors > 0 ? (
-                                        `Risolvi ${totalMathErrors} errori`
+                                        `⚠ Salva comunque (${totalMathErrors} err.)`
                                     ) : (
                                         'Salva risposta corretta'
                                     )}
