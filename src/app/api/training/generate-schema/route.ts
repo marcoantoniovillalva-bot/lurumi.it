@@ -69,35 +69,12 @@ export async function POST(req: NextRequest) {
         const { prompt } = await req.json() as { prompt: string }
         if (!prompt?.trim()) return NextResponse.json({ success: false, error: 'Prompt mancante' }, { status: 400 })
 
-        // Carica le ultime correzioni umane dal DB come few-shot examples
-        // Così GPT-4o impara subito dai tuoi feedback senza aspettare il fine-tuning
-        const { data: recentFeedback } = await supabase
-            .from('model_feedback')
-            .select('prompt, model_response, corrected_response')
-            .eq('is_correct', false)
-            .not('corrected_response', 'is', null)
-            .order('created_at', { ascending: false })
-            .limit(5)
-
         const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
-        // Costruisce i messaggi: system + few-shot da feedback + prompt utente
-        type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string }
-        const messages: ChatMessage[] = [
-            { role: 'system', content: SYSTEM_PROMPT },
+        const messages = [
+            { role: 'system' as const, content: SYSTEM_PROMPT },
+            { role: 'user' as const, content: prompt },
         ]
-
-        // Aggiunge le correzioni recenti come esempi few-shot
-        if (recentFeedback && recentFeedback.length > 0) {
-            for (const fb of recentFeedback.slice().reverse()) { // dal più vecchio al più recente
-                if (fb.prompt && fb.corrected_response) {
-                    messages.push({ role: 'user', content: fb.prompt })
-                    messages.push({ role: 'assistant', content: JSON.stringify(fb.corrected_response) })
-                }
-            }
-        }
-
-        messages.push({ role: 'user', content: prompt })
 
         const completion = await openai.chat.completions.create({
             model: 'gpt-4o',
