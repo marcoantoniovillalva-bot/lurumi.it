@@ -3350,12 +3350,24 @@ function SectionModelTest({ onBack }: { onBack: () => void }) {
     const [saved, setSaved] = useState(false);
     const [genError, setGenError] = useState('');
 
-    // Lazy import di validatePart per non aumentare il bundle iniziale
+    // Lazy import di validatePart + validateSchemaStructure + detectPromptType
     const [validatePart, setValidatePart] = useState<((rounds: ModelPart['rounds'], rules?: { wrong: string; correct: string; source?: string }[]) => { valid: boolean; rounds: { round: number | string; ok: boolean; errors: string[]; syntaxErrors: string[]; suggestion: string | null }[]; totalErrors: number; totalSyntaxErrors: number }) | null>(null);
+    const [validateStructure, setValidateStructure] = useState<((parts: ModelPart[], type: string) => { schemaType: string; issues: { severity: string; message: string }[]; ok: boolean }) | null>(null);
+    const [detectType, setDetectType] = useState<((p: string) => string) | null>(null);
     const [syntaxRules, setSyntaxRules] = useState<{ wrong: string; correct: string; source?: string }[]>([]);
 
     useEffect(() => {
-        import('@/lib/pattern-math').then(m => setValidatePart(() => m.validatePart));
+        import('@/lib/pattern-math').then(m => {
+            setValidatePart(() => m.validatePart);
+            // Wrapper per adattare ModelPart[] → formato atteso da validateSchemaStructure
+            setValidateStructure(() => (parts: ModelPart[], type: string) =>
+                m.validateSchemaStructure(
+                    parts.map(p => ({ start_type: p.start_type, rounds: p.rounds })),
+                    type as Parameters<typeof m.validateSchemaStructure>[1]
+                )
+            );
+            setDetectType(() => (p: string) => m.detectPromptType(p));
+        });
         // Carica regole sintattiche (libro + correzioni admin dal DB)
         fetch('/api/training/syntax-rules')
             .then(r => r.json())
@@ -3367,6 +3379,14 @@ function SectionModelTest({ onBack }: { onBack: () => void }) {
         if (!validatePart || !modelParts) return null;
         return (correcting ? editedParts : modelParts)?.map(part => validatePart(part.rounds, syntaxRules));
     }, [validatePart, modelParts, editedParts, correcting, syntaxRules]);
+
+    // Validazione strutturale: tipo rilevato dal prompt + controllo struttura schema
+    const structureValidation = useMemo(() => {
+        if (!validateStructure || !detectType || !modelParts) return null;
+        const type = detectType(prompt);
+        const partsToCheck = (correcting ? editedParts : modelParts) ?? [];
+        return validateStructure(partsToCheck, type);
+    }, [validateStructure, detectType, modelParts, editedParts, correcting, prompt]);
 
     const totalMathErrors = useMemo(() =>
         validations?.reduce((s, v) => s + v.totalErrors, 0) ?? 0
@@ -3518,6 +3538,31 @@ function SectionModelTest({ onBack }: { onBack: () => void }) {
                                 <span className="ml-auto text-xs font-black text-[#7B5CF6] uppercase">Modalità correzione</span>
                             )}
                         </div>
+
+                        {/* Structural validation — tipo schema vs prompt */}
+                        {structureValidation && structureValidation.schemaType !== 'unknown' && (
+                            <div className={`rounded-[20px] px-4 py-3 border ${structureValidation.ok ? 'bg-blue-50 border-blue-200' : 'bg-amber-50 border-amber-200'}`}>
+                                <div className="flex items-center gap-2 mb-1">
+                                    <span className={`text-xs font-black uppercase tracking-widest ${structureValidation.ok ? 'text-blue-600' : 'text-amber-600'}`}>
+                                        Struttura schema — tipo rilevato: {structureValidation.schemaType}
+                                    </span>
+                                    {structureValidation.ok
+                                        ? <span className="text-blue-500 text-sm ml-auto">✓ Struttura corretta</span>
+                                        : <span className="text-amber-600 text-sm ml-auto">⚠ {structureValidation.issues.filter(i => i.severity === 'error').length} errori strutturali</span>
+                                    }
+                                </div>
+                                {structureValidation.issues.length > 0 && (
+                                    <div className="space-y-1 mt-2">
+                                        {structureValidation.issues.map((issue, i) => (
+                                            <p key={i} className={`text-xs font-medium flex items-start gap-1.5 ${issue.severity === 'error' ? 'text-red-600' : 'text-amber-700'}`}>
+                                                <span className="shrink-0">{issue.severity === 'error' ? '✗' : '⚠'}</span>
+                                                {issue.message}
+                                            </p>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        )}
 
                         {/* Parti */}
                         {displayParts.map((part, partIdx) => {

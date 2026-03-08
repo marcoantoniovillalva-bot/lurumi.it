@@ -501,3 +501,165 @@ export function generateStandardSphere(growthRounds: number, plateauRounds: numb
 
   return rounds
 }
+
+// ---------------------------------------------------------------------------
+// Validazione strutturale — confronto schema vs tipo richiesto dal prompt
+// Fonte: LIBRO_LURUMI_TRAINING_EXTRACTION.md §3, §4, §5
+// ---------------------------------------------------------------------------
+
+export type SchemaType =
+  | 'sphere'      // sfera standard: AM 6pb → +6/giro → plateau → -6/giro
+  | 'oval'        // base ovale: avviamento a catene, espansione simmetrica, BLO
+  | 'hexagonal'   // base esagonale piatta: AM → +6/giro, nessuna chiusura
+  | 'cylinder'    // cilindro: AM o catene → fase dritta lunga, nessun plateau
+  | 'flat'        // pezzo piatto: avviamento a catene, andata e ritorno
+  | 'unknown'
+
+export interface StructureIssue {
+  severity: 'error' | 'warning'
+  message: string
+}
+
+export interface StructureValidationResult {
+  schemaType: SchemaType
+  issues: StructureIssue[]
+  ok: boolean
+}
+
+/**
+ * Rileva il tipo di schema richiesto dal prompt (keyword matching trilingue).
+ * Usato per scegliere le regole strutturali da applicare.
+ */
+export function detectPromptType(prompt: string): SchemaType {
+  const p = prompt.toLowerCase()
+
+  // Sfera / palla
+  if (/\b(sfera|sphere|ball|palla|testa|head|corpo|body)\b/.test(p)) return 'sphere'
+
+  // Base esagonale
+  if (/\b(esagon|hexagon|esagono|base\s+esag)\b/.test(p)) return 'hexagonal'
+
+  // Base ovale (piedi, suole, stivaletti, scarpe)
+  if (/\b(ovale|oval|piede|foot|feet|suola|sole|stivalett|scarpa|shoe|boot)\b/.test(p)) return 'oval'
+
+  // Cilindro (gambe, braccia, code, colli)
+  if (/\b(cilindro|cylinder|gamba|leg|braccio|arm|coda|tail|collo|neck)\b/.test(p)) return 'cylinder'
+
+  // Pezzo piatto (vestiti, ali, orecchie piatte)
+  if (/\b(piatt|flat|vestit|cloth|dress|ala|wing|orecchi\w+\s+piat)\b/.test(p)) return 'flat'
+
+  return 'unknown'
+}
+
+/**
+ * Valida la struttura di uno schema (array di parti) rispetto al tipo atteso.
+ * Ogni tipo ha invarianti strutturali diversi:
+ *   - Sfera: AM, crescita +6, plateau, chiusura -6
+ *   - Ovale: start chain, BLO round, espansione simmetrica
+ *   - Esagonale: AM, solo crescita, nessuna chiusura
+ *   - Cilindro: AM, fase dritta lunga, nessuna chiusura -6
+ *   - Piatto: start chain, nessun AM
+ *
+ * @param parts      - array di parti dello schema (ciascuna con rounds[])
+ * @param schemaType - tipo rilevato dal prompt
+ */
+export function validateSchemaStructure(
+  parts: { start_type?: string; rounds: Round[] }[],
+  schemaType: SchemaType
+): StructureValidationResult {
+  const issues: StructureIssue[] = []
+
+  if (schemaType === 'unknown' || parts.length === 0) {
+    return { schemaType, issues, ok: true }
+  }
+
+  for (let pi = 0; pi < parts.length; pi++) {
+    const part = parts[pi]
+    const counts = part.rounds.map(r => r.stitch_count)
+    const partLabel = parts.length > 1 ? ` (parte ${pi + 1})` : ''
+    const startType = part.start_type ?? ''
+
+    // Analisi sequenza conteggi
+    const peak = Math.max(...counts)
+    const hasBLO = part.rounds.some(r =>
+      (r.modifier ?? '').toUpperCase() === 'BLO' ||
+      r.instruction.toLowerCase().includes('blo') ||
+      r.instruction.toLowerCase().includes('asole')
+    )
+    const growthRounds = counts.filter((c, i) => i > 0 && c > counts[i - 1]).length
+    const decreaseRounds = counts.filter((c, i) => i > 0 && c < counts[i - 1]).length
+    const straightRounds = counts.filter((c, i) => i > 0 && c === counts[i - 1]).length
+    const firstCount = counts[0] ?? 0
+
+    // ── Sfera ──────────────────────────────────────────────────────────────
+    if (schemaType === 'sphere') {
+      if (startType && startType !== 'magic_ring') {
+        issues.push({ severity: 'error', message: `La sfera deve iniziare con anello magico${partLabel}, non con catene` })
+      }
+      if (firstCount !== 6) {
+        issues.push({ severity: 'warning', message: `La sfera standard inizia con 6pb${partLabel} — trovato ${firstCount}pb` })
+      }
+      if (growthRounds === 0) {
+        issues.push({ severity: 'error', message: `La sfera deve avere una fase di crescita (+6/giro)${partLabel}` })
+      }
+      if (decreaseRounds === 0) {
+        issues.push({ severity: 'error', message: `La sfera deve avere una fase di chiusura (-6/giro)${partLabel}` })
+      }
+      if (growthRounds > 0 && decreaseRounds > 0 && Math.abs(growthRounds - decreaseRounds) > 1) {
+        issues.push({ severity: 'warning', message: `Sfera asimmetrica${partLabel}: ${growthRounds} giri crescita vs ${decreaseRounds} giri chiusura` })
+      }
+    }
+
+    // ── Base esagonale (piatta) ────────────────────────────────────────────
+    if (schemaType === 'hexagonal') {
+      if (startType && startType !== 'magic_ring') {
+        issues.push({ severity: 'error', message: `La base esagonale deve iniziare con anello magico${partLabel}` })
+      }
+      if (firstCount !== 6) {
+        issues.push({ severity: 'warning', message: `La base esagonale standard inizia con 6pb${partLabel} — trovato ${firstCount}pb` })
+      }
+      if (decreaseRounds > 0) {
+        issues.push({ severity: 'warning', message: `Base esagonale piatta non dovrebbe avere giri di chiusura${partLabel} — è un pezzo aperto` })
+      }
+      if (growthRounds === 0) {
+        issues.push({ severity: 'error', message: `La base esagonale deve crescere di +6 maglie ogni giro${partLabel}` })
+      }
+    }
+
+    // ── Base ovale ─────────────────────────────────────────────────────────
+    if (schemaType === 'oval') {
+      if (startType && startType !== 'chain') {
+        issues.push({ severity: 'error', message: `La base ovale deve iniziare con catene${partLabel}, non con anello magico` })
+      }
+      if (!hasBLO) {
+        issues.push({ severity: 'warning', message: `La base ovale di solito ha un giro BLO (asole posteriori) per definire la suola${partLabel}` })
+      }
+    }
+
+    // ── Cilindro ───────────────────────────────────────────────────────────
+    if (schemaType === 'cylinder') {
+      if (decreaseRounds > 2) {
+        issues.push({ severity: 'warning', message: `Il cilindro non dovrebbe avere una fase di chiusura${partLabel} — trovati ${decreaseRounds} giri decrescenti` })
+      }
+      if (straightRounds < 3) {
+        issues.push({ severity: 'warning', message: `Il cilindro dovrebbe avere almeno 3 giri dritti consecutivi${partLabel} — trovati ${straightRounds}` })
+      }
+      if (peak > 30 && straightRounds < 5) {
+        issues.push({ severity: 'warning', message: `Cilindro largo (${peak} maglie) ma con soli ${straightRounds} giri dritti${partLabel} — potrebbe essere troppo corto` })
+      }
+    }
+
+    // ── Pezzo piatto ───────────────────────────────────────────────────────
+    if (schemaType === 'flat') {
+      if (startType && startType !== 'chain') {
+        issues.push({ severity: 'warning', message: `I pezzi piatti di solito iniziano con catene${partLabel}` })
+      }
+    }
+  }
+
+  return {
+    schemaType,
+    issues,
+    ok: issues.filter(i => i.severity === 'error').length === 0,
+  }
+}
