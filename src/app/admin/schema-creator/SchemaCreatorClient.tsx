@@ -6,7 +6,7 @@ import {
     ArrowLeft, Plus, Trash2, CheckCircle2, XCircle,
     AlertTriangle, Save, ChevronDown, ChevronUp, GripVertical, Loader2,
 } from "lucide-react";
-import { validatePart, validateSyntax, type Round } from "@/lib/pattern-math";
+import { validatePart, validateSyntax, type Round, type SyntaxRule } from "@/lib/pattern-math";
 
 // ─── Tipi locali ─────────────────────────────────────────────────────────────
 
@@ -74,9 +74,18 @@ export function SchemaCreatorClient() {
     });
 
     const [parts, setParts] = useState<PartInput[]>([]);
+    const [syntaxRules, setSyntaxRules] = useState<SyntaxRule[]>([]);
     const [saving, setSaving] = useState(false);
     const [saveError, setSaveError] = useState<string | null>(null);
     const [saved, setSaved] = useState(false);
+
+    // Carica le regole sintattiche (libro + correzioni admin dal DB) una sola volta
+    React.useEffect(() => {
+        fetch('/api/training/syntax-rules')
+            .then(r => r.json())
+            .then(d => { if (d.rules) setSyntaxRules(d.rules) })
+            .catch(() => {})
+    }, [])
 
     // ── Validazione live ────────────────────────────────────────────────────
     const validationResults = useMemo(() => {
@@ -90,7 +99,7 @@ export function SchemaCreatorClient() {
                     modifier: r.modifier,
                     note: r.note,
                 }));
-            return validatePart(rounds);
+            return validatePart(rounds, syntaxRules);
         });
     }, [parts]);
 
@@ -438,7 +447,7 @@ export function SchemaCreatorClient() {
                                                     ? null
                                                     : roundResult?.ok ?? true;
 
-                                                const syntaxResult = round.instruction.trim() ? validateSyntax(round.instruction) : null;
+                                                const syntaxResult = round.instruction.trim() ? validateSyntax(round.instruction, syntaxRules) : null;
                                                 const hasSyntaxError = syntaxResult && !syntaxResult.ok;
 
                                                 return (

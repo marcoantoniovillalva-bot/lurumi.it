@@ -3351,16 +3351,22 @@ function SectionModelTest({ onBack }: { onBack: () => void }) {
     const [genError, setGenError] = useState('');
 
     // Lazy import di validatePart per non aumentare il bundle iniziale
-    const [validatePart, setValidatePart] = useState<((rounds: ModelPart['rounds']) => { valid: boolean; rounds: { round: number | string; ok: boolean; errors: string[]; syntaxErrors: string[]; suggestion: string | null }[]; totalErrors: number; totalSyntaxErrors: number }) | null>(null);
+    const [validatePart, setValidatePart] = useState<((rounds: ModelPart['rounds'], rules?: { wrong: string; correct: string; source?: string }[]) => { valid: boolean; rounds: { round: number | string; ok: boolean; errors: string[]; syntaxErrors: string[]; suggestion: string | null }[]; totalErrors: number; totalSyntaxErrors: number }) | null>(null);
+    const [syntaxRules, setSyntaxRules] = useState<{ wrong: string; correct: string; source?: string }[]>([]);
 
     useEffect(() => {
         import('@/lib/pattern-math').then(m => setValidatePart(() => m.validatePart));
+        // Carica regole sintattiche (libro + correzioni admin dal DB)
+        fetch('/api/training/syntax-rules')
+            .then(r => r.json())
+            .then(d => { if (d.rules) setSyntaxRules(d.rules) })
+            .catch(() => {})
     }, []);
 
     const validations = useMemo(() => {
         if (!validatePart || !modelParts) return null;
-        return (correcting ? editedParts : modelParts)?.map(part => validatePart(part.rounds));
-    }, [validatePart, modelParts, editedParts, correcting]);
+        return (correcting ? editedParts : modelParts)?.map(part => validatePart(part.rounds, syntaxRules));
+    }, [validatePart, modelParts, editedParts, correcting, syntaxRules]);
 
     const totalMathErrors = useMemo(() =>
         validations?.reduce((s, v) => s + v.totalErrors, 0) ?? 0

@@ -51,38 +51,85 @@ export interface SyntaxValidationResult {
   suggestion: string | null // versione corretta auto-generata, null se nessun errore
 }
 
+export interface SyntaxRule {
+  wrong: string    // pattern sbagliato (normalizzato lowercase per confronto)
+  correct: string  // versione corretta canonica
+  source?: string  // 'book' | 'feedback' — provenienza della regola
+}
+
+/**
+ * Regole sintattiche statiche estratte dal libro "Il Metodo Lurumi".
+ * Fonte: LIBRO_LURUMI_TRAINING_EXTRACTION.md §10 — Pattern Linguistici
+ */
+export const BOOK_SYNTAX_RULES: SyntaxRule[] = [
+  // Simbolo moltiplicazione: x → ×
+  // (gestito anche da R1 dinamica, ma utile come esempio)
+  { wrong: 'aum x6',  correct: 'aum ×6',        source: 'book' },
+  { wrong: 'dim x6',  correct: 'dim ×6',         source: 'book' },
+  { wrong: 'aum x 6', correct: 'aum ×6',         source: 'book' },
+  { wrong: 'dim x 6', correct: 'dim ×6',         source: 'book' },
+  // Parentesi mancanti nei gruppi (esempi canonici dal libro)
+  { wrong: '1pb, aum x6',  correct: '(1pb, aum) ×6',  source: 'book' },
+  { wrong: '2pb, aum x6',  correct: '(2pb, aum) ×6',  source: 'book' },
+  { wrong: '1pb, dim x6',  correct: '(1pb, dim) ×6',  source: 'book' },
+  { wrong: '2pb, dim x6',  correct: '(2pb, dim) ×6',  source: 'book' },
+]
+
 /**
  * Verifica la sintassi di un'istruzione secondo le regole di formato Lurumi.
  * Non dipende dal conteggio maglie — è puramente testuale.
  *
- * Regole controllate:
+ * Regole statiche:
  *   R1 — La lettera 'x' usata come moltiplicazione → deve essere '×' (U+00D7)
  *   R2 — Gruppo multi-istruzione prima di ×N senza parentesi → aggiungere ( )
+ *
+ * Regole dinamiche (opzionali):
+ *   dynamicRules — estratte dai feedback admin salvati nel DB
+ *   Quando l'admin corregge GPT, il pattern sbagliato→corretto viene
+ *   salvato e caricato qui per riconoscerlo automaticamente in futuro.
  */
-export function validateSyntax(instruction: string): SyntaxValidationResult {
+export function validateSyntax(
+  instruction: string,
+  dynamicRules: SyntaxRule[] = []
+): SyntaxValidationResult {
   const errors: string[] = []
   let fixed = instruction
 
+  // Controlla prima le regole dinamiche (dal DB) — hanno priorità perché sono
+  // correzioni specifiche fatte dall'admin su errori reali di GPT
+  const instrLower = instruction.toLowerCase().trim()
+  for (const rule of dynamicRules) {
+    if (instrLower === rule.wrong.toLowerCase().trim()) {
+      errors.push(`Sintassi non canonica (corretta in precedenza dall'admin)`)
+      fixed = rule.correct
+      // Una sola regola dinamica per istruzione — evita conflitti
+      break
+    }
+  }
+
   // R1: 'x' (lettera ASCII) usata come simbolo moltiplicazione
   // Riconosce: ") x6", "aum x 6", "pb x6"
-  const asciiX = /([)a-zA-Z\d])\s*\bx\b\s*(\d+)/g
-  if (asciiX.test(instruction)) {
-    errors.push('Usa × (U+00D7) invece della lettera x come simbolo di ripetizione')
-    fixed = fixed.replace(/([)a-zA-Z\d])\s*\bx\b\s*(\d+)/g, (_, before, n) =>
-      `${before} ×${n}`
-    )
+  if (errors.length === 0) {
+    const asciiX = /([)a-zA-Z\d])\s*\bx\b\s*(\d+)/g
+    if (asciiX.test(fixed)) {
+      errors.push('Usa × (U+00D7) invece della lettera x come simbolo di ripetizione')
+      fixed = fixed.replace(/([)a-zA-Z\d])\s*\bx\b\s*(\d+)/g, (_, before, n) =>
+        `${before} ×${n}`
+      )
+    }
   }
 
   // R2: gruppo multi-istruzione (contiene virgola) davanti a ×N senza parentesi
   // Es. "pb, aum ×6" → "(pb, aum) ×6"
-  // Non si applica se ci sono già parentesi che racchiudono il gruppo
-  const missingParens = /^([^()\n,]+,[^()\n]+)\s*[×]\s*(\d+)\s*$/
-  const mpMatch = fixed.match(missingParens)
-  if (mpMatch) {
-    const inner = mpMatch[1].trim()
-    const n = mpMatch[2]
-    errors.push(`Gruppo multi-istruzione deve essere tra parentesi: (${inner}) ×${n}`)
-    fixed = `(${inner}) ×${n}`
+  if (errors.length === 0) {
+    const missingParens = /^([^()\n,]+,[^()\n]+)\s*[×]\s*(\d+)\s*$/
+    const mpMatch = fixed.match(missingParens)
+    if (mpMatch) {
+      const inner = mpMatch[1].trim()
+      const n = mpMatch[2]
+      errors.push(`Gruppo multi-istruzione deve essere tra parentesi: (${inner}) ×${n}`)
+      fixed = `(${inner}) ×${n}`
+    }
   }
 
   return {
@@ -245,7 +292,8 @@ function countOccurrences(text: string, keywords: string[]): number {
 export function validateRound(
   prevCount: number,
   instruction: string,
-  declaredCount: number
+  declaredCount: number,
+  dynamicRules: SyntaxRule[] = []
 ): RoundValidationResult {
   const errors: string[] = []
   const parsed = parseInstruction(instruction)
@@ -269,7 +317,7 @@ export function validateRound(
     errors.push('Attenzione: lo stesso giro contiene sia aumenti che diminuzioni — verifica che sia intenzionale')
   }
 
-  const syntax = validateSyntax(instruction)
+  const syntax = validateSyntax(instruction, dynamicRules)
 
   return {
     round: 0,
@@ -289,7 +337,7 @@ export function validateRound(
  * @param rounds - array di giri con instruction e stitch_count
  * @returns PartValidationResult con dettaglio per ogni giro
  */
-export function validatePart(rounds: Round[]): PartValidationResult {
+export function validatePart(rounds: Round[], dynamicRules: SyntaxRule[] = []): PartValidationResult {
   const results: RoundValidationResult[] = []
   let currentCount = 0
 
@@ -298,7 +346,7 @@ export function validatePart(rounds: Round[]): PartValidationResult {
     const roundNumbers = expandRoundRange(r.round)
 
     for (const rNum of roundNumbers) {
-      const result = validateRound(currentCount, r.instruction, r.stitch_count)
+      const result = validateRound(currentCount, r.instruction, r.stitch_count, dynamicRules)
       result.round = rNum
       results.push(result)
 
