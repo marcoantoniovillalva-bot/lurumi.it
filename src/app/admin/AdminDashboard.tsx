@@ -3351,7 +3351,7 @@ function SectionModelTest({ onBack }: { onBack: () => void }) {
     const [genError, setGenError] = useState('');
 
     // Lazy import di validatePart per non aumentare il bundle iniziale
-    const [validatePart, setValidatePart] = useState<((rounds: ModelPart['rounds']) => { valid: boolean; rounds: { round: number | string; ok: boolean; errors: string[] }[]; totalErrors: number }) | null>(null);
+    const [validatePart, setValidatePart] = useState<((rounds: ModelPart['rounds']) => { valid: boolean; rounds: { round: number | string; ok: boolean; errors: string[]; syntaxErrors: string[]; suggestion: string | null }[]; totalErrors: number; totalSyntaxErrors: number }) | null>(null);
 
     useEffect(() => {
         import('@/lib/pattern-math').then(m => setValidatePart(() => m.validatePart));
@@ -3533,44 +3533,69 @@ function SectionModelTest({ onBack }: { onBack: () => void }) {
                                             const rv = partValidation?.rounds[roundIdx];
                                             const isOk = rv?.ok ?? true;
                                             return (
-                                                <div key={roundIdx} className={`flex items-start gap-2 px-4 py-2 ${!isOk ? 'bg-red-50' : ''}`}>
-                                                    {/* Numero giro */}
-                                                    <span className="text-xs font-black text-[#9AA2B1] w-8 shrink-0 mt-2">
-                                                        G{r.round}
-                                                    </span>
-
-                                                    {/* Istruzione */}
-                                                    {correcting ? (
-                                                        <input
-                                                            type="text"
-                                                            value={r.instruction}
-                                                            onChange={e => updateRoundField(partIdx, roundIdx, 'instruction', e.target.value)}
-                                                            className="flex-1 text-sm font-medium bg-white border border-[#EEF0F4] rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#7B5CF6]"
-                                                        />
-                                                    ) : (
-                                                        <span className="flex-1 text-sm font-medium text-[#1C1C1E] py-1.5">{r.instruction}</span>
-                                                    )}
-
-                                                    {/* Conteggio */}
-                                                    {correcting ? (
-                                                        <input
-                                                            type="number"
-                                                            value={r.stitch_count}
-                                                            onChange={e => updateRoundField(partIdx, roundIdx, 'stitch_count', e.target.value)}
-                                                            className={`w-14 text-sm font-black text-center border rounded-lg px-1 py-1.5 focus:outline-none ${isOk ? 'border-[#EEF0F4] text-[#7B5CF6] focus:border-[#7B5CF6]' : 'border-red-300 text-red-600 bg-red-50 focus:border-red-400'}`}
-                                                        />
-                                                    ) : (
-                                                        <span className={`text-sm font-black w-12 text-right py-1.5 ${isOk ? 'text-[#7B5CF6]' : 'text-red-500'}`}>
-                                                            [{r.stitch_count}]
+                                                <div key={roundIdx} className={`flex flex-col px-4 py-2 ${!isOk ? 'bg-red-50' : rv?.syntaxErrors?.length ? 'bg-orange-50' : ''}`}>
+                                                    <div className="flex items-start gap-2">
+                                                        {/* Numero giro */}
+                                                        <span className="text-xs font-black text-[#9AA2B1] w-8 shrink-0 mt-2">
+                                                            G{r.round}
                                                         </span>
-                                                    )}
 
-                                                    {/* Badge validazione */}
-                                                    <div className="w-6 shrink-0 flex items-center justify-center mt-1.5" title={rv?.errors?.join(' | ')}>
-                                                        {isOk
-                                                            ? <span className="text-green-500 text-sm">✓</span>
-                                                            : <span className="text-red-500 text-sm">✗</span>}
+                                                        {/* Istruzione */}
+                                                        {correcting ? (
+                                                            <input
+                                                                type="text"
+                                                                value={r.instruction}
+                                                                onChange={e => updateRoundField(partIdx, roundIdx, 'instruction', e.target.value)}
+                                                                className={`flex-1 text-sm font-medium bg-white border rounded-lg px-2 py-1.5 focus:outline-none ${rv?.syntaxErrors?.length ? 'border-orange-300 focus:border-orange-400' : 'border-[#EEF0F4] focus:border-[#7B5CF6]'}`}
+                                                            />
+                                                        ) : (
+                                                            <span className="flex-1 text-sm font-medium text-[#1C1C1E] py-1.5">{r.instruction}</span>
+                                                        )}
+
+                                                        {/* Conteggio */}
+                                                        {correcting ? (
+                                                            <input
+                                                                type="number"
+                                                                value={r.stitch_count}
+                                                                onChange={e => updateRoundField(partIdx, roundIdx, 'stitch_count', e.target.value)}
+                                                                className={`w-14 text-sm font-black text-center border rounded-lg px-1 py-1.5 focus:outline-none ${isOk ? 'border-[#EEF0F4] text-[#7B5CF6] focus:border-[#7B5CF6]' : 'border-red-300 text-red-600 bg-red-50 focus:border-red-400'}`}
+                                                            />
+                                                        ) : (
+                                                            <span className={`text-sm font-black w-12 text-right py-1.5 ${isOk ? 'text-[#7B5CF6]' : 'text-red-500'}`}>
+                                                                [{r.stitch_count}]
+                                                            </span>
+                                                        )}
+
+                                                        {/* Badge validazione */}
+                                                        <div className="w-6 shrink-0 flex items-center justify-center mt-1.5" title={rv?.errors?.join(' | ')}>
+                                                            {isOk && !rv?.syntaxErrors?.length
+                                                                ? <span className="text-green-500 text-sm">✓</span>
+                                                                : rv?.syntaxErrors?.length && isOk
+                                                                    ? <span className="text-orange-400 text-sm">⚠</span>
+                                                                    : <span className="text-red-500 text-sm">✗</span>}
+                                                        </div>
                                                     </div>
+
+                                                    {/* Errori di sintassi con pulsante correggi */}
+                                                    {correcting && rv?.syntaxErrors?.length ? (
+                                                        <div className="ml-8 mt-1 flex items-start gap-2 bg-orange-50 border border-orange-200 rounded-lg px-3 py-2">
+                                                            <span className="text-orange-500 text-xs shrink-0 mt-0.5">⚠</span>
+                                                            <div className="flex-1 min-w-0">
+                                                                <p className="text-xs text-orange-700 font-medium">{rv.syntaxErrors[0]}</p>
+                                                                {rv.suggestion && (
+                                                                    <p className="text-xs text-orange-600 font-mono mt-0.5">→ {rv.suggestion}</p>
+                                                                )}
+                                                            </div>
+                                                            {rv.suggestion && (
+                                                                <button
+                                                                    onClick={() => updateRoundField(partIdx, roundIdx, 'instruction', rv.suggestion!)}
+                                                                    className="shrink-0 text-xs font-black text-orange-600 bg-orange-100 hover:bg-orange-200 px-2 py-1 rounded-lg transition-colors"
+                                                                >
+                                                                    Correggi
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    ) : null}
                                                 </div>
                                             );
                                         })}

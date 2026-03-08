@@ -6,7 +6,7 @@ import {
     ArrowLeft, Plus, Trash2, CheckCircle2, XCircle,
     AlertTriangle, Save, ChevronDown, ChevronUp, GripVertical, Loader2,
 } from "lucide-react";
-import { validatePart, type Round } from "@/lib/pattern-math";
+import { validatePart, validateSyntax, type Round } from "@/lib/pattern-math";
 
 // ─── Tipi locali ─────────────────────────────────────────────────────────────
 
@@ -438,54 +438,75 @@ export function SchemaCreatorClient() {
                                                     ? null
                                                     : roundResult?.ok ?? true;
 
+                                                const syntaxResult = round.instruction.trim() ? validateSyntax(round.instruction) : null;
+                                                const hasSyntaxError = syntaxResult && !syntaxResult.ok;
+
                                                 return (
-                                                    <div
-                                                        key={round.id}
-                                                        className={`grid grid-cols-[48px_1fr_80px_70px_32px] gap-2 items-center mb-1.5 px-1 py-1 rounded-xl transition-colors ${
-                                                            isValid === false ? 'bg-red-50' : isValid === true ? 'bg-green-50/50' : ''
-                                                        }`}
-                                                    >
-                                                        {/* Numero giro */}
-                                                        <input
-                                                            value={round.round}
-                                                            onChange={e => updateRound(part.id, round.id, { round: e.target.value })}
-                                                            className="h-8 px-2 bg-white border border-[#EEF0F4] rounded-lg text-xs font-black text-center outline-none focus:border-[#7B5CF6]"
-                                                            placeholder="1"
-                                                        />
-                                                        {/* Istruzione */}
-                                                        <input
-                                                            value={round.instruction}
-                                                            onChange={e => updateRound(part.id, round.id, { instruction: e.target.value })}
-                                                            className="h-8 px-3 bg-white border border-[#EEF0F4] rounded-lg text-xs font-medium outline-none focus:border-[#7B5CF6]"
-                                                            placeholder="es. (1pb, aum) ×6"
-                                                        />
-                                                        {/* Conteggio dichiarato */}
-                                                        <input
-                                                            type="number"
-                                                            value={round.stitch_count}
-                                                            onChange={e => updateRound(part.id, round.id, { stitch_count: e.target.value })}
-                                                            className="h-8 px-2 bg-white border border-[#EEF0F4] rounded-lg text-xs font-black text-center outline-none focus:border-[#7B5CF6]"
-                                                            placeholder="[N]"
-                                                            min={0}
-                                                        />
-                                                        {/* Badge validazione */}
-                                                        <div className="flex justify-center">
-                                                            {isValid === null ? (
-                                                                <span className="text-[#9AA2B1] text-xs">—</span>
-                                                            ) : (
-                                                                <ValidationBadge
-                                                                    ok={isValid}
-                                                                    error={roundResult?.errors.join('; ')}
-                                                                />
-                                                            )}
-                                                        </div>
-                                                        {/* Elimina */}
-                                                        <button
-                                                            onClick={() => removeRound(part.id, round.id)}
-                                                            className="w-7 h-7 flex items-center justify-center bg-white border border-[#EEF0F4] rounded-lg text-[#9AA2B1] hover:text-red-400 hover:border-red-200 transition-colors"
+                                                    <div key={round.id} className="mb-1.5">
+                                                        <div
+                                                            className={`grid grid-cols-[48px_1fr_80px_70px_32px] gap-2 items-center px-1 py-1 rounded-xl transition-colors ${
+                                                                isValid === false ? 'bg-red-50' : hasSyntaxError ? 'bg-orange-50' : isValid === true ? 'bg-green-50/50' : ''
+                                                            }`}
                                                         >
-                                                            <Trash2 size={12} />
-                                                        </button>
+                                                            {/* Numero giro */}
+                                                            <input
+                                                                value={round.round}
+                                                                onChange={e => updateRound(part.id, round.id, { round: e.target.value })}
+                                                                className="h-8 px-2 bg-white border border-[#EEF0F4] rounded-lg text-xs font-black text-center outline-none focus:border-[#7B5CF6]"
+                                                                placeholder="1"
+                                                            />
+                                                            {/* Istruzione */}
+                                                            <input
+                                                                value={round.instruction}
+                                                                onChange={e => updateRound(part.id, round.id, { instruction: e.target.value })}
+                                                                className={`h-8 px-3 bg-white border rounded-lg text-xs font-medium outline-none ${hasSyntaxError ? 'border-orange-300 focus:border-orange-400' : 'border-[#EEF0F4] focus:border-[#7B5CF6]'}`}
+                                                                placeholder="es. (1pb, aum) ×6"
+                                                            />
+                                                            {/* Conteggio dichiarato */}
+                                                            <input
+                                                                type="number"
+                                                                value={round.stitch_count}
+                                                                onChange={e => updateRound(part.id, round.id, { stitch_count: e.target.value })}
+                                                                className="h-8 px-2 bg-white border border-[#EEF0F4] rounded-lg text-xs font-black text-center outline-none focus:border-[#7B5CF6]"
+                                                                placeholder="[N]"
+                                                                min={0}
+                                                            />
+                                                            {/* Badge validazione */}
+                                                            <div className="flex justify-center">
+                                                                {isValid === null ? (
+                                                                    <span className="text-[#9AA2B1] text-xs">—</span>
+                                                                ) : hasSyntaxError ? (
+                                                                    <span className="text-orange-400 text-xs font-black" title={syntaxResult.errors.join('; ')}>⚠</span>
+                                                                ) : (
+                                                                    <ValidationBadge
+                                                                        ok={isValid}
+                                                                        error={roundResult?.errors.join('; ')}
+                                                                    />
+                                                                )}
+                                                            </div>
+                                                            {/* Elimina */}
+                                                            <button
+                                                                onClick={() => removeRound(part.id, round.id)}
+                                                                className="w-7 h-7 flex items-center justify-center bg-white border border-[#EEF0F4] rounded-lg text-[#9AA2B1] hover:text-red-400 hover:border-red-200 transition-colors"
+                                                            >
+                                                                <Trash2 size={12} />
+                                                            </button>
+                                                        </div>
+                                                        {/* Suggerimento sintassi con pulsante correggi automaticamente */}
+                                                        {hasSyntaxError && syntaxResult.suggestion && (
+                                                            <div className="mx-1 mt-1 flex items-center gap-2 bg-orange-50 border border-orange-200 rounded-lg px-3 py-1.5">
+                                                                <span className="text-xs text-orange-700 flex-1 min-w-0">
+                                                                    <span className="font-black">Sintassi: </span>{syntaxResult.errors[0]}
+                                                                    <span className="font-mono ml-1 text-orange-600">→ {syntaxResult.suggestion}</span>
+                                                                </span>
+                                                                <button
+                                                                    onClick={() => updateRound(part.id, round.id, { instruction: syntaxResult.suggestion! })}
+                                                                    className="shrink-0 text-xs font-black text-orange-600 bg-orange-100 hover:bg-orange-200 px-2 py-0.5 rounded-lg transition-colors"
+                                                                >
+                                                                    Correggi
+                                                                </button>
+                                                            </div>
+                                                        )}
                                                     </div>
                                                 );
                                             })}

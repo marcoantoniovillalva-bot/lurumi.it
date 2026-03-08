@@ -30,12 +30,66 @@ export interface RoundValidationResult {
   expected: number
   got: number
   errors: string[]
+  syntaxErrors: string[]
+  suggestion: string | null  // istruzione auto-corretta se ci sono errori di sintassi
 }
 
 export interface PartValidationResult {
   valid: boolean
   rounds: RoundValidationResult[]
-  totalErrors: number
+  totalErrors: number       // errori matematici
+  totalSyntaxErrors: number // errori di sintassi
+}
+
+// ---------------------------------------------------------------------------
+// Validazione sintattica — regole di formato indipendenti dalla matematica
+// ---------------------------------------------------------------------------
+
+export interface SyntaxValidationResult {
+  ok: boolean
+  errors: string[]
+  suggestion: string | null // versione corretta auto-generata, null se nessun errore
+}
+
+/**
+ * Verifica la sintassi di un'istruzione secondo le regole di formato Lurumi.
+ * Non dipende dal conteggio maglie — è puramente testuale.
+ *
+ * Regole controllate:
+ *   R1 — La lettera 'x' usata come moltiplicazione → deve essere '×' (U+00D7)
+ *   R2 — Gruppo multi-istruzione prima di ×N senza parentesi → aggiungere ( )
+ */
+export function validateSyntax(instruction: string): SyntaxValidationResult {
+  const errors: string[] = []
+  let fixed = instruction
+
+  // R1: 'x' (lettera ASCII) usata come simbolo moltiplicazione
+  // Riconosce: ") x6", "aum x 6", "pb x6"
+  const asciiX = /([)a-zA-Z\d])\s*\bx\b\s*(\d+)/g
+  if (asciiX.test(instruction)) {
+    errors.push('Usa × (U+00D7) invece della lettera x come simbolo di ripetizione')
+    fixed = fixed.replace(/([)a-zA-Z\d])\s*\bx\b\s*(\d+)/g, (_, before, n) =>
+      `${before} ×${n}`
+    )
+  }
+
+  // R2: gruppo multi-istruzione (contiene virgola) davanti a ×N senza parentesi
+  // Es. "pb, aum ×6" → "(pb, aum) ×6"
+  // Non si applica se ci sono già parentesi che racchiudono il gruppo
+  const missingParens = /^([^()\n,]+,[^()\n]+)\s*[×]\s*(\d+)\s*$/
+  const mpMatch = fixed.match(missingParens)
+  if (mpMatch) {
+    const inner = mpMatch[1].trim()
+    const n = mpMatch[2]
+    errors.push(`Gruppo multi-istruzione deve essere tra parentesi: (${inner}) ×${n}`)
+    fixed = `(${inner}) ×${n}`
+  }
+
+  return {
+    ok: errors.length === 0,
+    errors,
+    suggestion: errors.length > 0 ? fixed : null,
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -215,12 +269,16 @@ export function validateRound(
     errors.push('Attenzione: lo stesso giro contiene sia aumenti che diminuzioni — verifica che sia intenzionale')
   }
 
+  const syntax = validateSyntax(instruction)
+
   return {
     round: 0,
     ok,
     expected,
     got: declaredCount,
     errors,
+    syntaxErrors: syntax.errors,
+    suggestion: syntax.suggestion,
   }
 }
 
@@ -254,11 +312,13 @@ export function validatePart(rounds: Round[]): PartValidationResult {
   }
 
   const totalErrors = results.filter(r => !r.ok).length
+  const totalSyntaxErrors = results.filter(r => r.syntaxErrors.length > 0).length
 
   return {
     valid: totalErrors === 0,
     rounds: results,
     totalErrors,
+    totalSyntaxErrors,
   }
 }
 
