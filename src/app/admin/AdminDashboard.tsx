@@ -3392,11 +3392,24 @@ function SectionModelTest({ onBack }: { onBack: () => void }) {
         }
     };
 
-    const handleSaveFeedback = async (isCorrect: boolean) => {
+    const handleSaveFeedback = async (isCorrect: boolean, validatorOverride = false) => {
         if (!modelParts) return;
         setSaving(true);
         try {
             const correctedResponse = !isCorrect && correcting ? editedParts : null;
+            // Quando l'admin forza il salvataggio ignorando il validatore,
+            // i math_errors si riferiscono alla risposta ORIGINALE del modello
+            // (non alla correzione umana che è ground truth).
+            // math_check_passed = true indica che la correzione è valida come target di training.
+            const mathErrors = validatorOverride ? [] : (
+                validations?.flatMap((v, pi) =>
+                    v.rounds.filter(r => !r.ok).map(r => ({
+                        part: modelParts[pi]?.name,
+                        round: r.round,
+                        errors: r.errors,
+                    }))
+                ) ?? []
+            );
             await fetch('/api/training/save-feedback', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -3405,14 +3418,8 @@ function SectionModelTest({ onBack }: { onBack: () => void }) {
                     model_response: modelParts,
                     is_correct: isCorrect,
                     corrected_response: correctedResponse,
-                    math_check_passed: totalMathErrors === 0,
-                    math_errors: validations?.flatMap((v, pi) =>
-                        v.rounds.filter(r => !r.ok).map(r => ({
-                            part: modelParts[pi]?.name,
-                            round: r.round,
-                            errors: r.errors,
-                        }))
-                    ) ?? [],
+                    math_check_passed: validatorOverride ? true : (totalMathErrors === 0),
+                    math_errors: mathErrors,
                 }),
             });
             setSaved(true);
@@ -3612,10 +3619,12 @@ function SectionModelTest({ onBack }: { onBack: () => void }) {
                                 <button
                                     onClick={async () => {
                                         if (totalMathErrors > 0) {
-                                            const ok = confirm(`Il validatore segnala ancora ${totalMathErrors} errore${totalMathErrors !== 1 ? 'i' : ''} matematico${totalMathErrors !== 1 ? 'i' : ''}. Salvare comunque la correzione?`);
+                                            const ok = confirm(`Il validatore segnala ancora ${totalMathErrors} errore${totalMathErrors !== 1 ? 'i' : ''} matematico${totalMathErrors !== 1 ? 'i' : ''}. Salvare comunque la correzione come ground truth?`);
                                             if (!ok) return;
+                                            handleSaveFeedback(false, true); // validatorOverride: la correzione è corretta
+                                        } else {
+                                            handleSaveFeedback(false);
                                         }
-                                        handleSaveFeedback(false);
                                     }}
                                     disabled={saving}
                                     className={`flex-[2] h-12 text-white rounded-2xl font-bold text-sm shadow-md disabled:opacity-50 active:scale-95 transition-all flex items-center justify-center gap-2 ${totalMathErrors > 0 ? 'bg-orange-500' : 'bg-[#7B5CF6]'}`}
