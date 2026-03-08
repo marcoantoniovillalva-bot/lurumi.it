@@ -3455,6 +3455,15 @@ function SectionModelTest({ onBack }: { onBack: () => void }) {
             setModelParts(null);
             setEditedParts(null);
             setCorrecting(false);
+            // Ricarica le regole sintattiche: se era una correzione di sintassi,
+            // il DB ora contiene la nuova regola dinamica e la prossima generazione
+            // la deve già ricevere senza bisogno di fare refresh della pagina.
+            if (!isCorrect) {
+                fetch('/api/training/syntax-rules').then(r => r.json()).then(d => {
+                    if (d.rules) setSyntaxRules(d.rules)
+                    if (d.mathOverrides) setMathOverrides(d.mathOverrides)
+                }).catch(() => {})
+            }
         } finally {
             setSaving(false);
         }
@@ -3631,7 +3640,7 @@ function SectionModelTest({ onBack }: { onBack: () => void }) {
                                                     </div>
 
                                                     {/* Errori di sintassi con pulsante correggi */}
-                                                    {correcting && rv?.syntaxErrors?.length ? (
+                                                    {rv?.syntaxErrors?.length ? (
                                                         <div className="ml-8 mt-1 flex items-start gap-2 bg-orange-50 border border-orange-200 rounded-lg px-3 py-2">
                                                             <span className="text-orange-500 text-xs shrink-0 mt-0.5">⚠</span>
                                                             <div className="flex-1 min-w-0">
@@ -3640,7 +3649,7 @@ function SectionModelTest({ onBack }: { onBack: () => void }) {
                                                                     <p className="text-xs text-orange-600 font-mono mt-0.5">→ {rv.suggestion}</p>
                                                                 )}
                                                             </div>
-                                                            {rv.suggestion && (
+                                                            {correcting && rv.suggestion && (
                                                                 <button
                                                                     onClick={() => updateRoundField(partIdx, roundIdx, 'instruction', rv.suggestion!)}
                                                                     className="shrink-0 text-xs font-black text-orange-600 bg-orange-100 hover:bg-orange-200 px-2 py-1 rounded-lg transition-colors"
