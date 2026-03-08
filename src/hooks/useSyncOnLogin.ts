@@ -95,11 +95,17 @@ export function useSyncOnLogin(user: User | null) {
                         // Link YouTube: preferisce locale se già presente, altrimenti usa remoto
                         videoId: loc.videoId ?? mapped.videoId,
                         playlistId: loc.playlistId ?? mapped.playlistId,
-                        // Campi mutabili: usa il valore più ricco tra locale e remoto
-                        secs: loc.secs.length >= remoteSecs.length ? loc.secs : remoteSecs,
+                        // Campi mutabili: preferisce sempre il locale.
+                        // syncProject scrive su Supabase ad ogni modifica, quindi il locale
+                        // è sempre almeno aggiornato quanto il remoto sullo stesso dispositivo.
+                        // Se il refresh è immediato (sync ancora in volo), il locale ha lo
+                        // stato più recente (incluse eliminazioni di secs). Il sync realtime
+                        // sulla project page gestisce il multi-device aggiornando il locale
+                        // appena arriva la notifica PostgreSQL.
+                        secs: loc.secs,
                         images: loc.images.length >= remoteImages.length ? loc.images : remoteImages,
-                        counter: Math.max(loc.counter, mapped.counter),
-                        timer: Math.max(loc.timer, mapped.timer),
+                        counter: loc.counter,
+                        timer: loc.timer,
                         notesHtml: loc.notesHtml || mapped.notesHtml,
                     })
                 } else {
@@ -136,11 +142,12 @@ export function useSyncOnLogin(user: User | null) {
                         transcriptData: t.transcript_data ?? null,
                     }
                     if (localProjectIds.has(t.id)) {
-                        // La tabella tutorials NON ha il campo images.
-                        // Non sovrascrivere le immagini locali con [] altrimenti spariscono al refresh.
-                        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-                        const { images: _ignored, ...fieldsWithoutImages } = mapped
-                        updateProject(t.id, fieldsWithoutImages)
+                        // La tabella `tutorials` NON viene mai aggiornata da syncProject:
+                        // contiene solo lo stato iniziale del tutorial (niente secs, niente note).
+                        // Se il progetto esiste già localmente, la versione locale è SEMPRE
+                        // più recente di quella in tutorials → non sovrascrivere mai.
+                        // (sovrascriverla è il bug che fa perdere secs/note al refresh immediato)
+                        return
                     } else {
                         addProject(mapped)
                     }
