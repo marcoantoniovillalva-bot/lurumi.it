@@ -615,8 +615,6 @@ export default function Home() {
                         ) : project.type === 'blank' ? (
                           <span className="text-[#7B5CF6]">Progetto</span>
                         ) : new Date(project.createdAt).toLocaleDateString('it-IT')}
-                        <span className="w-1 h-1 rounded-full bg-[#EEF0F4]" />
-                        {project.counter} giri
                       </p>
                     </>
                   )}

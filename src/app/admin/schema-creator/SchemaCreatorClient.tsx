@@ -97,7 +97,7 @@ export function SchemaCreatorClient() {
     const totalErrors = validationResults.reduce((s, r) => s + r.totalErrors, 0);
     const hasEnoughData = form.title.trim().length > 0 && parts.length > 0 &&
         parts.every(p => p.rounds.length > 0 && p.rounds.every(r => r.instruction.trim() && r.stitch_count.trim()));
-    const canSave = hasEnoughData && totalErrors === 0;
+    const canSave = hasEnoughData;
 
     // ── Part handlers ───────────────────────────────────────────────────────
     const addPart = () => {
@@ -163,6 +163,10 @@ export function SchemaCreatorClient() {
     // ── Salva ────────────────────────────────────────────────────────────────
     const handleSave = async () => {
         if (!canSave) return;
+        if (totalErrors > 0) {
+            const ok = confirm(`Lo schema ha ${totalErrors} errore${totalErrors !== 1 ? 'i' : ''} di validazione matematica. Salvare comunque come ground truth?`);
+            if (!ok) return;
+        }
         setSaving(true);
         setSaveError(null);
 
@@ -221,6 +225,7 @@ export function SchemaCreatorClient() {
                         disabled={!canSave || saving || saved}
                         className={`flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-sm transition-all ${
                             saved ? 'bg-green-500 text-white'
+                            : canSave && totalErrors > 0 ? 'bg-orange-500 text-white active:scale-95'
                             : canSave ? 'bg-[#7B5CF6] text-white active:scale-95'
                             : 'bg-[#EEF0F4] text-[#9AA2B1] cursor-not-allowed'
                         }`}
@@ -527,6 +532,7 @@ export function SchemaCreatorClient() {
                             disabled={!canSave || saving || saved}
                             className={`w-full h-14 flex items-center justify-center gap-3 rounded-[20px] font-black text-base shadow-xl transition-all ${
                                 saved ? 'bg-green-500 text-white'
+                                : canSave && totalErrors > 0 ? 'bg-orange-500 text-white active:scale-[0.98]'
                                 : canSave ? 'bg-[#7B5CF6] text-white active:scale-[0.98]'
                                 : 'bg-[#EEF0F4] text-[#9AA2B1] cursor-not-allowed'
                             }`}
@@ -536,7 +542,7 @@ export function SchemaCreatorClient() {
                             ) : saved ? (
                                 <><CheckCircle2 size={20} /> Salvato come ground truth!</>
                             ) : totalErrors > 0 ? (
-                                <><XCircle size={20} /> {totalErrors} errore{totalErrors !== 1 ? 'i' : ''} da correggere</>
+                                <><AlertTriangle size={20} /> {totalErrors} errore{totalErrors !== 1 ? 'i' : ''} — Salva comunque</>
                             ) : !hasEnoughData ? (
                                 <><AlertTriangle size={20} /> Completa tutti i campi obbligatori</>
                             ) : (

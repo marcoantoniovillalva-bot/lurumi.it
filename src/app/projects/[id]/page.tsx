@@ -602,10 +602,18 @@ export default function ProjectDetail() {
             luDB.deleteFile(imgId).catch(() => {}); // delete from IDB (keep main file)
         }
         const updatedImages = project.images.filter((_, i) => i !== (currentPage - 1));
-        updateProject(project.id, { images: updatedImages });
+        const deletedWasCover = project.coverImageId === imgId;
+        updateProject(project.id, {
+            images: updatedImages,
+            ...(deletedWasCover ? { coverImageId: undefined } : {}),
+        });
         setImageUrls(prev => prev.filter((_, i) => i !== (currentPage - 1)));
         setTotalPages(updatedImages.length);
         setCurrentPage(p => Math.max(1, Math.min(updatedImages.length, p)));
+        syncProject({
+            images: updatedImages.map(img => ({ id: img.id })),
+            ...(deletedWasCover ? { cover_image_id: null } : {}),
+        });
     };
 
     const handleSaveNotes = () => {
@@ -671,7 +679,7 @@ export default function ProjectDetail() {
             const pdfBytes = await generatePatternPdf({
                 ...project,
                 // Passa il link YouTube come campo url — pdf-export.ts lo mostra in copertina
-                url: project.videoId ? `https://www.youtube.com/watch?v=${project.videoId}` : project.url,
+                url: project.videoId ? `https://www.youtube.com/watch?v=${project.videoId}` : undefined,
             }, imageUrls);
             const blob = new Blob([pdfBytes.buffer as ArrayBuffer], { type: 'application/pdf' });
             const url = URL.createObjectURL(blob);

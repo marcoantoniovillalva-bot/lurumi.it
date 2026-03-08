@@ -3784,6 +3784,48 @@ function SectionDatasetStats({ onBack }: { onBack: () => void }) {
 
 /* ─── fine Dataset Stats ─────────────────────────────────────── */
 
+/* ─── AI Training Group (collassabile) ──────────────────────── */
+function AiTrainingGroup({ onNavigate }: { onNavigate: (s: Section) => void }) {
+    const [open, setOpen] = useState(false);
+    return (
+        <div className="bg-white rounded-[24px] border border-[#EEF0F4] shadow-sm overflow-hidden">
+            <button
+                onClick={() => setOpen(o => !o)}
+                className="w-full flex items-center gap-4 px-5 py-4 active:scale-[0.98] transition-transform text-left"
+            >
+                <div className="w-11 h-11 rounded-2xl bg-[#F4EEFF] flex items-center justify-center flex-shrink-0">
+                    <Sparkles size={20} className="text-[#7B5CF6]" />
+                </div>
+                <div className="flex-1 min-w-0">
+                    <p className="font-black text-[#1C1C1E] text-[15px]">Modello AI Training</p>
+                    <p className="text-[#9AA2B1] text-xs font-medium mt-0.5">Schema Creator, Validazione, Test e Dataset</p>
+                </div>
+                {open ? <ChevronUp size={18} className="text-[#9AA2B1] flex-shrink-0" /> : <ChevronDown size={18} className="text-[#9AA2B1] flex-shrink-0" />}
+            </button>
+            {open && (
+                <div className="border-t border-[#EEF0F4] divide-y divide-[#EEF0F4]">
+                    {[
+                        { icon: <Sparkles size={18} className="text-[#7B5CF6]" />, title: 'Schema Creator', subtitle: 'Crea schemi con validator matematico live', action: () => { window.location.href = '/admin/schema-creator' } },
+                        { icon: <FileText size={18} className="text-green-500" />, title: 'Coda Validazione', subtitle: 'Revisiona gli schemi inviati dagli utenti', action: () => onNavigate('validation-queue') },
+                        { icon: <Shield size={18} className="text-amber-500" />, title: 'Classificatore Immagini', subtitle: 'Analizza foto amigurumi: reale o AI?', action: () => onNavigate('image-classifier') },
+                        { icon: <MessageSquare size={18} className="text-[#7B5CF6]" />, title: 'Test Modello + Feedback', subtitle: 'Genera schemi e correggi errori per il training', action: () => onNavigate('model-test') },
+                        { icon: <BarChart2 size={18} className="text-blue-500" />, title: 'Dataset Stats', subtitle: 'Contatori live: GT, validati, feedback RLHF', action: () => onNavigate('dataset-stats') },
+                    ].map(item => (
+                        <button key={item.title} onClick={item.action} className="w-full flex items-center gap-3 px-5 py-3.5 hover:bg-[#FAFAFC] active:bg-[#F4EEFF] transition-colors text-left">
+                            <div className="w-8 h-8 rounded-xl bg-[#F4EEFF] flex items-center justify-center flex-shrink-0">{item.icon}</div>
+                            <div className="flex-1 min-w-0">
+                                <p className="font-bold text-[#1C1C1E] text-sm">{item.title}</p>
+                                <p className="text-[#9AA2B1] text-[11px] font-medium truncate">{item.subtitle}</p>
+                            </div>
+                            <ChevRight size={15} className="text-[#9AA2B1] flex-shrink-0" />
+                        </button>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
+
 type Section = null | 'peak' | 'users' | 'events' | 'ai-costs' | 'support' | 'library' | 'newsletter' | 'email' | 'validation-queue' | 'image-classifier' | 'model-test' | 'dataset-stats';
 
 export function AdminDashboard() {
@@ -3962,36 +4004,8 @@ export function AdminDashboard() {
                     subtitle="Campagne, sequenze nurturing e inbox ricevute"
                     onClick={() => setActiveSection('email')}
                 />
-                <SectionCard
-                    icon={<Sparkles size={20} className="text-[#7B5CF6]" />}
-                    title="Schema Creator"
-                    subtitle="Crea schemi amigurumi con validator matematico live"
-                    onClick={() => { window.location.href = '/admin/schema-creator' }}
-                />
-                <SectionCard
-                    icon={<FileText size={20} className="text-green-500" />}
-                    title="Coda Validazione"
-                    subtitle="Revisiona e approva gli schemi inviati dagli utenti"
-                    onClick={() => setActiveSection('validation-queue')}
-                />
-                <SectionCard
-                    icon={<Shield size={20} className="text-amber-500" />}
-                    title="Classificatore Immagini"
-                    subtitle="Analizza se una foto amigurumi è reale o generata da IA"
-                    onClick={() => setActiveSection('image-classifier')}
-                />
-                <SectionCard
-                    icon={<MessageSquare size={20} className="text-[#7B5CF6]" />}
-                    title="Test Modello + Feedback"
-                    subtitle="Genera schemi, valida la matematica e correggi gli errori per il training"
-                    onClick={() => setActiveSection('model-test')}
-                />
-                <SectionCard
-                    icon={<BarChart2 size={20} className="text-blue-500" />}
-                    title="Dataset Stats"
-                    subtitle="Contatori live: ground truth, validati, feedback RLHF, % verso fine-tuning"
-                    onClick={() => setActiveSection('dataset-stats')}
-                />
+                {/* ── Modello AI Training (collassabile) ── */}
+                <AiTrainingGroup onNavigate={setActiveSection} />
             </div>
         </div>
     );
