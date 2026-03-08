@@ -55,6 +55,7 @@ export interface SyntaxRule {
   wrong: string    // pattern sbagliato (normalizzato lowercase per confronto)
   correct: string  // versione corretta canonica
   source?: string  // 'book' | 'feedback' — provenienza della regola
+  wordReplace?: { from: string; to: string }  // sostituzione a livello di parola: cattura qualsiasi istruzione che contenga 'from'
 }
 
 /**
@@ -106,15 +107,31 @@ export function validateSyntax(
   const errors: string[] = []
   let fixed = instruction
 
-  // Controlla prima le regole dinamiche (dal DB) — hanno priorità perché sono
-  // correzioni specifiche fatte dall'admin su errori reali di GPT
+  // ── Regole dinamiche (dal DB) — priorità massima ────────────────────────
   const instrLower = instruction.toLowerCase().trim()
+
+  // D1: match esatto — l'istruzione intera corrisponde a una correzione precedente
   for (const rule of dynamicRules) {
     if (instrLower === rule.wrong.toLowerCase().trim()) {
       errors.push(`Sintassi non canonica (corretta in precedenza dall'admin)`)
       fixed = rule.correct
-      // Una sola regola dinamica per istruzione — evita conflitti
       break
+    }
+  }
+
+  // D2: word-replace — la correzione era una sostituzione di parola (es. sc→pb)
+  // cattura qualsiasi istruzione che contenga la parola sbagliata, non solo quella esatta
+  if (errors.length === 0) {
+    for (const rule of dynamicRules) {
+      if (!rule.wordReplace) continue
+      const { from, to } = rule.wordReplace
+      // Usa lookahead/lookbehind per non toccare parole composite (es. "pbss")
+      const regex = new RegExp(`(?<![a-zA-Z])${from}(?![a-zA-Z])`, 'gi')
+      if (regex.test(fixed)) {
+        errors.push(`Usa '${to}' invece di '${from}'`)
+        fixed = fixed.replace(new RegExp(`(?<![a-zA-Z])${from}(?![a-zA-Z])`, 'gi'), to)
+        break
+      }
     }
   }
 

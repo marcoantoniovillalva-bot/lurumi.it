@@ -3,6 +3,30 @@ import { createClient } from '@/lib/supabase/server'
 import { BOOK_SYNTAX_RULES, type SyntaxRule, type MathOverride } from '@/lib/pattern-math'
 
 /**
+ * Rileva se la differenza tra due istruzioni è una sostituzione di una singola parola.
+ * Es. "(sc, aum) ×6" → "(pb, aum) ×6" → { from: 'sc', to: 'pb' }
+ * Restituisce null se la struttura non-alfabetica è diversa o cambiano più parole.
+ */
+function detectWordReplacement(wrong: string, correct: string): { from: string; to: string } | null {
+    const wrongWords = wrong.toLowerCase().match(/[a-z]+/g) ?? []
+    const correctWords = correct.toLowerCase().match(/[a-z]+/g) ?? []
+    if (wrongWords.length !== correctWords.length) return null
+
+    // La struttura non-alfabetica (numeri, simboli, punteggiatura) deve essere identica
+    const wrongStructure = wrong.toLowerCase().replace(/[a-z]+/g, 'W')
+    const correctStructure = correct.toLowerCase().replace(/[a-z]+/g, 'W')
+    if (wrongStructure !== correctStructure) return null
+
+    const diffs: { from: string; to: string }[] = []
+    for (let i = 0; i < wrongWords.length; i++) {
+        if (wrongWords[i] !== correctWords[i]) {
+            diffs.push({ from: wrongWords[i], to: correctWords[i] })
+        }
+    }
+    return diffs.length === 1 ? diffs[0] : null
+}
+
+/**
  * GET /api/training/syntax-rules
  *
  * Restituisce le regole sintattiche da usare nel validatore client-side:
@@ -59,7 +83,19 @@ export async function GET() {
                             r.wrong.toLowerCase() === wrong.toLowerCase()
                         )
                         if (!alreadyExists) {
-                            dynamicRules.push({ wrong, correct, source: 'feedback' })
+                            const rule: SyntaxRule = { wrong, correct, source: 'feedback' }
+                            // Se la correzione è una sostituzione di singola parola (es. sc→pb),
+                            // aggiungi wordReplace così il validatore cattura anche varianti
+                            // con moltiplicatori diversi (×4, ×8…) non solo quella esatta
+                            const wr = detectWordReplacement(wrong, correct)
+                            if (wr) {
+                                // Evita di aggiungere wordReplace duplicati
+                                const wrAlreadyExists = dynamicRules.some(r =>
+                                    r.wordReplace?.from === wr.from && r.wordReplace?.to === wr.to
+                                )
+                                if (!wrAlreadyExists) rule.wordReplace = wr
+                            }
+                            dynamicRules.push(rule)
                         }
                     }
                 }
