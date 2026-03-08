@@ -3351,15 +3351,15 @@ function SectionModelTest({ onBack }: { onBack: () => void }) {
     const [genError, setGenError] = useState('');
 
     // Lazy import di validatePart + validateSchemaStructure + detectPromptType
-    const [validatePart, setValidatePart] = useState<((rounds: ModelPart['rounds'], rules?: { wrong: string; correct: string; source?: string }[]) => { valid: boolean; rounds: { round: number | string; ok: boolean; errors: string[]; syntaxErrors: string[]; suggestion: string | null }[]; totalErrors: number; totalSyntaxErrors: number }) | null>(null);
+    const [validatePart, setValidatePart] = useState<((rounds: ModelPart['rounds'], rules?: { wrong: string; correct: string; source?: string }[], overrides?: { instruction: string; stitch_count: number }[]) => { valid: boolean; rounds: { round: number | string; ok: boolean; errors: string[]; syntaxErrors: string[]; suggestion: string | null }[]; totalErrors: number; totalSyntaxErrors: number }) | null>(null);
     const [validateStructure, setValidateStructure] = useState<((parts: ModelPart[], type: string) => { schemaType: string; issues: { severity: string; message: string }[]; ok: boolean }) | null>(null);
     const [detectType, setDetectType] = useState<((p: string) => string) | null>(null);
     const [syntaxRules, setSyntaxRules] = useState<{ wrong: string; correct: string; source?: string }[]>([]);
+    const [mathOverrides, setMathOverrides] = useState<{ instruction: string; stitch_count: number }[]>([]);
 
     useEffect(() => {
         import('@/lib/pattern-math').then(m => {
             setValidatePart(() => m.validatePart);
-            // Wrapper per adattare ModelPart[] → formato atteso da validateSchemaStructure
             setValidateStructure(() => (parts: ModelPart[], type: string) =>
                 m.validateSchemaStructure(
                     parts.map(p => ({ start_type: p.start_type, rounds: p.rounds })),
@@ -3368,17 +3368,20 @@ function SectionModelTest({ onBack }: { onBack: () => void }) {
             );
             setDetectType(() => (p: string) => m.detectPromptType(p));
         });
-        // Carica regole sintattiche (libro + correzioni admin dal DB)
+        // Carica regole sintattiche + math override dal DB (aggiornati ad ogni apertura)
         fetch('/api/training/syntax-rules')
             .then(r => r.json())
-            .then(d => { if (d.rules) setSyntaxRules(d.rules) })
+            .then(d => {
+                if (d.rules) setSyntaxRules(d.rules)
+                if (d.mathOverrides) setMathOverrides(d.mathOverrides)
+            })
             .catch(() => {})
     }, []);
 
     const validations = useMemo(() => {
         if (!validatePart || !modelParts) return null;
-        return (correcting ? editedParts : modelParts)?.map(part => validatePart(part.rounds, syntaxRules));
-    }, [validatePart, modelParts, editedParts, correcting, syntaxRules]);
+        return (correcting ? editedParts : modelParts)?.map(part => validatePart(part.rounds, syntaxRules, mathOverrides));
+    }, [validatePart, modelParts, editedParts, correcting, syntaxRules, mathOverrides]);
 
     // Validazione strutturale: tipo rilevato dal prompt + controllo struttura schema
     const structureValidation = useMemo(() => {

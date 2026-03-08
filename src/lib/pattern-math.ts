@@ -76,6 +76,17 @@ export const BOOK_SYNTAX_RULES: SyntaxRule[] = [
 ]
 
 /**
+ * Override matematico — un giro che il validatore matematico flaggerebbe come errore
+ * ma che l'admin ha confermato come corretto salvando un feedback positivo.
+ * La coppia (instruction, stitch_count) è estratta automaticamente dal DB ogni volta
+ * che l'admin usa "✓ Corretto" su uno schema che aveva errori matematici segnalati.
+ */
+export interface MathOverride {
+  instruction: string   // testo dell'istruzione, normalizzato lowercase
+  stitch_count: number  // conteggio dichiarato confermato come corretto
+}
+
+/**
  * Verifica la sintassi di un'istruzione secondo le regole di formato Lurumi.
  * Non dipende dal conteggio maglie — è puramente testuale.
  *
@@ -303,8 +314,24 @@ export function validateRound(
   prevCount: number,
   instruction: string,
   declaredCount: number,
-  dynamicRules: SyntaxRule[] = []
+  dynamicRules: SyntaxRule[] = [],
+  mathOverrides: MathOverride[] = []
 ): RoundValidationResult {
+  // Controlla prima gli override matematici:
+  // se l'admin ha già confermato questa coppia (instruction, stitch_count)
+  // come corretta in un feedback precedente, non ricalcolare — è ground truth.
+  const instrNorm = instruction.trim().toLowerCase()
+  const isOverridden = mathOverrides.some(o =>
+    o.instruction.toLowerCase() === instrNorm && o.stitch_count === declaredCount
+  )
+  if (isOverridden) {
+    const syntax = validateSyntax(instruction, dynamicRules)
+    return {
+      round: 0, ok: true,
+      expected: declaredCount, got: declaredCount,
+      errors: [], syntaxErrors: syntax.errors, suggestion: syntax.suggestion,
+    }
+  }
   const errors: string[] = []
   const parsed = parseInstruction(instruction)
 
@@ -347,7 +374,7 @@ export function validateRound(
  * @param rounds - array di giri con instruction e stitch_count
  * @returns PartValidationResult con dettaglio per ogni giro
  */
-export function validatePart(rounds: Round[], dynamicRules: SyntaxRule[] = []): PartValidationResult {
+export function validatePart(rounds: Round[], dynamicRules: SyntaxRule[] = [], mathOverrides: MathOverride[] = []): PartValidationResult {
   const results: RoundValidationResult[] = []
   let currentCount = 0
 
@@ -356,7 +383,7 @@ export function validatePart(rounds: Round[], dynamicRules: SyntaxRule[] = []): 
     const roundNumbers = expandRoundRange(r.round)
 
     for (const rNum of roundNumbers) {
-      const result = validateRound(currentCount, r.instruction, r.stitch_count, dynamicRules)
+      const result = validateRound(currentCount, r.instruction, r.stitch_count, dynamicRules, mathOverrides)
       result.round = rNum
       results.push(result)
 

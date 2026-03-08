@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { BOOK_SYNTAX_RULES, type SyntaxRule } from '@/lib/pattern-math'
+import { BOOK_SYNTAX_RULES, type SyntaxRule, type MathOverride } from '@/lib/pattern-math'
 
 /**
  * GET /api/training/syntax-rules
@@ -67,12 +67,48 @@ export async function GET() {
         }
     }
 
-    // Combina: regole libro + regole dal feedback (le regole feedback non sovrascrivono quelle del libro)
+    // Combina: regole libro + regole dal feedback
     const bookWrong = new Set(BOOK_SYNTAX_RULES.map(r => r.wrong.toLowerCase()))
     const allRules: SyntaxRule[] = [
         ...BOOK_SYNTAX_RULES,
         ...dynamicRules.filter(r => !bookWrong.has(r.wrong.toLowerCase())),
     ]
 
-    return NextResponse.json({ rules: allRules })
+    // ── Math overrides: feedback positivi su schemi con errori matematici ──
+    // Quando l'admin clicca "✓ Corretto" su uno schema che il validatore aveva
+    // flaggato come errato, quelle coppie (instruction, stitch_count) diventano
+    // verità assoluta → il validatore non le flaggherà mai più.
+    const mathOverrides: MathOverride[] = []
+
+    const { data: positiveFeedbacks } = await supabase
+        .from('model_feedback')
+        .select('model_response, math_errors')
+        .eq('is_correct', true)
+        .eq('math_check_passed', false)
+        .not('math_errors', 'is', null)
+        .limit(200)
+
+    if (positiveFeedbacks) {
+        for (const fb of positiveFeedbacks) {
+            const parts: { name?: string; rounds?: { round: number | string; instruction: string; stitch_count: number }[] }[] = fb.model_response ?? []
+            const errors: { part?: string; round?: number | string }[] = fb.math_errors ?? []
+
+            for (const err of errors) {
+                const part = parts.find(p => p.name === err.part) ?? parts[0]
+                if (!part?.rounds) continue
+                const round = part.rounds.find(r => String(r.round) === String(err.round))
+                if (!round) continue
+
+                const key = round.instruction.trim().toLowerCase()
+                const alreadyExists = mathOverrides.some(o =>
+                    o.instruction.toLowerCase() === key && o.stitch_count === round.stitch_count
+                )
+                if (!alreadyExists) {
+                    mathOverrides.push({ instruction: round.instruction.trim(), stitch_count: round.stitch_count })
+                }
+            }
+        }
+    }
+
+    return NextResponse.json({ rules: allRules, mathOverrides })
 }

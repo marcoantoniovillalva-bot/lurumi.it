@@ -6,7 +6,7 @@ import {
     ArrowLeft, Plus, Trash2, CheckCircle2, XCircle,
     AlertTriangle, Save, ChevronDown, ChevronUp, GripVertical, Loader2,
 } from "lucide-react";
-import { validatePart, validateSyntax, type Round, type SyntaxRule } from "@/lib/pattern-math";
+import { validatePart, validateSyntax, type Round, type SyntaxRule, type MathOverride } from "@/lib/pattern-math";
 
 // ─── Tipi locali ─────────────────────────────────────────────────────────────
 
@@ -75,6 +75,7 @@ export function SchemaCreatorClient() {
 
     const [parts, setParts] = useState<PartInput[]>([]);
     const [syntaxRules, setSyntaxRules] = useState<SyntaxRule[]>([]);
+    const [mathOverrides, setMathOverrides] = useState<MathOverride[]>([]);
     const [saving, setSaving] = useState(false);
     const [saveError, setSaveError] = useState<string | null>(null);
     const [saved, setSaved] = useState(false);
@@ -83,7 +84,10 @@ export function SchemaCreatorClient() {
     React.useEffect(() => {
         fetch('/api/training/syntax-rules')
             .then(r => r.json())
-            .then(d => { if (d.rules) setSyntaxRules(d.rules) })
+            .then(d => {
+                if (d.rules) setSyntaxRules(d.rules)
+                if (d.mathOverrides) setMathOverrides(d.mathOverrides)
+            })
             .catch(() => {})
     }, [])
 
@@ -99,9 +103,9 @@ export function SchemaCreatorClient() {
                     modifier: r.modifier,
                     note: r.note,
                 }));
-            return validatePart(rounds, syntaxRules);
+            return validatePart(rounds, syntaxRules, mathOverrides);
         });
-    }, [parts]);
+    }, [parts, syntaxRules, mathOverrides]);
 
     const totalErrors = validationResults.reduce((s, r) => s + r.totalErrors, 0);
     const hasEnoughData = form.title.trim().length > 0 && parts.length > 0 &&
