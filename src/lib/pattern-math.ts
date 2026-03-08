@@ -220,6 +220,16 @@ function parseInstruction(instruction: string): ParsedInstruction {
   const hasChain = instr.includes('cat') || instr.includes(' ch') || instr.includes('cad')
   const hasJoin = instr.includes('unire') || instr.includes('join')
 
+  // Caso speciale: anello magico — "AM 6pb" / "MR 6sc" / "6 mb nell'AM"
+  // Le N maglie vengono CREATE dall'anello, non sono aumenti rispetto a maglie precedenti.
+  // Le trattiamo come "increases da 0" così il conteggio atteso risulta esattamente N.
+  const magicRingMatch = instr.match(/\b(?:am|mr)\b\s+(\d+)\s*(?:pb|mb|sc|dc)/) ||
+                          instr.match(/(\d+)\s*(?:pb|mb|sc|dc)\s+(?:nel|nell[a']|in)\s+(?:am|mr|anello)/)
+  if (magicRingMatch) {
+    const n = parseInt(magicRingMatch[1])
+    return { increases: n, decreases: 0, straight: 0, hasChain, hasJoin, hasBLO, netChange: n }
+  }
+
   // Pattern: "(Xpb, inc) ×N" o "(Xpb, aum) ×N"
   const groupRepeatMatch = instr.match(/\(([^)]+)\)\s*[×x*]\s*(\d+)/)
   if (groupRepeatMatch) {
