@@ -50,6 +50,7 @@ export interface TranscriptData {
     translated: TranscriptSegment[] | null
     generated_at: string
     has_translation: boolean
+    source?: 'captions' | 'whisper'  // 'whisper' = generato da AI (video senza sottotitoli)
 }
 
 export interface Tutorial {

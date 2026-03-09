@@ -874,7 +874,7 @@ export default function ProjectDetail() {
                                             disabled={!!transcriptAction}
                                             className="h-10 px-6 bg-[#7B5CF6] text-white rounded-xl font-bold text-sm disabled:opacity-50 flex items-center gap-2 mx-auto"
                                         >
-                                            {transcriptAction === 'original' ? <><Loader2 size={15} className="animate-spin" /> Caricamento...</> : 'Genera trascrizione'}
+                                            {transcriptAction === 'original' ? <><Loader2 size={15} className="animate-spin" /> Trascrizione in corso…</> : 'Genera trascrizione'}
                                         </button>
                                     </div>
                                 ) : (
@@ -913,6 +913,12 @@ export default function ProjectDetail() {
                                                 {copyChunkIdx !== null ? `Copia (${copyChunkIdx + 1})…` : 'Copia tutto'}
                                             </button>
                                         </div>
+                                        {transcriptData?.source === 'whisper' && (
+                                            <p className="text-xs text-[#9AA2B1] font-medium mb-2 flex items-center gap-1">
+                                                <span className="bg-[#F4EEFF] text-[#7B5CF6] text-[10px] font-black px-1.5 py-0.5 rounded-md">AI</span>
+                                                Trascritto da Whisper AI (video senza sottotitoli)
+                                            </p>
+                                        )}
                                         {transcriptError && <p className="text-xs text-red-500 font-medium mb-2">{transcriptError}</p>}
                                         <div className="max-h-72 overflow-y-auto flex flex-col gap-1.5">
                                             {activeSegs.map((seg, si) => {
