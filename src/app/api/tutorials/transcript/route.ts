@@ -41,10 +41,40 @@ async function fetchViaSupadata(videoId: string): Promise<TranscriptSegment[]> {
         .filter(s => s.text)
 }
 
-// ── Fallback: trascrizione AI via Groq Whisper ────────────────────────────────
-// Usato quando il video non ha sottotitoli YouTube.
-// youtubei.js usa le API InnerTube (stesse dell'app ufficiale YouTube) per ottenere
-// lo stream audio, poi lo invia a Groq whisper-large-v3 per la trascrizione.
+// ── Fallback 1: sottotitoli automatici YouTube via youtubei.js ────────────────
+// Recupera i sottotitoli auto-generati da YouTube (che Supadata non sempre espone).
+// Non richiede il download dell'audio — usa solo l'API timedtext di YouTube.
+async function fetchViaYoutubeNative(videoId: string): Promise<TranscriptSegment[]> {
+    const { Innertube } = await import('youtubei.js')
+    // generate_session_locally: false → youtubei.js ottiene una sessione reale da YouTube
+    // retrieve_player: false → non scarica il player JS (non serve per le trascrizioni)
+    const yt = await Innertube.create({ retrieve_player: false })
+    const info = await yt.getInfo(videoId)
+    const transcriptInfo = await info.getTranscript()
+    const segments = transcriptInfo.transcript.content?.body?.initial_segments ?? []
+
+    const result: TranscriptSegment[] = []
+    for (const seg of segments) {
+        // TranscriptSectionHeader non ha start_ms → filtra solo TranscriptSegment
+        if (!('start_ms' in seg)) continue
+        const s = seg as { start_ms: string; end_ms: string; snippet: { text: string } }
+        const startSec = parseInt(s.start_ms, 10) / 1000
+        const endSec = parseInt(s.end_ms, 10) / 1000
+        const text = s.snippet?.text?.replace(/\n/g, ' ').trim() ?? ''
+        if (text) result.push({ text, start: startSec, duration: endSec - startSec })
+    }
+
+    if (!result.length) {
+        const err = new Error('NO_NATIVE_TRANSCRIPT') as any
+        err.noNative = true
+        throw err
+    }
+    return result
+}
+
+// ── Fallback 2: trascrizione AI via Groq Whisper ──────────────────────────────
+// Ultimo resort: scarica l'audio e lo trascrive con Whisper.
+// Solo per video senza sottotitoli di nessun tipo.
 async function transcribeViaWhisper(videoId: string): Promise<TranscriptSegment[]> {
     if (!process.env.GROQ_API_KEY) throw new Error('GROQ_API_KEY non configurato')
 
@@ -52,7 +82,7 @@ async function transcribeViaWhisper(videoId: string): Promise<TranscriptSegment[
     const MAX_BYTES = 24 * 1024 * 1024 // 24 MB ≈ 20-30 min a bassa qualità
 
     let audioBuffer: Buffer
-    let mimeType = 'audio/webm'
+    const mimeType = 'audio/webm'
 
     try {
         const yt = await Innertube.create({ retrieve_player: true, generate_session_locally: true })
@@ -70,16 +100,15 @@ async function transcribeViaWhisper(videoId: string): Promise<TranscriptSegment[
                 })
                 break
             } catch (clientErr: any) {
-                const msg = clientErr?.message ?? ''
-                // Solo "login required" o "not available" sono recuperabili → prova il client successivo
-                if (msg.includes('login') || msg.includes('not available') || msg.includes('unavailable')) {
-                    console.warn(`[Whisper] client ${client} fallito (${msg}), provo il prossimo…`)
+                const msg = (clientErr?.message ?? '').toLowerCase()
+                if (msg.includes('login') || msg.includes('not available') || msg.includes('unavailable') || msg.includes('400')) {
+                    console.warn(`[Whisper] client ${client} fallito (${clientErr.message}), provo il prossimo…`)
                     continue
                 }
-                throw clientErr // Altro errore → rilancia subito
+                throw clientErr
             }
         }
-        if (!stream) throw new Error('Impossibile scaricare l\'audio: nessun client disponibile')
+        if (!stream) throw new Error('nessun client disponibile')
 
         const chunks: Uint8Array[] = []
         let totalBytes = 0
@@ -172,9 +201,10 @@ export async function GET(req: NextRequest) {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
 
-    let segments: TranscriptSegment[]
+    let segments: TranscriptSegment[] = []
     let source: 'captions' | 'whisper' = 'captions'
 
+    // ── Step 1: Supadata (sottotitoli manuali YouTube) ─────────────────────────
     try {
         segments = await fetchViaSupadata(videoId)
     } catch (err: any) {
@@ -182,10 +212,24 @@ export async function GET(req: NextRequest) {
             console.error('[Transcript GET] Supadata error:', err.message)
             return NextResponse.json({ error: err.message || 'Errore interno' }, { status: 500 })
         }
-        segments = [] // noCaption → forza fallback Whisper sotto
+        // noCaption → prova i fallback
     }
 
-    // Fallback Whisper: scatta se Supadata non aveva sottotitoli (404) O array vuoto
+    // ── Step 2: YouTube native transcript (sottotitoli auto-generati) ──────────
+    if (!segments.length) {
+        console.log(`[Transcript GET] Supadata vuoto per ${videoId}, provo YouTube native…`)
+        try {
+            segments = await fetchViaYoutubeNative(videoId)
+            console.log(`[Transcript GET] YouTube native: ${segments.length} segmenti`)
+        } catch (nativeErr: any) {
+            if (!nativeErr.noNative) {
+                console.warn('[Transcript GET] YouTube native error:', nativeErr.message)
+            }
+            // noNative o altro errore → prova Whisper
+        }
+    }
+
+    // ── Step 3: Groq Whisper (download audio + AI transcription) ───────────────
     if (!segments.length) {
         console.log(`[Transcript GET] Nessun sottotitolo per ${videoId}, uso Whisper AI`)
         try {
