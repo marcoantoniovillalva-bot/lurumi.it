@@ -57,11 +57,29 @@ async function transcribeViaWhisper(videoId: string): Promise<TranscriptSegment[
     try {
         const yt = await Innertube.create({ retrieve_player: true, generate_session_locally: true })
 
-        const stream = await yt.download(videoId, {
-            type: 'audio',
-            quality: 'bestefficiency', // qualità minima = file più piccolo
-            format: 'any',
-        })
+        // TV_EMBEDDED bypassa il requisito di login per video age-restricted su IP server
+        // Fallback: IOS → ANDROID per massima compatibilità
+        let stream: ReadableStream<Uint8Array> | undefined
+        for (const client of ['TV_EMBEDDED', 'IOS', 'ANDROID'] as const) {
+            try {
+                stream = await yt.download(videoId, {
+                    type: 'audio',
+                    quality: 'bestefficiency',
+                    format: 'any',
+                    client,
+                })
+                break
+            } catch (clientErr: any) {
+                const msg = clientErr?.message ?? ''
+                // Solo "login required" o "not available" sono recuperabili → prova il client successivo
+                if (msg.includes('login') || msg.includes('not available') || msg.includes('unavailable')) {
+                    console.warn(`[Whisper] client ${client} fallito (${msg}), provo il prossimo…`)
+                    continue
+                }
+                throw clientErr // Altro errore → rilancia subito
+            }
+        }
+        if (!stream) throw new Error('Impossibile scaricare l\'audio: nessun client disponibile')
 
         const chunks: Uint8Array[] = []
         let totalBytes = 0
