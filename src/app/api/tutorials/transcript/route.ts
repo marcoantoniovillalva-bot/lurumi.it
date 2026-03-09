@@ -170,11 +170,14 @@ export async function GET(req: NextRequest) {
         segments = await fetchViaSupadata(videoId)
     } catch (err: any) {
         if (!err.noCaption) {
-            // Errore Supadata generico (non "no captions") → restituisci l'errore
             console.error('[Transcript GET] Supadata error:', err.message)
             return NextResponse.json({ error: err.message || 'Errore interno' }, { status: 500 })
         }
-        // Nessun sottotitolo → fallback Whisper AI
+        segments = [] // noCaption → forza fallback Whisper sotto
+    }
+
+    // Fallback Whisper: scatta se Supadata non aveva sottotitoli (404) O array vuoto
+    if (!segments.length) {
         console.log(`[Transcript GET] Nessun sottotitolo per ${videoId}, uso Whisper AI`)
         try {
             segments = await transcribeViaWhisper(videoId)
@@ -190,7 +193,7 @@ export async function GET(req: NextRequest) {
 
     if (!segments.length) {
         return NextResponse.json(
-            { error: 'Trascrizione vuota. Il video potrebbe avere i sottotitoli disabilitati.' },
+            { error: 'Nessuna trascrizione disponibile per questo video.' },
             { status: 404 }
         )
     }
