@@ -43,32 +43,47 @@ async function fetchViaSupadata(videoId: string): Promise<TranscriptSegment[]> {
 
 // ── Fallback: trascrizione AI via Groq Whisper ────────────────────────────────
 // Usato quando il video non ha sottotitoli YouTube.
-// Scarica l'audio (max 24 MB ≈ 20-30 min) e lo trascrive con whisper-large-v3.
+// Usa youtubei.js (InnerTube API — stessa usata dall'app YouTube ufficiale)
+// per ottenere l'URL audio, poi lo trascrive con Groq whisper-large-v3.
 async function transcribeViaWhisper(videoId: string): Promise<TranscriptSegment[]> {
     if (!process.env.GROQ_API_KEY) throw new Error('GROQ_API_KEY non configurato')
 
-    // Ottieni info video e URL audio diretto
-    const ytdl = (await import('@distube/ytdl-core')).default
-    const url = `https://www.youtube.com/watch?v=${videoId}`
+    const { Innertube } = await import('youtubei.js')
 
-    let info: Awaited<ReturnType<typeof ytdl.getInfo>>
+    let yt: InstanceType<typeof Innertube>
+    let audioUrl: string
+    let mimeType = 'audio/webm'
+    let ext = 'webm'
+
     try {
-        info = await ytdl.getInfo(url)
-    } catch (e: any) {
-        throw new Error('Impossibile accedere al video YouTube. Potrebbe essere privato o non disponibile.')
-    }
+        yt = await Innertube.create({ retrieve_player: true, generate_session_locally: true })
+        const info = await yt.getBasicInfo(videoId, 'TV_EMBEDDED')
 
-    // Scegliamo il formato audio di qualità più bassa (meno MB da scaricare)
-    const audioFormat = ytdl.chooseFormat(info.formats, {
-        quality: 'lowestaudio',
-        filter: 'audioonly',
-    })
-    if (!audioFormat?.url) throw new Error('Nessun formato audio disponibile per questo video.')
+        if (!info.streaming_data?.adaptive_formats?.length) {
+            throw new Error('Nessun formato disponibile')
+        }
+
+        // Trova il formato audio-only a qualità minima (meno dati da scaricare)
+        const audioFormats = info.streaming_data.adaptive_formats
+            .filter((f: any) => f.has_audio && !f.has_video)
+            .sort((a: any, b: any) => (a.bitrate ?? 0) - (b.bitrate ?? 0))
+
+        if (!audioFormats.length) throw new Error('Nessun formato audio disponibile')
+
+        const fmt = audioFormats[0] as any
+        // Decifra l'URL con la chiave del player
+        audioUrl = fmt.decipher(yt.session.player)
+        const mime = (fmt.mime_type as string) ?? 'audio/webm'
+        mimeType = mime.split(';')[0]
+        ext = mimeType.split('/')[1]?.split('+')[0] ?? 'webm'
+    } catch (e: any) {
+        throw new Error(`Impossibile accedere all'audio del video YouTube: ${e.message}`)
+    }
 
     // Scarica audio con limite di 24 MB (≈ 20-30 min a bassa qualità)
     const MAX_BYTES = 24 * 1024 * 1024
-    const audioRes = await fetch(audioFormat.url, { signal: AbortSignal.timeout(40_000) })
-    if (!audioRes.ok) throw new Error('Errore nel download dell\'audio.')
+    const audioRes = await fetch(audioUrl, { signal: AbortSignal.timeout(40_000) })
+    if (!audioRes.ok) throw new Error(`Errore download audio: ${audioRes.status}`)
 
     const reader = audioRes.body!.getReader()
     const chunks: Uint8Array[] = []
@@ -85,8 +100,6 @@ async function transcribeViaWhisper(videoId: string): Promise<TranscriptSegment[
     }
 
     const audioBuffer = Buffer.concat(chunks.map(c => Buffer.from(c)))
-    const ext = audioFormat.container || 'webm'
-    const mimeType = audioFormat.mimeType?.split(';')[0] || 'audio/webm'
 
     // Invia a Groq Whisper tramite multipart form
     const formData = new FormData()
