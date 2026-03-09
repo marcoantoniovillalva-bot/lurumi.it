@@ -1,4 +1,5 @@
-import { PDFDocument, rgb, StandardFonts } from 'pdf-lib'
+import { PDFDocument, rgb } from 'pdf-lib'
+import fontkit from '@pdf-lib/fontkit'
 
 export interface PdfProjectInput {
     title: string
@@ -18,13 +19,6 @@ const LIGHT  = rgb(0.933, 0.941, 0.957)  // #EEF0F4
 
 function stripHtml(html: string): string {
     return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
-}
-
-// pdf-lib StandardFonts supportano solo WinAnsi (code point 0-255).
-// Caratteri fuori range (cirillico, CJK, arabo…) causano un errore fatale.
-// Questa funzione li sostituisce con '?' per garantire che il PDF venga generato.
-function toSafeText(text: string): string {
-    return Array.from(text).map(ch => ch.charCodeAt(0) > 255 ? '?' : ch).join('')
 }
 
 function formatTime(seconds: number): string {
@@ -61,13 +55,24 @@ async function fetchImageAsBytes(url: string): Promise<{ bytes: Uint8Array; isPn
     }
 }
 
+async function loadFontBytes(path: string): Promise<ArrayBuffer> {
+    const res = await fetch(path)
+    return res.arrayBuffer()
+}
+
 export async function generatePatternPdf(
     project: PdfProjectInput,
     imageUrls: (string | null)[]
 ): Promise<Uint8Array> {
     const pdfDoc = await PDFDocument.create()
-    const fontBold   = await pdfDoc.embedFont(StandardFonts.HelveticaBold)
-    const fontNormal = await pdfDoc.embedFont(StandardFonts.Helvetica)
+    pdfDoc.registerFontkit(fontkit)
+    // Noto Sans supporta Latin, Cyrillic, Greek e molti altri script
+    const [boldBytes, normalBytes] = await Promise.all([
+        loadFontBytes('/fonts/NotoSans-Bold.ttf'),
+        loadFontBytes('/fonts/NotoSans-Regular.ttf'),
+    ])
+    const fontBold   = await pdfDoc.embedFont(boldBytes)
+    const fontNormal = await pdfDoc.embedFont(normalBytes)
 
     const W = 595  // A4 width pt
     const H = 842  // A4 height pt
@@ -95,7 +100,7 @@ export async function generatePatternPdf(
 
     // Titolo
     const titleSize = project.title.length > 30 ? 24 : 30
-    coverPage.drawText(toSafeText(project.title), {
+    coverPage.drawText(project.title, {
         x: MARGIN, y: coverY, size: titleSize, font: fontBold, color: DARK,
         maxWidth: CONTENT_W,
     })
@@ -269,7 +274,7 @@ export async function generatePatternPdf(
                 y -= secImgH + 12
             }
 
-            secsPage.drawText(toSafeText(sec.name || 'Parte'), {
+            secsPage.drawText(sec.name || 'Parte', {
                 x: MARGIN, y, size: 13, font: fontBold, color: DARK,
             })
             y -= 18
@@ -296,7 +301,7 @@ export async function generatePatternPdf(
         notesPage.drawLine({ start: { x: MARGIN, y }, end: { x: W - MARGIN, y }, thickness: 1, color: LIGHT })
         y -= 28
 
-        const noteText = toSafeText(stripHtml(project.notesHtml))
+        const noteText = stripHtml(project.notesHtml)
         const words = noteText.split(' ')
         const lineH = 16
         const fontSize = 11
