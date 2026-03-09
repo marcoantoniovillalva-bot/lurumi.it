@@ -306,6 +306,13 @@ export default function ProjectDetail() {
         return () => { supabase.removeChannel(channel); };
     }, [id, user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+    // Sync notes ← store quando notesHtml cambia esternamente (useSyncOnLogin, altro dispositivo)
+    // e l'utente non sta modificando. Risolve il bug: note mostrate nel div ma textarea vuota.
+    useEffect(() => {
+        if (isEditingNotesRef.current) return;
+        setNotes(project?.notesHtml || '');
+    }, [project?.notesHtml]); // eslint-disable-line react-hooks/exhaustive-deps
+
     // Autosave note con debounce 2s
     useEffect(() => {
         if (!project || notes === (project.notesHtml || '')) return;
