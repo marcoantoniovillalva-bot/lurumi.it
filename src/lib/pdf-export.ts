@@ -20,6 +20,13 @@ function stripHtml(html: string): string {
     return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
 }
 
+// pdf-lib StandardFonts supportano solo WinAnsi (code point 0-255).
+// Caratteri fuori range (cirillico, CJK, arabo…) causano un errore fatale.
+// Questa funzione li sostituisce con '?' per garantire che il PDF venga generato.
+function toSafeText(text: string): string {
+    return Array.from(text).map(ch => ch.charCodeAt(0) > 255 ? '?' : ch).join('')
+}
+
 function formatTime(seconds: number): string {
     const h = Math.floor(seconds / 3600)
     const m = Math.floor((seconds % 3600) / 60)
@@ -88,7 +95,7 @@ export async function generatePatternPdf(
 
     // Titolo
     const titleSize = project.title.length > 30 ? 24 : 30
-    coverPage.drawText(project.title, {
+    coverPage.drawText(toSafeText(project.title), {
         x: MARGIN, y: coverY, size: titleSize, font: fontBold, color: DARK,
         maxWidth: CONTENT_W,
     })
@@ -262,7 +269,7 @@ export async function generatePatternPdf(
                 y -= secImgH + 12
             }
 
-            secsPage.drawText(sec.name || 'Parte', {
+            secsPage.drawText(toSafeText(sec.name || 'Parte'), {
                 x: MARGIN, y, size: 13, font: fontBold, color: DARK,
             })
             y -= 18
@@ -289,7 +296,7 @@ export async function generatePatternPdf(
         notesPage.drawLine({ start: { x: MARGIN, y }, end: { x: W - MARGIN, y }, thickness: 1, color: LIGHT })
         y -= 28
 
-        const noteText = stripHtml(project.notesHtml)
+        const noteText = toSafeText(stripHtml(project.notesHtml))
         const words = noteText.split(' ')
         const lineH = 16
         const fontSize = 11
