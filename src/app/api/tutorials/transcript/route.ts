@@ -43,68 +43,45 @@ async function fetchViaSupadata(videoId: string): Promise<TranscriptSegment[]> {
 
 // ── Fallback: trascrizione AI via Groq Whisper ────────────────────────────────
 // Usato quando il video non ha sottotitoli YouTube.
-// Usa youtubei.js (InnerTube API — stessa usata dall'app YouTube ufficiale)
-// per ottenere l'URL audio, poi lo trascrive con Groq whisper-large-v3.
+// youtubei.js usa le API InnerTube (stesse dell'app ufficiale YouTube) per ottenere
+// lo stream audio, poi lo invia a Groq whisper-large-v3 per la trascrizione.
 async function transcribeViaWhisper(videoId: string): Promise<TranscriptSegment[]> {
     if (!process.env.GROQ_API_KEY) throw new Error('GROQ_API_KEY non configurato')
 
     const { Innertube } = await import('youtubei.js')
+    const MAX_BYTES = 24 * 1024 * 1024 // 24 MB ≈ 20-30 min a bassa qualità
 
-    let yt: InstanceType<typeof Innertube>
-    let audioUrl: string
+    let audioBuffer: Buffer
     let mimeType = 'audio/webm'
-    let ext = 'webm'
 
     try {
-        yt = await Innertube.create({ retrieve_player: true, generate_session_locally: true })
-        const info = await yt.getBasicInfo(videoId, 'TV_EMBEDDED')
+        const yt = await Innertube.create({ retrieve_player: true, generate_session_locally: true })
 
-        if (!info.streaming_data?.adaptive_formats?.length) {
-            throw new Error('Nessun formato disponibile')
+        const stream = await yt.download(videoId, {
+            type: 'audio',
+            quality: 'bestefficiency', // qualità minima = file più piccolo
+            format: 'any',
+        })
+
+        const chunks: Uint8Array[] = []
+        let totalBytes = 0
+        const reader = stream.getReader()
+        while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+            chunks.push(value)
+            totalBytes += value.length
+            if (totalBytes >= MAX_BYTES) { await reader.cancel(); break }
         }
-
-        // Trova il formato audio-only a qualità minima (meno dati da scaricare)
-        const audioFormats = info.streaming_data.adaptive_formats
-            .filter((f: any) => f.has_audio && !f.has_video)
-            .sort((a: any, b: any) => (a.bitrate ?? 0) - (b.bitrate ?? 0))
-
-        if (!audioFormats.length) throw new Error('Nessun formato audio disponibile')
-
-        const fmt = audioFormats[0] as any
-        // Decifra l'URL con la chiave del player
-        audioUrl = fmt.decipher(yt.session.player)
-        const mime = (fmt.mime_type as string) ?? 'audio/webm'
-        mimeType = mime.split(';')[0]
-        ext = mimeType.split('/')[1]?.split('+')[0] ?? 'webm'
+        audioBuffer = Buffer.concat(chunks.map(c => Buffer.from(c)))
     } catch (e: any) {
-        throw new Error(`Impossibile accedere all'audio del video YouTube: ${e.message}`)
+        throw new Error(`Impossibile scaricare l'audio del video: ${e.message}`)
     }
-
-    // Scarica audio con limite di 24 MB (≈ 20-30 min a bassa qualità)
-    const MAX_BYTES = 24 * 1024 * 1024
-    const audioRes = await fetch(audioUrl, { signal: AbortSignal.timeout(40_000) })
-    if (!audioRes.ok) throw new Error(`Errore download audio: ${audioRes.status}`)
-
-    const reader = audioRes.body!.getReader()
-    const chunks: Uint8Array[] = []
-    let totalBytes = 0
-    while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        chunks.push(value)
-        totalBytes += value.length
-        if (totalBytes >= MAX_BYTES) {
-            await reader.cancel()
-            break
-        }
-    }
-
-    const audioBuffer = Buffer.concat(chunks.map(c => Buffer.from(c)))
 
     // Invia a Groq Whisper tramite multipart form
     const formData = new FormData()
-    const blob = new Blob([audioBuffer], { type: mimeType })
-    formData.append('file', blob, `audio.${ext}`)
+    const blob = new Blob([audioBuffer.buffer as ArrayBuffer], { type: mimeType })
+    formData.append('file', blob, 'audio.webm')
     formData.append('model', 'whisper-large-v3')
     formData.append('response_format', 'verbose_json')
     formData.append('timestamp_granularities[]', 'segment')
@@ -132,6 +109,7 @@ async function transcribeViaWhisper(videoId: string): Promise<TranscriptSegment[
         duration: (seg.end ?? seg.start ?? 0) - (seg.start ?? 0),
     }))
 }
+
 
 // ── Contatore mensile (auto-scaling crediti) ──────────────────────────────────
 async function incrementTranscriptUsage(): Promise<number> {
