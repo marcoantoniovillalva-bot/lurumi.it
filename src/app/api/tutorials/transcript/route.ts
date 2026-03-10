@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
 import OpenAI from 'openai'
-import { YoutubeTranscript } from 'youtube-transcript'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { computeTranscriptCost } from '@/app/api/transcript-config/route'
 import { pushToAdmins } from '@/lib/webpush'
@@ -42,38 +41,7 @@ async function fetchViaSupadata(videoId: string): Promise<TranscriptSegment[]> {
         .filter(s => s.text)
 }
 
-// ── Fallback 1: youtube-transcript (watch page + timedtext XML) ───────────────
-// Usa il pacchetto youtube-transcript che scarica la pagina /watch di YouTube
-// ed estrae i sottotitoli via timedtext API — NON usa InnerTube, quindi non viene
-// bloccato con errore 400 come youtubei.js su IP Vercel.
-async function fetchViaYoutubeTranscript(videoId: string): Promise<TranscriptSegment[]> {
-    // Prova prima senza lingua (prende qualunque lingua disponibile),
-    // poi esplicitamente inglese e italiano
-    const attempts = [undefined, 'en', 'it', 'en-US']
-    for (const lang of attempts) {
-        try {
-            const items = await YoutubeTranscript.fetchTranscript(videoId, lang ? { lang } : {})
-            if (!items?.length) continue
-            return items.map(item => ({
-                text: item.text.replace(/\n/g, ' ').trim(),
-                start: item.offset / 1000,
-                duration: item.duration / 1000,
-            })).filter(s => s.text)
-        } catch (e: any) {
-            const msg = (e?.message ?? '').toLowerCase()
-            // Disabled / not available → inutile riprovare con altre lingue
-            if (msg.includes('disabled') || msg.includes('unavailable') || msg.includes('not available')) {
-                break
-            }
-            console.warn(`[YTTranscript] lang=${lang ?? 'any'} fallito: ${e.message}`)
-        }
-    }
-    const err = new Error('NO_YT_TRANSCRIPT') as any
-    err.noNative = true
-    throw err
-}
-
-// ── Fallback 2: trascrizione AI via Groq Whisper ──────────────────────────────
+// ── Fallback 1: trascrizione AI via Groq Whisper ─────────────────────────────
 // Ultimo resort: scarica l'audio e lo trascrive con Whisper.
 // Solo per video senza sottotitoli di nessun tipo.
 async function transcribeViaWhisper(videoId: string): Promise<TranscriptSegment[]> {
@@ -216,21 +184,7 @@ export async function GET(req: NextRequest) {
         // noCaption → prova i fallback
     }
 
-    // ── Step 2: youtube-transcript package (watch page + timedtext) ────────────
-    if (!segments.length) {
-        console.log(`[Transcript GET] Supadata vuoto per ${videoId}, provo youtube-transcript…`)
-        try {
-            segments = await fetchViaYoutubeTranscript(videoId)
-            console.log(`[Transcript GET] youtube-transcript: ${segments.length} segmenti`)
-        } catch (nativeErr: any) {
-            if (!nativeErr.noNative) {
-                console.warn('[Transcript GET] youtube-transcript error:', nativeErr.message)
-            }
-            // noNative o altro errore → prova Whisper
-        }
-    }
-
-    // ── Step 3: Groq Whisper (download audio + AI transcription) ───────────────
+    // ── Step 2: Groq Whisper (download audio + AI transcription) ───────────────
     if (!segments.length) {
         console.log(`[Transcript GET] Nessun sottotitolo per ${videoId}, uso Whisper AI`)
         try {
@@ -238,8 +192,14 @@ export async function GET(req: NextRequest) {
             source = 'whisper'
         } catch (whisperErr: any) {
             console.error('[Transcript GET] Whisper fallback error:', whisperErr.message)
+            // Messaggio user-friendly: "nessun client" = YouTube blocca l'accesso da server cloud
+            const isBlocked = (whisperErr.message ?? '').includes('nessun client')
             return NextResponse.json(
-                { error: whisperErr.message || 'Impossibile generare la trascrizione AI.' },
+                {
+                    error: isBlocked
+                        ? 'Questo video non ha sottotitoli disponibili su YouTube. La trascrizione automatica non è supportata per questo video.'
+                        : (whisperErr.message || 'Impossibile generare la trascrizione AI.'),
+                },
                 { status: 500 }
             )
         }
