@@ -19,11 +19,14 @@ async function fetchViaSupadata(videoId: string): Promise<TranscriptSegment[]> {
         { headers: { 'x-api-key': apiKey } }
     )
 
-    // 404 = nessun sottotitolo disponibile → segnale per il fallback Whisper
-    if (res.status === 404) {
-        const err = new Error('NO_CAPTIONS') as any
-        err.noCaption = true
-        throw err
+    // 404 or 206 with error = nessun sottotitolo disponibile → segnale per il fallback Whisper
+    if (res.status === 404 || res.status === 206) {
+        const body = await res.json().catch(() => ({}))
+        if (body?.error === 'transcript-unavailable' || res.status === 404) {
+            const err = new Error('NO_CAPTIONS') as any
+            err.noCaption = true
+            throw err
+        }
     }
     if (!res.ok) {
         const body = await res.text().catch(() => '')
@@ -258,8 +261,115 @@ async function translateChunk(groq: OpenAI, texts: string[]): Promise<string[]> 
     return result
 }
 
+// ── Trascrizione audio caricato dall'utente ───────────────────────────────
+async function transcribeUploadedAudio(formData: FormData): Promise<TranscriptSegment[]> {
+    if (!process.env.GROQ_API_KEY) throw new Error('GROQ_API_KEY non configurato')
+
+    const file = formData.get('file') as File
+    if (!file) throw new Error('File audio mancante')
+
+    const validTypes = ['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/ogg', 'audio/webm', 'audio/aac', 'audio/x-m4a']
+    if (!validTypes.includes(file.type) && !file.name.match(/\.(mp3|wav|ogg|webm|m4a|aac)$/i)) {
+        throw new Error('Tipo file non supportato. Carica un file audio (MP3, WAV, OGG, WebM, M4A)')
+    }
+
+    const MAX_SIZE = 25 * 1024 * 1024 // 25 MB
+    if (file.size > MAX_SIZE) {
+        throw new Error('File troppo grande. Max 25 MB.')
+    }
+
+    const arrayBuffer = await file.arrayBuffer()
+    const buffer = Buffer.from(arrayBuffer)
+
+    const formDataUpload = new FormData()
+    const blob = new Blob([buffer], { type: file.type || 'audio/mpeg' })
+    formDataUpload.append('file', blob, file.name)
+    formDataUpload.append('model', 'whisper-large-v3')
+    formDataUpload.append('response_format', 'verbose_json')
+    formDataUpload.append('timestamp_granularities[]', 'segment')
+
+    const whisperRes = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${process.env.GROQ_API_KEY}` },
+        body: formDataUpload,
+    })
+
+    if (!whisperRes.ok) {
+        const errBody = await whisperRes.text().catch(() => '')
+        throw new Error(`Errore trascrizione: ${whisperRes.status}. Riprova con un file audio più chiaro.`)
+    }
+
+    const result = await whisperRes.json()
+
+    if (!result.segments?.length) {
+        throw new Error('Nessun testo rilevato nel file audio.')
+    }
+
+    return result.segments.map((seg: any) => ({
+        text: (seg.text as string).trim(),
+        start: seg.start ?? 0,
+        duration: (seg.end ?? seg.start ?? 0) - (seg.start ?? 0),
+    }))
+}
+
 // ── POST: riceve segmenti → traduce → salva su Supabase ──────────────────────
 export async function POST(req: NextRequest) {
+    // Check if multipart/form-data (audio upload)
+    const contentType = req.headers.get('content-type') || ''
+    
+    if (contentType.includes('multipart/form-data')) {
+        try {
+            const formData = await req.formData()
+            
+            const tutorialId = formData.get('tutorialId') as string
+            const translate = formData.get('translate') === 'true'
+            const table = (formData.get('table') as string) || 'tutorials'
+            
+            if (!tutorialId) {
+                return NextResponse.json({ success: false, error: 'ID tutorial mancante' }, { status: 400 })
+            }
+
+            const supabase = await createClient()
+            const { data: { user } } = await supabase.auth.getUser()
+            if (!user) return NextResponse.json({ success: false, error: 'Non autenticato.' }, { status: 401 })
+
+            // Transcribe the uploaded audio
+            const segments = await transcribeUploadedAudio(formData)
+            
+            // Translate if requested
+            let translated: TranscriptSegment[] | undefined
+            if (translate && segments.length) {
+                const groq = getGroqClient()
+                const CHUNK = 80
+                const allTexts = segments.map(s => s.text)
+                const translatedTexts: string[] = []
+                for (let i = 0; i < allTexts.length; i += CHUNK) {
+                    const chunk = allTexts.slice(i, i + CHUNK)
+                    translatedTexts.push(...(await translateChunk(groq, chunk)))
+                }
+                translated = segments.map((s, i) => ({ ...s, text: translatedTexts[i] || s.text }))
+            }
+
+            const transcriptData = {
+                transcript: segments,
+                translated: translated ?? null,
+                generated_at: new Date().toISOString(),
+                has_translation: !!translated,
+                source: 'whisper' as const,
+            }
+
+            const db = createServiceClient()
+            await db.from(table).update({ transcript_data: transcriptData })
+                .eq('id', tutorialId).eq('user_id', user.id)
+
+            return NextResponse.json({ success: true, translated: translated ?? null, segments })
+        } catch (error: any) {
+            console.error('[Audio Upload POST]', error)
+            return NextResponse.json({ success: false, error: error.message || 'Errore trascrizione audio.' }, { status: 500 })
+        }
+    }
+
+    // Original JSON POST handling
     try {
         const { tutorialId, transcript, translate = false, table = 'tutorials' } = await req.json() as {
             tutorialId: string

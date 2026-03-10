@@ -116,6 +116,10 @@ export default function ProjectDetail() {
     const [transcriptError, setTranscriptError] = useState('');
     const [transcriptData, setTranscriptData] = useState<TranscriptData | null>(() => project?.transcriptData ?? null);
     const [transcriptCost, setTranscriptCost] = useState(0);
+    const [showAudioUpload, setShowAudioUpload] = useState(false);
+    const [audioFile, setAudioFile] = useState<File | null>(null);
+    const [audioUploadError, setAudioUploadError] = useState('');
+    const [audioUploading, setAudioUploading] = useState(false);
     const [copySuccess, setCopySuccess] = useState(false);
     const [copyChunkIdx, setCopyChunkIdx] = useState<number | null>(null);
     const [currentVideoTime, setCurrentVideoTime] = useState(0);
@@ -460,7 +464,47 @@ export default function ProjectDetail() {
     };
 
     const generateTranscript = async (translate: boolean) => {
-        if (!project?.videoId) return;
+        if (!project?.videoId && !audioFile) return;
+        
+        // Handle audio file upload
+        if (audioFile) {
+            setAudioUploading(true);
+            setAudioUploadError('');
+            try {
+                const formData = new FormData();
+                formData.append('file', audioFile);
+                formData.append('tutorialId', id as string);
+                formData.append('translate', String(translate));
+                formData.append('table', 'projects');
+
+                const res = await fetch('/api/tutorials/transcript', {
+                    method: 'POST',
+                    body: formData,
+                });
+                const data = await res.json();
+                if (!res.ok || !data.success) throw new Error(data.error || 'Errore trascrizione audio');
+                
+                const newData: TranscriptData = {
+                    transcript: data.segments,
+                    translated: data.translated ?? null,
+                    generated_at: new Date().toISOString(),
+                    has_translation: !!data.translated,
+                    source: 'whisper',
+                };
+                setTranscriptData(newData);
+                updateProject(id as string, { transcriptData: newData });
+                setShowAudioUpload(false);
+                setAudioFile(null);
+            } catch (err: any) {
+                setAudioUploadError(err.message || 'Errore nel caricamento dell\'audio.');
+            } finally {
+                setAudioUploading(false);
+                setTranscriptAction(null);
+            }
+            return;
+        }
+        
+        // Original video transcript
         setTranscriptAction(translate ? 'translate' : 'original');
         setTranscriptError('');
         try {
@@ -469,7 +513,17 @@ export default function ProjectDetail() {
             if (!segments) {
                 const res = await fetch(`/api/tutorials/transcript?videoId=${project.videoId}`);
                 const data = await res.json();
-                if (!res.ok || !data.success) throw new Error(data.error || 'Errore trascrizione');
+                if (!res.ok || !data.success) {
+                    const errMsg = data.error || 'Errore trascrizione';
+                    // Check if it's a blocked video error - show audio upload option
+                    if (errMsg.includes('non 2xx') || errMsg.includes('non supportato') || errMsg.includes('bloccato')) {
+                        setTranscriptError('Video non disponibile per trascrizione automatica. Puoi caricare un file audio.');
+                        setShowAudioUpload(true);
+                    } else {
+                        setTranscriptError(errMsg);
+                    }
+                    throw new Error(errMsg);
+                }
                 setTranscriptCost(data.nextCost ?? 0);
                 segments = data.segments;
             }
@@ -489,7 +543,9 @@ export default function ProjectDetail() {
             setTranscriptData(newData);
             updateProject(id as string, { transcriptData: newData });
         } catch (err: any) {
-            setTranscriptError(err.message || 'Errore nel recupero della trascrizione.');
+            if (!transcriptError) {
+                setTranscriptError(err.message || 'Errore nel recupero della trascrizione.');
+            }
         } finally {
             setTranscriptAction(null);
         }
@@ -868,14 +924,58 @@ export default function ProjectDetail() {
                                             Genera la trascrizione del video per seguire il tutorial passo passo.
                                             {transcriptCost > 0 && <span className="block mt-1 text-amber-500 font-bold text-xs">Costo: {transcriptCost} credito/i AI</span>}
                                         </p>
-                                        {transcriptError && <p className="text-xs text-red-500 font-medium mb-3">{transcriptError}</p>}
-                                        <button
-                                            onClick={() => generateTranscript(false)}
-                                            disabled={!!transcriptAction}
-                                            className="h-10 px-6 bg-[#7B5CF6] text-white rounded-xl font-bold text-sm disabled:opacity-50 flex items-center gap-2 mx-auto"
-                                        >
-                                            {transcriptAction === 'original' ? <><Loader2 size={15} className="animate-spin" /> Trascrizione in corso…</> : 'Genera trascrizione'}
-                                        </button>
+                                        {transcriptError && !showAudioUpload && <p className="text-xs text-red-500 font-medium mb-3">{transcriptError}</p>}
+                                        
+                                        {showAudioUpload ? (
+                                            <div className="mb-4">
+                                                <p className="text-xs text-[#9AA2B1] mb-3">
+                                                    Carica un file audio del video (MP3, WAV, OGG, WebM, M4A - max 25MB)
+                                                </p>
+                                                <input
+                                                    type="file"
+                                                    accept="audio/*"
+                                                    onChange={(e) => setAudioFile(e.target.files?.[0] || null)}
+                                                    className="block w-full text-sm text-[#9AA2B1] file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-[#7B5CF6] file:text-white hover:file:bg-[#6B46CD] mb-3"
+                                                />
+                                                {audioFile && (
+                                                    <p className="text-xs text-green-500 mb-3">{audioFile.name}</p>
+                                                )}
+                                                {audioUploadError && <p className="text-xs text-red-500 font-medium mb-3">{audioUploadError}</p>}
+                                                <div className="flex gap-2 justify-center">
+                                                    <button
+                                                        onClick={() => generateTranscript(false)}
+                                                        disabled={!audioFile || audioUploading}
+                                                        className="h-10 px-4 bg-[#7B5CF6] text-white rounded-xl font-bold text-sm disabled:opacity-50 flex items-center gap-2"
+                                                    >
+                                                        {audioUploading ? <><Loader2 size={15} className="animate-spin" /> Caricamento...</> : 'Trascrivi audio'}
+                                                    </button>
+                                                    <button
+                                                        onClick={() => { setShowAudioUpload(false); setTranscriptError(''); }}
+                                                        className="h-10 px-4 bg-gray-200 text-gray-700 rounded-xl font-bold text-sm"
+                                                    >
+                                                        Annulla
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <>
+                                                <button
+                                                    onClick={() => generateTranscript(false)}
+                                                    disabled={!!transcriptAction}
+                                                    className="h-10 px-6 bg-[#7B5CF6] text-white rounded-xl font-bold text-sm disabled:opacity-50 flex items-center gap-2 mx-auto"
+                                                >
+                                                    {transcriptAction === 'original' ? <><Loader2 size={15} className="animate-spin" /> Trascrizione in corso…</> : 'Genera trascrizione'}
+                                                </button>
+                                                {transcriptError && (
+                                                    <button
+                                                        onClick={() => setShowAudioUpload(true)}
+                                                        className="mt-3 text-xs text-[#7B5CF6] underline"
+                                                    >
+                                                        Problemi? Carica un file audio
+                                                    </button>
+                                                )}
+                                            </>
+                                        )}
                                     </div>
                                 ) : (
                                     <>
