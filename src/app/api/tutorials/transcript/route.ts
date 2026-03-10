@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import OpenAI from 'openai'
+import { YoutubeTranscript } from 'youtube-transcript'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { computeTranscriptCost } from '@/app/api/transcript-config/route'
 import { pushToAdmins } from '@/lib/webpush'
@@ -41,58 +42,35 @@ async function fetchViaSupadata(videoId: string): Promise<TranscriptSegment[]> {
         .filter(s => s.text)
 }
 
-// ── Fallback 1: sottotitoli automatici YouTube via youtubei.js ────────────────
-// Recupera i sottotitoli auto-generati da YouTube (che Supadata non sempre espone).
-// Non richiede il download dell'audio — usa solo l'API timedtext di YouTube.
-async function fetchViaYoutubeNative(videoId: string): Promise<TranscriptSegment[]> {
-    const { Innertube } = await import('youtubei.js')
-    const yt = await Innertube.create({ retrieve_player: false })
-
-    // Prova più client: alcuni endpoint YouTube danno 400 con il client WEB su IP server
-    let info: Awaited<ReturnType<typeof yt.getInfo>> | undefined
-    for (const client of ['TV_EMBEDDED', 'IOS', 'WEB', 'ANDROID'] as const) {
+// ── Fallback 1: youtube-transcript (watch page + timedtext XML) ───────────────
+// Usa il pacchetto youtube-transcript che scarica la pagina /watch di YouTube
+// ed estrae i sottotitoli via timedtext API — NON usa InnerTube, quindi non viene
+// bloccato con errore 400 come youtubei.js su IP Vercel.
+async function fetchViaYoutubeTranscript(videoId: string): Promise<TranscriptSegment[]> {
+    // Prova prima senza lingua (prende qualunque lingua disponibile),
+    // poi esplicitamente inglese e italiano
+    const attempts = [undefined, 'en', 'it', 'en-US']
+    for (const lang of attempts) {
         try {
-            info = await yt.getInfo(videoId, { client })
-            break
+            const items = await YoutubeTranscript.fetchTranscript(videoId, lang ? { lang } : {})
+            if (!items?.length) continue
+            return items.map(item => ({
+                text: item.text.replace(/\n/g, ' ').trim(),
+                start: item.offset / 1000,
+                duration: item.duration / 1000,
+            })).filter(s => s.text)
         } catch (e: any) {
-            console.warn(`[NativeTranscript] client ${client} fallito: ${e.message}`)
+            const msg = (e?.message ?? '').toLowerCase()
+            // Disabled / not available → inutile riprovare con altre lingue
+            if (msg.includes('disabled') || msg.includes('unavailable') || msg.includes('not available')) {
+                break
+            }
+            console.warn(`[YTTranscript] lang=${lang ?? 'any'} fallito: ${e.message}`)
         }
     }
-
-    if (!info) {
-        const err = new Error('NO_NATIVE_TRANSCRIPT') as any
-        err.noNative = true
-        throw err
-    }
-
-    let transcriptInfo: Awaited<ReturnType<typeof info.getTranscript>>
-    try {
-        transcriptInfo = await info.getTranscript()
-    } catch {
-        const err = new Error('NO_NATIVE_TRANSCRIPT') as any
-        err.noNative = true
-        throw err
-    }
-
-    const segments = transcriptInfo.transcript.content?.body?.initial_segments ?? []
-
-    const result: TranscriptSegment[] = []
-    for (const seg of segments) {
-        // TranscriptSectionHeader non ha start_ms → filtra solo TranscriptSegment
-        if (!('start_ms' in seg)) continue
-        const s = seg as { start_ms: string; end_ms: string; snippet: { text: string } }
-        const startSec = parseInt(s.start_ms, 10) / 1000
-        const endSec = parseInt(s.end_ms, 10) / 1000
-        const text = s.snippet?.text?.replace(/\n/g, ' ').trim() ?? ''
-        if (text) result.push({ text, start: startSec, duration: endSec - startSec })
-    }
-
-    if (!result.length) {
-        const err = new Error('NO_NATIVE_TRANSCRIPT') as any
-        err.noNative = true
-        throw err
-    }
-    return result
+    const err = new Error('NO_YT_TRANSCRIPT') as any
+    err.noNative = true
+    throw err
 }
 
 // ── Fallback 2: trascrizione AI via Groq Whisper ──────────────────────────────
@@ -238,15 +216,15 @@ export async function GET(req: NextRequest) {
         // noCaption → prova i fallback
     }
 
-    // ── Step 2: YouTube native transcript (sottotitoli auto-generati) ──────────
+    // ── Step 2: youtube-transcript package (watch page + timedtext) ────────────
     if (!segments.length) {
-        console.log(`[Transcript GET] Supadata vuoto per ${videoId}, provo YouTube native…`)
+        console.log(`[Transcript GET] Supadata vuoto per ${videoId}, provo youtube-transcript…`)
         try {
-            segments = await fetchViaYoutubeNative(videoId)
-            console.log(`[Transcript GET] YouTube native: ${segments.length} segmenti`)
+            segments = await fetchViaYoutubeTranscript(videoId)
+            console.log(`[Transcript GET] youtube-transcript: ${segments.length} segmenti`)
         } catch (nativeErr: any) {
             if (!nativeErr.noNative) {
-                console.warn('[Transcript GET] YouTube native error:', nativeErr.message)
+                console.warn('[Transcript GET] youtube-transcript error:', nativeErr.message)
             }
             // noNative o altro errore → prova Whisper
         }
