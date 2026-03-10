@@ -46,11 +46,34 @@ async function fetchViaSupadata(videoId: string): Promise<TranscriptSegment[]> {
 // Non richiede il download dell'audio — usa solo l'API timedtext di YouTube.
 async function fetchViaYoutubeNative(videoId: string): Promise<TranscriptSegment[]> {
     const { Innertube } = await import('youtubei.js')
-    // generate_session_locally: false → youtubei.js ottiene una sessione reale da YouTube
-    // retrieve_player: false → non scarica il player JS (non serve per le trascrizioni)
     const yt = await Innertube.create({ retrieve_player: false })
-    const info = await yt.getInfo(videoId)
-    const transcriptInfo = await info.getTranscript()
+
+    // Prova più client: alcuni endpoint YouTube danno 400 con il client WEB su IP server
+    let info: Awaited<ReturnType<typeof yt.getInfo>> | undefined
+    for (const client of ['TV_EMBEDDED', 'IOS', 'WEB', 'ANDROID'] as const) {
+        try {
+            info = await yt.getInfo(videoId, { client })
+            break
+        } catch (e: any) {
+            console.warn(`[NativeTranscript] client ${client} fallito: ${e.message}`)
+        }
+    }
+
+    if (!info) {
+        const err = new Error('NO_NATIVE_TRANSCRIPT') as any
+        err.noNative = true
+        throw err
+    }
+
+    let transcriptInfo: Awaited<ReturnType<typeof info.getTranscript>>
+    try {
+        transcriptInfo = await info.getTranscript()
+    } catch {
+        const err = new Error('NO_NATIVE_TRANSCRIPT') as any
+        err.noNative = true
+        throw err
+    }
+
     const segments = transcriptInfo.transcript.content?.body?.initial_segments ?? []
 
     const result: TranscriptSegment[] = []

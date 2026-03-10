@@ -227,8 +227,11 @@ export function useSyncOnLogin(user: User | null) {
                 if (syncedInStep3.has(p.id)) return
                 const recentlyCreated = (Date.now() - p.createdAt) < RECENT_MS
                 if (recentlyCreated) return
+                // wasSynced = questo progetto era su Supabase e ora non c'è più (cancellato da altro device).
+                // I tutorial NON usano più p.videoId come segnale di sync: il videoId viene impostato
+                // localmente al momento della creazione, NON conferma che l'upsert su Supabase sia
+                // mai riuscito. Usarlo causava la cancellazione di tutorial mai sincronizzati dopo 10 min.
                 const wasSynced = p.url?.startsWith('https://') ||
-                    (p.type === 'tutorial' && p.videoId) ||
                     (p.type === 'blank' && allRemoteIds.has(p.id))
                 if (!allRemoteIds.has(p.id) && wasSynced) {
                     deleteProject(p.id)
