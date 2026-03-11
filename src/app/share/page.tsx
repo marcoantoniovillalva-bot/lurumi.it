@@ -153,21 +153,41 @@ export default function SharePage() {
             return
         }
 
-        // Read files from the SW cache
+        // Read files from localStorage (set by service worker)
         ;(async () => {
             try {
-                if (!('caches' in window)) throw new Error('Cache API non disponibile')
-                const cache = await caches.open('lurumi-share-files-v1')
-                const files: File[] = []
-
-                for (let i = 0; i < count; i++) {
-                    const res = await cache.match(`/share-file-${i}`)
-                    if (!res) continue
-                    const buf = await res.arrayBuffer()
-                    const contentType = res.headers.get('Content-Type') || 'application/octet-stream'
-                    const rawName = res.headers.get('X-File-Name') || `file-${i}`
-                    const fileName = decodeURIComponent(rawName)
-                    files.push(new File([buf], fileName, { type: contentType }))
+                const source = searchParams.get('source')
+                let files: File[] = []
+                
+                if (source === 'sw') {
+                    // Try localStorage first
+                    const storageData = localStorage.getItem('lurumi-shared-files')
+                    if (storageData) {
+                        const parsed = JSON.parse(storageData)
+                        files = parsed.files.map((f: { name: string, type: string, size: number, data: string }) => {
+                            const binary = atob(f.data)
+                            const bytes = new Uint8Array(binary.length)
+                            for (let i = 0; i < binary.length; i++) {
+                                bytes[i] = binary.charCodeAt(i)
+                            }
+                            return new File([bytes], f.name, { type: f.type })
+                        })
+                        localStorage.removeItem('lurumi-shared-files')
+                    }
+                }
+                
+                // Fallback to cache if localStorage failed
+                if (!files.length && 'caches' in window) {
+                    const cache = await caches.open('lurumi-share-files-v1')
+                    for (let i = 0; i < count; i++) {
+                        const res = await cache.match(`/share-file-${i}`)
+                        if (!res) continue
+                        const buf = await res.arrayBuffer()
+                        const contentType = res.headers.get('Content-Type') || 'application/octet-stream'
+                        const rawName = res.headers.get('X-File-Name') || `file-${i}`
+                        const fileName = decodeURIComponent(rawName)
+                        files.push(new File([buf], fileName, { type: contentType }))
+                    }
                 }
 
                 if (!files.length) throw new Error('File non trovati nella cache. Riprova la condivisione.')

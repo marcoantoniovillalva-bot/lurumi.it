@@ -12,31 +12,38 @@ self.addEventListener('fetch', (event) => {
         const urlParam = formData.get('url') || ''
         const files = formData.getAll('media')
 
-        // Se arrivano file (PDF o immagini) → cachiali e vai alla pagina /share
+        // Se arrivano file (PDF o immagini) → salviamo nel client tramite broadcast o storage
         if (files.length > 0) {
-            const cache = await caches.open('lurumi-share-files-v1')
-            // Pulisci file precedenti
-            const oldKeys = await cache.keys()
-            await Promise.all(oldKeys.map(k => cache.delete(k)))
-            // Salva metadati
-            await cache.put('/share-meta', new Response(JSON.stringify({
-                title: String(title),
-                count: files.length,
-                ts: Date.now(),
-            }), { headers: { 'Content-Type': 'application/json' } }))
-            // Salva ogni file
+            // Salva nel localStorage del client (più affidabile della cache)
+            const fileDataArray = []
             for (let i = 0; i < files.length; i++) {
                 const file = files[i]
                 const buf = await file.arrayBuffer()
-                await cache.put(`/share-file-${i}`, new Response(buf, {
-                    headers: {
-                        'Content-Type': file.type || 'application/octet-stream',
-                        'X-File-Name': encodeURIComponent(file.name || `file-${i}`),
-                        'X-File-Size': String(file.size || 0),
-                    }
-                }))
+                const base64 = btoa(String.fromCharCode(...new Uint8Array(buf)))
+                fileDataArray.push({
+                    name: file.name,
+                    type: file.type,
+                    size: file.size,
+                    data: base64
+                })
             }
-            const params = new URLSearchParams({ type: 'file', count: String(files.length), title: String(title) })
+            
+            // Salva nel localStorage
+            const storageData = {
+                files: fileDataArray,
+                title: String(title),
+                count: files.length,
+                ts: Date.now()
+            }
+            
+            // Prova a salvare, se fallisce (quota exceeded) continua con cache
+            try {
+                localStorage.setItem('lurumi-shared-files', JSON.stringify(storageData))
+            } catch (e) {
+                console.warn('localStorage quota exceeded, using cache fallback')
+            }
+            
+            const params = new URLSearchParams({ type: 'file', count: String(files.length), title: String(title), auto: 'true', source: 'sw' })
             return Response.redirect(`/share?${params}`, 303)
         }
 
@@ -50,7 +57,7 @@ self.addEventListener('fetch', (event) => {
         // Fallback generico
         const params = new URLSearchParams({ title: String(title), text: String(text), url: String(urlParam) })
         return Response.redirect(`/share?${params}`, 303)
-    })())
+    })()
 })
 
 self.addEventListener('push', (event) => {
