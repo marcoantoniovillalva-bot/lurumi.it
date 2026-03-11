@@ -433,6 +433,35 @@ export default function SharePage() {
     }
 
     if (step === 'error') {
+        const storageData = typeof window !== 'undefined' ? localStorage.getItem('lurumi-shared-files') : null
+        const handleManualFileSelect = () => {
+            const input = document.createElement('input')
+            input.type = 'file'
+            input.accept = 'application/pdf,image/*'
+            input.multiple = true
+            input.onchange = async (e) => {
+                const files = (e.target as HTMLInputElement).files
+                if (files && files.length > 0) {
+                    const fileArray = Array.from(files)
+                    const allPdf = fileArray.every(f => f.type === 'application/pdf')
+                    const allImg = fileArray.every(f => f.type.startsWith('image/'))
+                    
+                    if (allPdf) {
+                        const pdfFileName = files[0].name.replace(/\.[^/.]+$/, '') || 'Nuovo schema'
+                        setPdfName(pdfFileName)
+                        setSharedFiles(fileArray)
+                        setStep('pdf-name')
+                    } else if (allImg) {
+                        setSharedFiles(fileArray)
+                        setStep('image-choice')
+                    } else {
+                        setErrorMsg('Tipo di file non supportato')
+                    }
+                }
+            }
+            input.click()
+        }
+        
         return (
             <div className="min-h-screen flex items-center justify-center p-6">
                 <div className="max-w-sm w-full bg-white rounded-[32px] p-8 shadow-xl border border-[#EEF0F4] text-center">
@@ -444,9 +473,13 @@ export default function SharePage() {
                         <p>count: {searchParams.get('count')}</p>
                         <p>title: {searchParams.get('title')}</p>
                         <p>auto: {searchParams.get('auto')}</p>
-                        <p>error: {searchParams.get('error')}</p>
+                        <p>source: {searchParams.get('source')}</p>
+                        <p>localStorage: {storageData ? 'has data' : 'empty'}</p>
                     </div>
-                    <button onClick={() => router.replace('/')} className="w-full h-12 bg-[#7B5CF6] text-white rounded-2xl font-bold">
+                    <button onClick={handleManualFileSelect} className="w-full h-12 bg-[#7B5CF6] text-white rounded-2xl font-bold mb-3">
+                        Seleziona file
+                    </button>
+                    <button onClick={() => router.replace('/')} className="w-full h-12 text-[#9AA2B1] font-bold text-sm">
                         Vai ai Progetti
                     </button>
                 </div>
