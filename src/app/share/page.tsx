@@ -419,6 +419,13 @@ export default function SharePage() {
                     <AlertCircle size={48} className="mx-auto mb-4 text-red-400" />
                     <h2 className="text-xl font-black text-[#1C1C1E] mb-2">Errore condivisione</h2>
                     <p className="text-sm text-[#9AA2B1] font-medium mb-6">{errorMsg}</p>
+                    <div className="text-xs text-[#9AA2B1] font-mono mb-4 text-left bg-gray-100 p-2 rounded">
+                        <p>type: {searchParams.get('type')}</p>
+                        <p>count: {searchParams.get('count')}</p>
+                        <p>title: {searchParams.get('title')}</p>
+                        <p>auto: {searchParams.get('auto')}</p>
+                        <p>error: {searchParams.get('error')}</p>
+                    </div>
                     <button onClick={() => router.replace('/')} className="w-full h-12 bg-[#7B5CF6] text-white rounded-2xl font-bold">
                         Vai ai Progetti
                     </button>
