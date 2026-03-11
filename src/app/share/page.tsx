@@ -153,30 +153,102 @@ export default function SharePage() {
             return
         }
 
-        // Read files from localStorage (set by service worker)
+        // Read files from localStorage or direct share
+    useEffect(() => {
+        if (loadedRef.current) return
+        loadedRef.current = true
+
+        const type = searchParams.get('type')
+        const count = parseInt(searchParams.get('count') || '0', 10)
+        const titleParam = searchParams.get('title') || ''
+        const urlParam = searchParams.get('url') || ''
+        const textParam = searchParams.get('text') || ''
+        const isAuto = searchParams.get('auto') === 'true'
+
+        // Handle YouTube links
+        if (type === 'youtube' || (type !== 'file' && (urlParam || textParam).match(/https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be)\/\S+/))) {
+            const rawUrl = urlParam || textParam
+            const ytMatch = rawUrl.match(/https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be)\/\S+/)
+            const url = ytMatch ? ytMatch[0] : rawUrl
+            if (url) {
+                const parsed = parseYouTubeUrl(url)
+                if (parsed) {
+                    const { videoId, playlistId } = parsed
+                    const newId = Math.random().toString(36).slice(2, 9)
+                    const thumbUrl = videoId
+                        ? `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`
+                        : 'https://placehold.co/120x120?text=Playlist'
+                    const newProject: Project = {
+                        id: newId,
+                        title: titleParam || 'Tutorial YouTube',
+                        type: 'tutorial',
+                        kind: 'tutorial',
+                        createdAt: Date.now(),
+                        size: 0,
+                        counter: 0,
+                        timer: 0,
+                        secs: [],
+                        notesHtml: '',
+                        images: [],
+                        videoId,
+                        playlistId,
+                        thumbUrl,
+                        thumbDataURL: thumbUrl,
+                    }
+                    addProject(newProject)
+                    if (user) {
+                        const supabase = createClient()
+                        supabase.from('projects').upsert({
+                            id: newId,
+                            user_id: user.id,
+                            title: newProject.title,
+                            type: 'tutorial',
+                            video_id: videoId,
+                            playlist_id: playlistId,
+                            thumb_url: thumbUrl,
+                            counter: 0,
+                            timer_seconds: 0,
+                            notes_html: '',
+                            secs: [],
+                            images: [],
+                        }).then(({ error }) => { if (error) console.warn('YouTube project sync failed:', error.message) })
+                    }
+                    router.replace(`/projects/${newId}`)
+                    return
+                }
+            }
+            setErrorMsg('Link YouTube non riconosciuto. Condividi il link direttamente dal menu del video.')
+            setStep('error')
+            return
+        }
+
+        if (type !== 'file' || count === 0) {
+            setErrorMsg('Nessun file ricevuto dalla condivisione.')
+            setStep('error')
+            return
+        }
+
+        // Try to read files from localStorage first
         ;(async () => {
             try {
-                const source = searchParams.get('source')
                 let files: File[] = []
                 
-                if (source === 'sw') {
-                    // Try localStorage first
-                    const storageData = localStorage.getItem('lurumi-shared-files')
-                    if (storageData) {
-                        const parsed = JSON.parse(storageData)
-                        files = parsed.files.map((f: { name: string, type: string, size: number, data: string }) => {
-                            const binary = atob(f.data)
-                            const bytes = new Uint8Array(binary.length)
-                            for (let i = 0; i < binary.length; i++) {
-                                bytes[i] = binary.charCodeAt(i)
-                            }
-                            return new File([bytes], f.name, { type: f.type })
-                        })
-                        localStorage.removeItem('lurumi-shared-files')
-                    }
+                // Check localStorage
+                const storageData = localStorage.getItem('lurumi-shared-files')
+                if (storageData) {
+                    const parsed = JSON.parse(storageData)
+                    files = parsed.files.map((f: { name: string, type: string, size: number, data: string }) => {
+                        const binary = atob(f.data)
+                        const bytes = new Uint8Array(binary.length)
+                        for (let i = 0; i < binary.length; i++) {
+                            bytes[i] = binary.charCodeAt(i)
+                        }
+                        return new File([bytes], f.name, { type: f.type })
+                    })
+                    localStorage.removeItem('lurumi-shared-files')
                 }
                 
-                // Fallback to cache if localStorage failed
+                // Fallback: try cache
                 if (!files.length && 'caches' in window) {
                     const cache = await caches.open('lurumi-share-files-v1')
                     for (let i = 0; i < count; i++) {
