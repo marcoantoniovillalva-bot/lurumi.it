@@ -88,6 +88,7 @@ export default function SharePage() {
         const titleParam = searchParams.get('title') || ''
         const urlParam = searchParams.get('url') || ''
         const textParam = searchParams.get('text') || ''
+        const isAuto = searchParams.get('auto') === 'true'
 
         // Gestisci link YouTube — crea direttamente un progetto tipo tutorial
         if (type === 'youtube' || (type !== 'file' && (urlParam || textParam).match(/https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be)\/\S+/))) {
@@ -176,14 +177,26 @@ export default function SharePage() {
                 const allImg = files.every(f => f.type.startsWith('image/'))
 
                 if (allPdf) {
-                    setPdfName(files[0].name.replace(/\.[^/.]+$/, '') || titleParam || 'Nuovo schema')
+                    const pdfFileName = files[0].name.replace(/\.[^/.]+$/, '') || titleParam || 'Nuovo schema'
+                    setPdfName(pdfFileName)
+                    if (isAuto) {
+                        setTimeout(() => handleCreatePdfProjectAuto(pdfFileName, files), 100)
+                        return
+                    }
                     setStep('pdf-name')
                 } else if (allImg) {
+                    if (isAuto) {
+                        setTimeout(() => handleCreateImageProjectAuto(files), 100)
+                        return
+                    }
                     setStep('image-choice')
                 } else {
-                    // Mixed or unknown — treat as image if any image
                     if (files.some(f => f.type.startsWith('image/'))) {
                         setSharedFiles(files.filter(f => f.type.startsWith('image/')))
+                        if (isAuto) {
+                            setTimeout(() => handleCreateImageProjectAuto(files.filter(f => f.type.startsWith('image/'))), 100)
+                            return
+                        }
                         setStep('image-choice')
                     } else {
                         throw new Error(`Tipo di file non supportato: ${files[0].type}`)
@@ -195,6 +208,85 @@ export default function SharePage() {
             }
         })()
     }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Auto create PDF project (no user interaction)
+    const handleCreatePdfProjectAuto = async (pdfName: string, files: File[]) => {
+        if (!pdfName.trim() || !files.length) return
+        setStep('processing')
+        try {
+            const file = files[0]
+            const id = Math.random().toString(36).slice(2, 9)
+            const thumb = await generatePdfThumbnail(file)
+
+            const newProject: Project = {
+                id, title: pdfName.trim(), type: 'pdf', kind: 'pdf',
+                createdAt: Date.now(), size: file.size,
+                counter: 0, timer: 0, secs: [], notesHtml: '',
+                thumbDataURL: thumb, images: [],
+            }
+            await luDB.saveFile({ id, blob: file })
+            addProject(newProject)
+
+            if (user) {
+                const storagePath = `${user.id}/${id}/main`
+                const { error: storageErr } = await supabase.storage.from('project-files').upload(storagePath, file, { upsert: true })
+                if (!storageErr) {
+                    const { data: { publicUrl } } = supabase.storage.from('project-files').getPublicUrl(storagePath)
+                    await supabase.from('projects').upsert({
+                        id, user_id: user.id, title: newProject.title, type: 'pdf',
+                        file_url: publicUrl, thumb_url: thumb, size: file.size,
+                        counter: 0, timer_seconds: 0, notes_html: '', secs: [], images: [],
+                    })
+                }
+            }
+            router.replace(`/projects/${id}`)
+        } catch (e: any) {
+            setErrorMsg(e.message || 'Errore nella creazione del progetto')
+            setStep('error')
+        }
+    }
+
+    // Auto create image project (no user interaction)
+    const handleCreateImageProjectAuto = async (files: File[]) => {
+        setStep('processing')
+        try {
+            const id = Math.random().toString(36).slice(2, 9)
+            const file = files[0]
+            const thumb = await generateThumbnail(file)
+            const imgIds = files.map((_, i) => i === 0 ? id : Math.random().toString(36).slice(2, 9))
+
+            const newProject: Project = {
+                id, title: file.name.replace(/\.[^/.]+$/, '') || 'Nuove immagini',
+                type: 'images', kind: 'image', createdAt: Date.now(),
+                size: files.reduce((s, f) => s + f.size, 0),
+                counter: 0, timer: 0, secs: [], notesHtml: '',
+                thumbDataURL: thumb, images: imgIds.map(iid => ({ id: iid })),
+            }
+
+            for (let i = 0; i < files.length; i++) {
+                await luDB.saveFile({ id: imgIds[i], blob: files[i] })
+            }
+            addProject(newProject)
+
+            if (user) {
+                const storagePath = `${user.id}/${id}/main`
+                const { error: storageErr } = await supabase.storage.from('project-files').upload(storagePath, file, { upsert: true })
+                if (!storageErr) {
+                    const { data: { publicUrl } } = supabase.storage.from('project-files').getPublicUrl(storagePath)
+                    await supabase.from('projects').upsert({
+                        id, user_id: user.id, title: newProject.title, type: 'images',
+                        file_url: publicUrl, thumb_url: thumb, size: newProject.size,
+                        counter: 0, timer_seconds: 0, notes_html: '', secs: [],
+                        images: imgIds.map(iid => ({ id: iid })),
+                    })
+                }
+            }
+            router.replace(`/projects/${id}`)
+        } catch (e: any) {
+            setErrorMsg(e.message || 'Errore nella creazione del progetto')
+            setStep('error')
+        }
+    }
 
     // Create new project from PDF
     const handleCreatePdfProject = async () => {
