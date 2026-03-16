@@ -310,6 +310,38 @@ export default function ProjectDetail() {
         return () => { supabase.removeChannel(channel); };
     }, [id, user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+    // Fetch iniziale da Supabase al mount — sovrascrive localStorage stale per sync cross-device.
+    // Il realtime gestisce i cambiamenti live; questo copre il caso "pagina aperta dopo le modifiche".
+    useEffect(() => {
+        if (!user || !id) return;
+        const supabase = createClient();
+        supabase.from('projects')
+            .select('counter, timer_seconds, secs, notes_html, images, cover_image_id')
+            .eq('id', id as string)
+            .single()
+            .then(({ data, error }) => {
+                if (error || !data) return;
+                const updates: Partial<Project> = {
+                    counter: data.counter ?? 0,
+                    secs: data.secs ?? [],
+                    images: (data.images ?? []).map((img: any) =>
+                        typeof img === 'string' ? { id: img } : { id: img.id ?? '' }
+                    ),
+                    coverImageId: data.cover_image_id ?? undefined,
+                };
+                if (!isTimerRunningRef.current) {
+                    updates.timer = data.timer_seconds ?? 0;
+                    elapsedRef.current = data.timer_seconds ?? 0;
+                    setElapsedTime(data.timer_seconds ?? 0);
+                }
+                if (!isEditingNotesRef.current) {
+                    updates.notesHtml = data.notes_html ?? '';
+                    setNotes(data.notes_html ?? '');
+                }
+                updateProject(id as string, updates);
+            });
+    }, [id, user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
     // Sync notes ← store quando notesHtml cambia esternamente (useSyncOnLogin, altro dispositivo)
     // e l'utente non sta modificando. Risolve il bug: note mostrate nel div ma textarea vuota.
     useEffect(() => {
