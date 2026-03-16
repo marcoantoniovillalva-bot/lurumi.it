@@ -78,9 +78,9 @@ export function useSyncOnLogin(user: User | null) {
                     coverImageId: p.cover_image_id ?? undefined,
                 }
                 if (localIds.has(p.id)) {
-                    // Merge selettivo: per i campi mutabili preferisce il valore locale
-                    // se è più ricco di quello remoto (stantio), altrimenti usa il remoto
-                    // (che porta modifiche da altri dispositivi).
+                    // Supabase è la fonte di verità per tutti i campi mutabili:
+                    // syncProject viene chiamato ad ogni modifica, quindi il DB ha sempre
+                    // lo stato più recente da qualsiasi dispositivo.
                     const loc = projects.find(lp => lp.id === p.id)!
                     updateProject(p.id, {
                         // Campi strutturali: sempre da Supabase
@@ -92,21 +92,16 @@ export function useSyncOnLogin(user: User | null) {
                         thumbUrl: mapped.thumbUrl ?? loc.thumbUrl,
                         coverImageId: mapped.coverImageId ?? loc.coverImageId,
                         transcriptData: mapped.transcriptData ?? loc.transcriptData,
-                        // Link YouTube: preferisce locale se già presente, altrimenti usa remoto
-                        videoId: loc.videoId ?? mapped.videoId,
-                        playlistId: loc.playlistId ?? mapped.playlistId,
-                        // Campi mutabili: preferisce sempre il locale.
-                        // syncProject scrive su Supabase ad ogni modifica, quindi il locale
-                        // è sempre almeno aggiornato quanto il remoto sullo stesso dispositivo.
-                        // Se il refresh è immediato (sync ancora in volo), il locale ha lo
-                        // stato più recente (incluse eliminazioni di secs). Il sync realtime
-                        // sulla project page gestisce il multi-device aggiornando il locale
-                        // appena arriva la notifica PostgreSQL.
-                        secs: loc.secs,
-                        images: loc.images.length >= remoteImages.length ? loc.images : remoteImages,
-                        counter: loc.counter,
-                        timer: loc.timer,
-                        notesHtml: loc.notesHtml || mapped.notesHtml,
+                        videoId: mapped.videoId ?? loc.videoId,
+                        playlistId: mapped.playlistId ?? loc.playlistId,
+                        // Campi mutabili: sempre da Supabase per garantire sync cross-device.
+                        // Il fetch iniziale nella pagina dettaglio (useEffect su mount) gestisce
+                        // il caso limite del refresh immediato dopo una modifica non ancora salvata.
+                        secs: mapped.secs,
+                        images: remoteImages.length >= loc.images.length ? remoteImages : loc.images,
+                        counter: mapped.counter,
+                        timer: mapped.timer,
+                        notesHtml: mapped.notesHtml || loc.notesHtml,
                     })
                 } else {
                     addProject(mapped)

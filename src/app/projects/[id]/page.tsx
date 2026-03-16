@@ -317,7 +317,7 @@ export default function ProjectDetail() {
         if (!user || !id) return;
         const supabase = createClient();
         supabase.from('projects')
-            .select('counter, timer_seconds, secs, notes_html, images, cover_image_id')
+            .select('counter, timer_seconds, secs, notes_html, images, cover_image_id, transcript_data, video_id, playlist_id, title, file_url, thumb_url')
             .eq('id', id as string)
             .single()
             .then(({ data, error }) => {
@@ -329,6 +329,12 @@ export default function ProjectDetail() {
                         typeof img === 'string' ? { id: img } : { id: img.id ?? '' }
                     ),
                     coverImageId: data.cover_image_id ?? undefined,
+                    transcriptData: data.transcript_data ?? undefined,
+                    videoId: data.video_id ?? undefined,
+                    playlistId: data.playlist_id ?? undefined,
+                    title: data.title ?? undefined,
+                    url: data.file_url ?? undefined,
+                    thumbDataURL: data.thumb_url ?? undefined,
                 };
                 if (!isTimerRunningRef.current) {
                     updates.timer = data.timer_seconds ?? 0;

@@ -93,7 +93,7 @@ CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY,
   user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
   title TEXT NOT NULL,
-  type TEXT CHECK (type IN ('pdf', 'images')),
+  type TEXT CHECK (type IN ('pdf', 'images', 'tutorial', 'blank')),
   file_url TEXT,
   thumb_url TEXT,
   size BIGINT DEFAULT 0,
@@ -102,9 +102,23 @@ CREATE TABLE IF NOT EXISTS projects (
   notes_html TEXT DEFAULT '',
   secs JSONB DEFAULT '[]',
   images JSONB DEFAULT '[]',
+  cover_image_id TEXT,
+  video_id TEXT,
+  playlist_id TEXT,
+  transcript_data JSONB,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Migrazione: rimuovi constraint tipo obsoleto e aggiungi colonne mancanti su DB esistenti
+DO $$ BEGIN
+  ALTER TABLE projects DROP CONSTRAINT IF EXISTS projects_type_check;
+  ALTER TABLE projects ADD CONSTRAINT projects_type_check CHECK (type IN ('pdf', 'images', 'tutorial', 'blank'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS cover_image_id TEXT;
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS video_id TEXT;
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS playlist_id TEXT;
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS transcript_data JSONB;
 
 -- Canva OAuth token (aggiunto alla tabella profiles)
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS canva_token TEXT;

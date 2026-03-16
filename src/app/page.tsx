@@ -93,10 +93,14 @@ export default function Home() {
           timer: p.timer_seconds ?? 0,
           secs: p.secs ?? [],
           notesHtml: p.notes_html ?? '',
-          // Sincronizza anche url e thumbnail — fondamentali per PDF su secondo dispositivo
           url: p.file_url ?? undefined,
           thumbDataURL: p.thumb_url ?? undefined,
+          thumbUrl: p.thumb_url ?? undefined,
           images: (p.images ?? []).map((img: any) => ({ id: typeof img === 'string' ? img : (img.id ?? '') })),
+          coverImageId: p.cover_image_id ?? undefined,
+          videoId: p.video_id ?? undefined,
+          playlistId: p.playlist_id ?? undefined,
+          transcriptData: p.transcript_data ?? undefined,
         });
       })
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'projects' }, (payload) => {
