@@ -11,7 +11,6 @@ import {
 import { FullscreenViewer } from "@/components/FullscreenViewer";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import * as tus from "tus-js-client";
 import {
     getAdminStats, getAdminEvents, getEventBookers, getEventInterests,
     createEvent, updateEvent, deleteEvent, listAllUsers, setUserAdmin, setUserEventCredit,
@@ -1653,35 +1652,28 @@ function LibraryFormModal({ initial, onClose, onSaved }: {
         return supabase.storage.from(LIBRARY_BUCKET).getPublicUrl(path).data.publicUrl;
     };
 
-    // Upload PDF via TUS (upload riprendibile a chunks) — bypassa il limite 50MB del gateway Supabase
-    const uploadPdfTus = (path: string, file: File): Promise<string> => {
-        return new Promise(async (resolve, reject) => {
-            const supabase = createClient();
-            const { data: { session } } = await supabase.auth.getSession();
-            const token = session?.access_token;
-            if (!token) { reject(new Error('Sessione scaduta, ricarica la pagina')); return; }
+    // Upload PDF via API route → Vercel Blob (nessun limite di dimensione, bypassa il cap 50MB Supabase Free)
+    const uploadPdfVercel = async (path: string, file: File): Promise<string> => {
+        const supabase = createClient();
+        const { data: { session } } = await supabase.auth.getSession();
+        const token = session?.access_token;
+        if (!token) throw new Error('Sessione scaduta, ricarica la pagina');
 
-            const upload = new tus.Upload(file, {
-                endpoint: `https://djatdyhqliotgnsljdja.supabase.co/storage/v1/upload/resumable`,
-                retryDelays: [0, 3000, 5000, 10000, 20000],
-                headers: { authorization: `Bearer ${token}`, 'x-upsert': 'true' },
-                uploadDataDuringCreation: true,
-                removeFingerprintOnSuccess: true,
-                metadata: {
-                    bucketName: LIBRARY_BUCKET,
-                    objectName: path,
-                    contentType: file.type,
-                    cacheControl: '3600',
-                },
-                chunkSize: 6 * 1024 * 1024, // 6 MB per chunk
-                onError: (err) => reject(new Error(`Upload PDF fallito: ${err.message}`)),
-                onSuccess: () => {
-                    const publicUrl = supabase.storage.from(LIBRARY_BUCKET).getPublicUrl(path).data.publicUrl;
-                    resolve(publicUrl);
-                },
-            });
-            upload.start();
+        const form = new FormData();
+        form.append('file', file);
+        form.append('path', path);
+
+        const res = await fetch('/api/admin/upload-pdf', {
+            method: 'POST',
+            headers: { authorization: `Bearer ${token}` },
+            body: form,
         });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(`Upload PDF fallito: ${err.error ?? res.statusText}`);
+        }
+        const { url } = await res.json();
+        return url;
     };
 
     const handleSave = async () => {
@@ -1699,10 +1691,10 @@ function LibraryFormModal({ initial, onClose, onSaved }: {
                     finalCovers.push(coverPreviews[i]);
                 }
             }
-            // Upload PDF via TUS (chunk da 6 MB) — nessun limite di dimensione
+            // Upload PDF via Vercel Blob — nessun limite di dimensione
             let finalPdfUrl = form.pdf_url ?? '';
             if (form.content_type === 'pdf' && pdfFile) {
-                finalPdfUrl = await uploadPdfTus(`pdfs/${itemId}/document.pdf`, pdfFile);
+                finalPdfUrl = await uploadPdfVercel(`pdfs/${itemId}/document.pdf`, pdfFile);
             }
             // Upload section images — ricalcola order prima di salvare
             const finalSections: LibrarySection[] = [];
