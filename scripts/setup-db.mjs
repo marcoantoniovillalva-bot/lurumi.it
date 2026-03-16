@@ -287,6 +287,15 @@ CREATE TRIGGER trg_event_booking_count
   AFTER INSERT OR UPDATE OR DELETE ON event_bookings
   FOR EACH ROW EXECUTE FUNCTION sync_event_booking_count();
 
+-- Abilita Realtime su projects (sync cross-device: counter, timer, secs, note, immagini)
+-- REPLICA IDENTITY FULL necessario per filtri per riga (filter: id=eq.xxx)
+DO $$ BEGIN
+  ALTER TABLE projects REPLICA IDENTITY FULL;
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+DO $$ BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE projects;
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
 -- Abilita Realtime su events e event_bookings (sync posti, stato evento)
 DO $$ BEGIN
   ALTER PUBLICATION supabase_realtime ADD TABLE events;
