@@ -8,6 +8,7 @@ import { createClient } from '@/lib/supabase/client'
 import { luDB } from '@/lib/db'
 import { loadPdfjs } from '@/lib/pdfjs'
 import { Loader2, AlertCircle, FileText, ImageIcon, Plus, Check, FolderOpen } from 'lucide-react'
+import { compressImage } from '@/lib/compress-image'
 
 type Step = 'loading' | 'pdf-name' | 'image-choice' | 'image-pick-project' | 'processing' | 'error'
 
@@ -267,26 +268,27 @@ export default function SharePage() {
         setStep('processing')
         try {
             const id = Math.random().toString(36).slice(2, 9)
-            const file = files[0]
-            const thumb = await generateThumbnail(file)
+            const rawFile = files[0]
+            const thumb = await generateThumbnail(rawFile)
             const imgIds = files.map((_, i) => i === 0 ? id : Math.random().toString(36).slice(2, 9))
+            const compressedFiles = await Promise.all(files.map(f => compressImage(f)))
 
             const newProject: Project = {
-                id, title: file.name.replace(/\.[^/.]+$/, '') || 'Nuove immagini',
+                id, title: rawFile.name.replace(/\.[^/.]+$/, '') || 'Nuove immagini',
                 type: 'images', kind: 'image', createdAt: Date.now(),
-                size: files.reduce((s, f) => s + f.size, 0),
+                size: compressedFiles.reduce((s, f) => s + f.size, 0),
                 counter: 0, timer: 0, secs: [], notesHtml: '',
                 thumbDataURL: thumb, images: imgIds.map(iid => ({ id: iid })),
             }
 
-            for (let i = 0; i < files.length; i++) {
-                await luDB.saveFile({ id: imgIds[i], blob: files[i] })
+            for (let i = 0; i < compressedFiles.length; i++) {
+                await luDB.saveFile({ id: imgIds[i], blob: compressedFiles[i] })
             }
             addProject(newProject)
 
             if (user) {
                 const storagePath = `${user.id}/${id}/main`
-                const { error: storageErr } = await supabase.storage.from('project-files').upload(storagePath, file, { upsert: true })
+                const { error: storageErr } = await supabase.storage.from('project-files').upload(storagePath, compressedFiles[0], { upsert: true })
                 if (!storageErr) {
                     const { data: { publicUrl } } = supabase.storage.from('project-files').getPublicUrl(storagePath)
                     await supabase.from('projects').upsert({
@@ -346,26 +348,27 @@ export default function SharePage() {
         setStep('processing')
         try {
             const id = Math.random().toString(36).slice(2, 9)
-            const file = sharedFiles[0]
-            const thumb = await generateThumbnail(file)
+            const rawFile = sharedFiles[0]
+            const thumb = await generateThumbnail(rawFile)
             const imgIds = sharedFiles.map((_, i) => i === 0 ? id : Math.random().toString(36).slice(2, 9))
+            const compressedFiles = await Promise.all(sharedFiles.map(f => compressImage(f)))
 
             const newProject: Project = {
-                id, title: file.name.replace(/\.[^/.]+$/, '') || 'Nuove immagini',
+                id, title: rawFile.name.replace(/\.[^/.]+$/, '') || 'Nuove immagini',
                 type: 'images', kind: 'image', createdAt: Date.now(),
-                size: sharedFiles.reduce((s, f) => s + f.size, 0),
+                size: compressedFiles.reduce((s, f) => s + f.size, 0),
                 counter: 0, timer: 0, secs: [], notesHtml: '',
                 thumbDataURL: thumb, images: imgIds.map(iid => ({ id: iid })),
             }
 
-            for (let i = 0; i < sharedFiles.length; i++) {
-                await luDB.saveFile({ id: imgIds[i], blob: sharedFiles[i] })
+            for (let i = 0; i < compressedFiles.length; i++) {
+                await luDB.saveFile({ id: imgIds[i], blob: compressedFiles[i] })
             }
             addProject(newProject)
 
             if (user) {
                 const storagePath = `${user.id}/${id}/main`
-                const { error: storageErr } = await supabase.storage.from('project-files').upload(storagePath, file, { upsert: true })
+                const { error: storageErr } = await supabase.storage.from('project-files').upload(storagePath, compressedFiles[0], { upsert: true })
                 if (!storageErr) {
                     const { data: { publicUrl } } = supabase.storage.from('project-files').getPublicUrl(storagePath)
                     await supabase.from('projects').upsert({
@@ -392,8 +395,9 @@ export default function SharePage() {
             if (!project) throw new Error('Progetto non trovato')
 
             const newImgIds = sharedFiles.map(() => Math.random().toString(36).slice(2, 9))
-            for (let i = 0; i < sharedFiles.length; i++) {
-                await luDB.saveFile({ id: newImgIds[i], blob: sharedFiles[i] })
+            const compressedFiles = await Promise.all(sharedFiles.map(f => compressImage(f)))
+            for (let i = 0; i < compressedFiles.length; i++) {
+                await luDB.saveFile({ id: newImgIds[i], blob: compressedFiles[i] })
             }
 
             const updatedImages: ProjectImage[] = [

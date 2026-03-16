@@ -18,6 +18,7 @@ import { FullscreenViewer } from "@/components/FullscreenViewer";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { loadPdfjs } from "@/lib/pdfjs";
+import { compressImage } from "@/lib/compress-image";
 
 
 
@@ -636,8 +637,10 @@ export default function ProjectDetail() {
     };
 
     const handleAddImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
+        const rawFile = e.target.files?.[0];
+        if (!rawFile) return;
+        // Comprimi prima di salvare in IndexedDB e caricare su Supabase
+        const file = await compressImage(rawFile);
         // Save blob to IndexedDB — NOT as base64 in Zustand/localStorage
         const imgId = `${project.id}_img_${Date.now()}`;
         await luDB.saveFile({ id: imgId, blob: file });

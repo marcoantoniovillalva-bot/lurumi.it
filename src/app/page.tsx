@@ -10,6 +10,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { loadPdfjs } from "@/lib/pdfjs";
 import { useCharacterTheme } from "@/hooks/useCharacterTheme";
+import { compressImage } from "@/lib/compress-image";
 
 function EmptyProjectsState() {
   const { getUrl } = useCharacterTheme();
@@ -191,9 +192,10 @@ export default function Home() {
 
   const handleCreateProject = async () => {
     if (!pendingFile || !pendingName.trim()) return;
-    const file = pendingFile;
-    const isPdf = file.type === "application/pdf";
-    const isImage = file.type.startsWith("image/");
+    const rawFile = pendingFile;
+    const isPdf = rawFile.type === "application/pdf";
+    const isImage = rawFile.type.startsWith("image/");
+    const file = isImage ? await compressImage(rawFile) : rawFile;
     const id = Math.random().toString(36).slice(2, 9);
 
     const newProject: Project = {
