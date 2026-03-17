@@ -1652,37 +1652,20 @@ function LibraryFormModal({ initial, onClose, onSaved }: {
         return supabase.storage.from(LIBRARY_BUCKET).getPublicUrl(path).data.publicUrl;
     };
 
-    // Upload PDF: il server genera un signed URL, il file va direttamente browser→Supabase
-    // (bypassa il limite 4.5MB di Vercel serverless — funziona per file di qualsiasi dimensione)
-    const uploadPdfVercel = async (path: string, file: File): Promise<string> => {
+    // Upload PDF direttamente browser→Vercel Blob (bypassa il limite serverless 4.5MB e il limite Supabase 50MB)
+    const uploadPdfVercel = async (_path: string, file: File): Promise<string> => {
         const supabase = createClient();
         const { data: { session } } = await supabase.auth.getSession();
         const token = session?.access_token;
         if (!token) throw new Error('Sessione scaduta, ricarica la pagina');
 
-        // 1. Chiedi al server solo il signed URL (richiesta JSON piccola, nessun file)
-        const res = await fetch('/api/admin/upload-pdf', {
-            method: 'POST',
-            headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-            body: JSON.stringify({ path }),
+        const { upload } = await import('@vercel/blob/client');
+        const blob = await upload(file.name, file, {
+            access: 'public',
+            handleUploadUrl: '/api/admin/upload-pdf',
+            headers: { authorization: `Bearer ${token}` },
         });
-        if (!res.ok) {
-            const text = await res.text().catch(() => '');
-            let msg = `HTTP ${res.status}`;
-            try { const j = JSON.parse(text); msg = j.error ?? msg; } catch {}
-            throw new Error(`Upload PDF fallito: ${msg}`);
-        }
-        const { token: uploadToken, publicUrl } = await res.json();
-        if (!uploadToken) throw new Error('Upload PDF fallito: signed URL non ricevuto');
-
-        // 2. Carica il file DIRETTAMENTE in Supabase — nessun limite serverless
-        const { error: uploadError } = await supabase.storage
-            .from('library-content')
-            .uploadToSignedUrl(path, uploadToken, file, { contentType: file.type });
-
-        if (uploadError) throw new Error(`Upload PDF fallito: ${uploadError.message}`);
-
-        return publicUrl;
+        return blob.url;
     };
 
     const handleSave = async () => {
