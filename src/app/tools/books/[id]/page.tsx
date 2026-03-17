@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { ArrowLeft, ChevronDown, ChevronUp, Lock, ZoomIn, ZoomOut, ChevronRight, ChevronLeft, X } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronUp, Lock, ZoomIn, ZoomOut, ChevronRight, ChevronLeft, X, Maximize2 } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { getLibraryItemById } from "@/features/admin/actions/library";
@@ -10,33 +10,54 @@ import type { LibraryItem, LibrarySection } from "@/features/admin/actions/libra
 
 /* ─── PDF Viewer ─────────────────────────────────────────────── */
 function PdfViewer({ url }: { url: string }) {
-    const containerRef = useRef<HTMLDivElement>(null);
     const [numPages, setNumPages] = useState(0);
     const [currentPage, setCurrentPage] = useState(1);
     const [scale, setScale] = useState(1.2);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
+
+    // Preview canvas
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const pdfRef = useRef<any>(null);
     const renderTaskRef = useRef<any>(null);
+    const previewPinchRef = useRef<number | null>(null);
 
-    const renderPage = useCallback(async (pdf: any, page: number, sc: number) => {
-        if (!canvasRef.current) return;
-        // Cancel previous render
-        if (renderTaskRef.current) {
-            try { renderTaskRef.current.cancel(); } catch {}
-        }
+    // Fullscreen state
+    const [fsOpen, setFsOpen] = useState(false);
+    const fsCanvasRef = useRef<HTMLCanvasElement>(null);
+    const fsRenderTaskRef = useRef<any>(null);
+    const fsWrapRef = useRef<HTMLDivElement>(null);
+    const [fsZoom, setFsZoom] = useState(1);
+    const [fsPan, setFsPan] = useState({ x: 0, y: 0 });
+    // Refs mirror state for non-passive event handlers
+    const fsZoomRef = useRef(1);
+    const fsPanRef = useRef({ x: 0, y: 0 });
+    const fsPinchRef = useRef<number | null>(null);
+    const fsPanStartRef = useRef<{ tx: number; ty: number; px: number; py: number } | null>(null);
+    const fsContainerCenterRef = useRef({ cx: 0, cy: 0 });
+    // Double-tap to reset zoom
+    const fsTapCountRef = useRef(0);
+    const fsTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    // ── Render a page onto a canvas ───────────────────────────────
+    const renderPage = useCallback(async (
+        pdf: any, page: number, sc: number,
+        canvasEl: HTMLCanvasElement | null,
+        taskRef: React.MutableRefObject<any>
+    ) => {
+        if (!canvasEl) return;
+        if (taskRef.current) { try { taskRef.current.cancel(); } catch {} }
         const pdfPage = await pdf.getPage(page);
         const viewport = pdfPage.getViewport({ scale: sc });
-        const canvas = canvasRef.current;
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-        const ctx = canvas.getContext('2d');
+        canvasEl.width = viewport.width;
+        canvasEl.height = viewport.height;
+        const ctx = canvasEl.getContext('2d');
         if (!ctx) return;
-        renderTaskRef.current = pdfPage.render({ canvasContext: ctx, viewport });
-        try { await renderTaskRef.current.promise; } catch {}
+        taskRef.current = pdfPage.render({ canvasContext: ctx, viewport });
+        try { await taskRef.current.promise; } catch {}
     }, []);
 
+    // ── Load PDF ──────────────────────────────────────────────────
     useEffect(() => {
         let cancelled = false;
         (async () => {
@@ -44,13 +65,19 @@ function PdfViewer({ url }: { url: string }) {
                 const pdfjs = await import('pdfjs-dist');
                 const version = pdfjs.version;
                 pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${version}/build/pdf.worker.min.mjs`;
-                const pdf = await pdfjs.getDocument(url).promise;
+                const pdf = await pdfjs.getDocument({
+                    url,
+                    // Necessari per decodificare font CID/CJK e immagini con encoding speciale
+                    cMapUrl: `https://unpkg.com/pdfjs-dist@${version}/cmaps/`,
+                    cMapPacked: true,
+                    standardFontDataUrl: `https://unpkg.com/pdfjs-dist@${version}/standard_fonts/`,
+                }).promise;
                 if (cancelled) return;
                 pdfRef.current = pdf;
                 setNumPages(pdf.numPages);
                 setLoading(false);
-                await renderPage(pdf, 1, scale);
-            } catch (e: any) {
+                await renderPage(pdf, 1, scale, canvasRef.current, renderTaskRef);
+            } catch {
                 if (!cancelled) setError('Impossibile caricare il PDF. Riprova più tardi.');
                 setLoading(false);
             }
@@ -58,28 +85,127 @@ function PdfViewer({ url }: { url: string }) {
         return () => { cancelled = true; };
     }, [url]); // eslint-disable-line react-hooks/exhaustive-deps
 
+    // ── Re-render preview on page/scale change ────────────────────
     useEffect(() => {
-        if (pdfRef.current) renderPage(pdfRef.current, currentPage, scale);
+        if (pdfRef.current) renderPage(pdfRef.current, currentPage, scale, canvasRef.current, renderTaskRef);
     }, [currentPage, scale, renderPage]);
 
-    // Pinch-to-zoom
-    const lastPinchDist = useRef<number | null>(null);
-    const handleTouchStart = (e: React.TouchEvent) => {
+    // ── Open fullscreen ───────────────────────────────────────────
+    const openFs = useCallback(() => {
+        fsZoomRef.current = 1; fsPanRef.current = { x: 0, y: 0 };
+        setFsZoom(1); setFsPan({ x: 0, y: 0 });
+        setFsOpen(true);
+    }, []);
+
+    // ── Render FS canvas when opened or page changes ──────────────
+    useEffect(() => {
+        if (!fsOpen || !pdfRef.current) return;
+        const fsScale = Math.min(3.0, (window.innerWidth / (canvasRef.current?.width ?? 400)) * scale * 1.5);
+        renderPage(pdfRef.current, currentPage, Math.max(1.5, fsScale), fsCanvasRef.current, fsRenderTaskRef);
+    }, [fsOpen, currentPage, renderPage, scale]);
+
+    // ── Lock body scroll in fullscreen ────────────────────────────
+    useEffect(() => {
+        document.body.style.overflow = fsOpen ? 'hidden' : '';
+        return () => { document.body.style.overflow = ''; };
+    }, [fsOpen]);
+
+    // ── Non-passive touchmove (needed for preventDefault) ─────────
+    useEffect(() => {
+        const el = fsWrapRef.current;
+        if (!el || !fsOpen) return;
+        const onMove = (e: TouchEvent) => {
+            e.preventDefault();
+            if (e.touches.length === 2) {
+                const newDist = Math.hypot(
+                    e.touches[0].clientX - e.touches[1].clientX,
+                    e.touches[0].clientY - e.touches[1].clientY
+                );
+                if (fsPinchRef.current !== null) {
+                    const oldZoom = fsZoomRef.current;
+                    const newZoom = Math.min(8, Math.max(0.5, oldZoom * (newDist / fsPinchRef.current)));
+                    const ratio = newZoom / oldZoom;
+                    // Adjust pan so the pinch center stays fixed
+                    const { cx, cy } = fsContainerCenterRef.current;
+                    const px = e.touches[0].clientX, py = e.touches[0].clientY;
+                    const qx = e.touches[1].clientX, qy = e.touches[1].clientY;
+                    const pinchX = (px + qx) / 2 - cx;
+                    const pinchY = (py + qy) / 2 - cy;
+                    const newPan = {
+                        x: pinchX * (1 - ratio) + fsPanRef.current.x * ratio,
+                        y: pinchY * (1 - ratio) + fsPanRef.current.y * ratio,
+                    };
+                    fsZoomRef.current = newZoom; fsPanRef.current = newPan;
+                    setFsZoom(newZoom); setFsPan(newPan);
+                }
+                fsPinchRef.current = newDist;
+            } else if (e.touches.length === 1 && fsPanStartRef.current) {
+                const newPan = {
+                    x: fsPanStartRef.current.px + (e.touches[0].clientX - fsPanStartRef.current.tx),
+                    y: fsPanStartRef.current.py + (e.touches[0].clientY - fsPanStartRef.current.ty),
+                };
+                fsPanRef.current = newPan; setFsPan(newPan);
+            }
+        };
+        el.addEventListener('touchmove', onMove, { passive: false });
+        return () => el.removeEventListener('touchmove', onMove);
+    }, [fsOpen]);
+
+    // ── Fullscreen touch start/end ────────────────────────────────
+    const handleFsTouchStart = (e: React.TouchEvent) => {
+        if (fsWrapRef.current) {
+            const r = fsWrapRef.current.getBoundingClientRect();
+            fsContainerCenterRef.current = { cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
+        }
         if (e.touches.length === 2) {
-            const dx = e.touches[0].clientX - e.touches[1].clientX;
-            const dy = e.touches[0].clientY - e.touches[1].clientY;
-            lastPinchDist.current = Math.hypot(dx, dy);
+            fsPinchRef.current = Math.hypot(
+                e.touches[0].clientX - e.touches[1].clientX,
+                e.touches[0].clientY - e.touches[1].clientY
+            );
+            fsPanStartRef.current = null;
+        } else if (e.touches.length === 1) {
+            fsPanStartRef.current = { tx: e.touches[0].clientX, ty: e.touches[0].clientY, px: fsPanRef.current.x, py: fsPanRef.current.y };
         }
     };
-    const handleTouchMove = (e: React.TouchEvent) => {
-        if (e.touches.length === 2 && lastPinchDist.current !== null) {
-            e.preventDefault();
-            const dx = e.touches[0].clientX - e.touches[1].clientX;
-            const dy = e.touches[0].clientY - e.touches[1].clientY;
-            const newDist = Math.hypot(dx, dy);
-            const ratio = newDist / lastPinchDist.current;
-            lastPinchDist.current = newDist;
-            setScale(s => Math.min(4, Math.max(0.5, s * ratio)));
+    const handleFsTouchEnd = (e: React.TouchEvent) => {
+        if (e.touches.length < 2) fsPinchRef.current = null;
+        if (e.touches.length === 0) fsPanStartRef.current = null;
+    };
+
+    // ── Double-tap to reset zoom ──────────────────────────────────
+    const handleFsTap = () => {
+        fsTapCountRef.current++;
+        if (fsTapCountRef.current >= 2) {
+            clearTimeout(fsTapTimerRef.current!);
+            fsTapCountRef.current = 0;
+            fsZoomRef.current = 1; fsPanRef.current = { x: 0, y: 0 };
+            setFsZoom(1); setFsPan({ x: 0, y: 0 });
+        } else {
+            fsTapTimerRef.current = setTimeout(() => { fsTapCountRef.current = 0; }, 300);
+        }
+    };
+
+    // ── Navigate keeping FS state reset ──────────────────────────
+    const goToPage = useCallback((page: number) => {
+        setCurrentPage(page);
+        fsZoomRef.current = 1; fsPanRef.current = { x: 0, y: 0 };
+        setFsZoom(1); setFsPan({ x: 0, y: 0 });
+    }, []);
+
+    // ── Preview pinch-to-zoom ─────────────────────────────────────
+    const handlePreviewTouchStart = (e: React.TouchEvent) => {
+        if (e.touches.length === 2) {
+            previewPinchRef.current = Math.hypot(
+                e.touches[0].clientX - e.touches[1].clientX,
+                e.touches[0].clientY - e.touches[1].clientY
+            );
+        }
+    };
+    const handlePreviewTouchMove = (e: React.TouchEvent) => {
+        if (e.touches.length === 2 && previewPinchRef.current !== null) {
+            const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+            setScale(s => Math.min(4, Math.max(0.5, s * (d / previewPinchRef.current!))));
+            previewPinchRef.current = d;
         }
     };
 
@@ -89,58 +215,85 @@ function PdfViewer({ url }: { url: string }) {
             <p className="text-[#9AA2B1] text-sm font-bold">Caricamento PDF…</p>
         </div>
     );
-    if (error) return (
-        <div className="text-center py-16 text-red-500 font-bold">{error}</div>
-    );
+    if (error) return <div className="text-center py-16 text-red-500 font-bold">{error}</div>;
+
+    const toolbarBtn = "w-8 h-8 flex items-center justify-center rounded-xl text-[#7B5CF6] bg-[#F4EEFF] active:scale-90 transition-transform disabled:opacity-30";
+    const fsBtnCls = "w-9 h-9 flex items-center justify-center rounded-xl text-white bg-white/15 active:scale-90 transition-transform disabled:opacity-30";
 
     return (
-        <div className="flex flex-col gap-3">
-            {/* Toolbar */}
-            <div className="flex items-center justify-between bg-white border border-[#EEF0F4] rounded-2xl px-4 py-2.5 sticky top-16 z-10 shadow-sm">
-                <div className="flex items-center gap-1">
-                    <button
-                        onClick={() => setScale(s => Math.max(0.5, s - 0.2))}
-                        className="w-8 h-8 flex items-center justify-center rounded-xl text-[#7B5CF6] bg-[#F4EEFF] active:scale-90 transition-transform"
-                    >
-                        <ZoomOut size={16} />
-                    </button>
-                    <span className="text-xs font-black text-[#1C1C1E] w-12 text-center">{Math.round(scale * 100)}%</span>
-                    <button
-                        onClick={() => setScale(s => Math.min(4, s + 0.2))}
-                        className="w-8 h-8 flex items-center justify-center rounded-xl text-[#7B5CF6] bg-[#F4EEFF] active:scale-90 transition-transform"
-                    >
-                        <ZoomIn size={16} />
-                    </button>
+        <>
+            <div className="flex flex-col gap-3">
+                {/* Toolbar */}
+                <div className="flex items-center justify-between bg-white border border-[#EEF0F4] rounded-2xl px-4 py-2.5 sticky top-16 z-10 shadow-sm">
+                    <div className="flex items-center gap-1">
+                        <button onClick={() => setScale(s => Math.max(0.5, s - 0.2))} className={toolbarBtn}><ZoomOut size={16} /></button>
+                        <span className="text-xs font-black text-[#1C1C1E] w-12 text-center">{Math.round(scale * 100)}%</span>
+                        <button onClick={() => setScale(s => Math.min(4, s + 0.2))} className={toolbarBtn}><ZoomIn size={16} /></button>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                        <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage <= 1} className={toolbarBtn}><ChevronLeft size={16} /></button>
+                        <span className="text-xs font-black text-[#1C1C1E]">{currentPage} / {numPages}</span>
+                        <button onClick={() => setCurrentPage(p => Math.min(numPages, p + 1))} disabled={currentPage >= numPages} className={toolbarBtn}><ChevronRight size={16} /></button>
+                        <button onClick={openFs} title="Schermo intero" className={`${toolbarBtn} ml-1`}><Maximize2 size={15} /></button>
+                    </div>
                 </div>
-                <div className="flex items-center gap-2">
-                    <button
-                        onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                        disabled={currentPage <= 1}
-                        className="w-8 h-8 flex items-center justify-center rounded-xl text-[#7B5CF6] bg-[#F4EEFF] disabled:opacity-30 active:scale-90 transition-transform"
-                    >
-                        <ChevronLeft size={16} />
-                    </button>
-                    <span className="text-xs font-black text-[#1C1C1E]">{currentPage} / {numPages}</span>
-                    <button
-                        onClick={() => setCurrentPage(p => Math.min(numPages, p + 1))}
-                        disabled={currentPage >= numPages}
-                        className="w-8 h-8 flex items-center justify-center rounded-xl text-[#7B5CF6] bg-[#F4EEFF] disabled:opacity-30 active:scale-90 transition-transform"
-                    >
-                        <ChevronRight size={16} />
-                    </button>
+
+                {/* Preview canvas — tap to open fullscreen */}
+                <div
+                    className="overflow-auto rounded-2xl border border-[#EEF0F4] bg-[#F4F4F8]"
+                    onTouchStart={handlePreviewTouchStart}
+                    onTouchMove={handlePreviewTouchMove}
+                    style={{ touchAction: 'pan-x pan-y' }}
+                >
+                    <canvas
+                        ref={canvasRef}
+                        className="block mx-auto cursor-zoom-in"
+                        onClick={openFs}
+                    />
                 </div>
             </div>
-            {/* Canvas */}
-            <div
-                ref={containerRef}
-                className="overflow-auto rounded-2xl border border-[#EEF0F4] bg-[#F4F4F8] touch-pan-x touch-pan-y"
-                onTouchStart={handleTouchStart}
-                onTouchMove={handleTouchMove}
-                style={{ touchAction: 'pan-x pan-y' }}
-            >
-                <canvas ref={canvasRef} className="block mx-auto" />
-            </div>
-        </div>
+
+            {/* ── Fullscreen overlay ────────────────────────────────── */}
+            {fsOpen && (
+                <div className="fixed inset-0 z-[99999] bg-black flex flex-col select-none">
+                    {/* FS toolbar */}
+                    <div className="flex items-center justify-between px-4 py-2.5 bg-black/70 backdrop-blur-md flex-shrink-0">
+                        <div className="flex items-center gap-1">
+                            <button onClick={() => goToPage(Math.max(1, currentPage - 1))} disabled={currentPage <= 1} className={fsBtnCls}><ChevronLeft size={20} /></button>
+                            <span className="text-white text-xs font-bold w-16 text-center">{currentPage} / {numPages}</span>
+                            <button onClick={() => goToPage(Math.min(numPages, currentPage + 1))} disabled={currentPage >= numPages} className={fsBtnCls}><ChevronRight size={20} /></button>
+                        </div>
+                        <span className="text-white/40 text-xs font-bold">{Math.round(fsZoom * 100)}%</span>
+                        <button onClick={() => setFsOpen(false)} className={fsBtnCls}><X size={20} /></button>
+                    </div>
+
+                    {/* Canvas area — pinch-zoom + pan */}
+                    <div
+                        ref={fsWrapRef}
+                        className="flex-1 overflow-hidden flex items-center justify-center"
+                        onTouchStart={handleFsTouchStart}
+                        onTouchEnd={handleFsTouchEnd}
+                        onClick={handleFsTap}
+                        style={{ touchAction: 'none' }}
+                    >
+                        <canvas
+                            ref={fsCanvasRef}
+                            style={{
+                                transform: `translate(${fsPan.x}px, ${fsPan.y}px) scale(${fsZoom})`,
+                                transformOrigin: 'center center',
+                                maxWidth: '100vw',
+                                display: 'block',
+                            }}
+                        />
+                    </div>
+
+                    {/* Hint */}
+                    <p className="text-white/25 text-[11px] text-center py-2 font-bold flex-shrink-0">
+                        pizzica per zoomare · scorri per sfogliare · doppio tap per resettare
+                    </p>
+                </div>
+            )}
+        </>
     );
 }
 
