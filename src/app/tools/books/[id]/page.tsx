@@ -14,6 +14,7 @@ function PdfViewer({ url }: { url: string }) {
     const [currentPage, setCurrentPage] = useState(1);
     const [scale, setScale] = useState(1.2);
     const [loading, setLoading] = useState(true);
+    const [loadProgress, setLoadProgress] = useState(0); // 0-100 download progress
     const [error, setError] = useState('');
 
     // Preview canvas
@@ -64,38 +65,50 @@ function PdfViewer({ url }: { url: string }) {
             try {
                 const pdfjs = await import('pdfjs-dist');
                 const version = pdfjs.version;
-                // Worker locale (public/pdf.worker.min.mjs) — più affidabile della CDN esterna
                 pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
 
-                // Timeout 60s: se il PDF non carica (worker bloccato, CORS, rete lenta) mostra errore
-                const timeout = new Promise<never>((_, reject) =>
-                    setTimeout(() => reject(new Error('Timeout: il PDF impiega troppo a caricare')), 60_000)
-                );
+                // Scarica il PDF nel browser (main thread) con progress — evita problemi CORS del worker
+                setLoadProgress(0);
+                const response = await fetch(url);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const contentLength = Number(response.headers.get('content-length') ?? 0);
+                const reader = response.body!.getReader();
+                const chunks: Uint8Array[] = [];
+                let received = 0;
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    if (cancelled) return;
+                    chunks.push(value);
+                    received += value.length;
+                    if (contentLength > 0) setLoadProgress(Math.round(received / contentLength * 90));
+                }
 
-                const pdf = await Promise.race([
-                    pdfjs.getDocument({
-                        url,
-                        withCredentials: false,          // evita problemi CORS con Vercel Blob
-                        cMapUrl: `https://unpkg.com/pdfjs-dist@${version}/cmaps/`,
-                        cMapPacked: true,
-                        standardFontDataUrl: `https://unpkg.com/pdfjs-dist@${version}/standard_fonts/`,
-                        disableRange: false,             // abilita range requests (carica solo le pagine servono)
-                        disableStream: false,
-                    }).promise,
-                    timeout,
-                ]);
+                if (cancelled) return;
+                setLoadProgress(95);
+
+                // Concatena chunks in un unico Uint8Array e passa i dati direttamente a pdfjs
+                const data = new Uint8Array(received);
+                let pos = 0;
+                for (const chunk of chunks) { data.set(chunk, pos); pos += chunk.length; }
+
+                const pdf = await pdfjs.getDocument({
+                    data,
+                    cMapUrl: `https://unpkg.com/pdfjs-dist@${version}/cmaps/`,
+                    cMapPacked: true,
+                    standardFontDataUrl: `https://unpkg.com/pdfjs-dist@${version}/standard_fonts/`,
+                }).promise;
 
                 if (cancelled) return;
                 pdfRef.current = pdf;
                 setNumPages(pdf.numPages);
+                setLoadProgress(100);
                 setLoading(false);
                 await renderPage(pdf, 1, scale, canvasRef.current, renderTaskRef);
             } catch (e: any) {
                 if (!cancelled) {
                     console.error('[PdfViewer] load error:', e?.message ?? e);
-                    setError(e?.message?.includes('Timeout')
-                        ? 'Il PDF è troppo grande o la connessione è lenta. Riprova.'
-                        : 'Impossibile caricare il PDF. Riprova più tardi.');
+                    setError('Impossibile caricare il PDF. Riprova più tardi.');
                 }
                 setLoading(false);
             }
@@ -228,9 +241,21 @@ function PdfViewer({ url }: { url: string }) {
     };
 
     if (loading) return (
-        <div className="flex flex-col items-center justify-center py-16 gap-3">
+        <div className="flex flex-col items-center justify-center py-16 gap-4">
             <div className="w-8 h-8 border-4 border-[#7B5CF6] border-t-transparent rounded-full animate-spin" />
-            <p className="text-[#9AA2B1] text-sm font-bold">Caricamento PDF…</p>
+            {loadProgress > 0 && loadProgress < 100 ? (
+                <div className="flex flex-col items-center gap-2 w-48">
+                    <div className="w-full h-2 bg-[#F4F4F8] rounded-full overflow-hidden">
+                        <div
+                            className="h-full bg-[#7B5CF6] rounded-full transition-all duration-300"
+                            style={{ width: `${loadProgress}%` }}
+                        />
+                    </div>
+                    <p className="text-[#9AA2B1] text-xs font-bold">Download {loadProgress}%</p>
+                </div>
+            ) : (
+                <p className="text-[#9AA2B1] text-sm font-bold">Caricamento PDF…</p>
+            )}
         </div>
     );
     if (error) return <div className="text-center py-16 text-red-500 font-bold">{error}</div>;
