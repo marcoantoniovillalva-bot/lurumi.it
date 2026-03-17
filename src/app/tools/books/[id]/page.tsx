@@ -64,21 +64,39 @@ function PdfViewer({ url }: { url: string }) {
             try {
                 const pdfjs = await import('pdfjs-dist');
                 const version = pdfjs.version;
-                pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${version}/build/pdf.worker.min.mjs`;
-                const pdf = await pdfjs.getDocument({
-                    url,
-                    // Necessari per decodificare font CID/CJK e immagini con encoding speciale
-                    cMapUrl: `https://unpkg.com/pdfjs-dist@${version}/cmaps/`,
-                    cMapPacked: true,
-                    standardFontDataUrl: `https://unpkg.com/pdfjs-dist@${version}/standard_fonts/`,
-                }).promise;
+                // Worker locale (public/pdf.worker.min.mjs) — più affidabile della CDN esterna
+                pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
+
+                // Timeout 60s: se il PDF non carica (worker bloccato, CORS, rete lenta) mostra errore
+                const timeout = new Promise<never>((_, reject) =>
+                    setTimeout(() => reject(new Error('Timeout: il PDF impiega troppo a caricare')), 60_000)
+                );
+
+                const pdf = await Promise.race([
+                    pdfjs.getDocument({
+                        url,
+                        withCredentials: false,          // evita problemi CORS con Vercel Blob
+                        cMapUrl: `https://unpkg.com/pdfjs-dist@${version}/cmaps/`,
+                        cMapPacked: true,
+                        standardFontDataUrl: `https://unpkg.com/pdfjs-dist@${version}/standard_fonts/`,
+                        disableRange: false,             // abilita range requests (carica solo le pagine servono)
+                        disableStream: false,
+                    }).promise,
+                    timeout,
+                ]);
+
                 if (cancelled) return;
                 pdfRef.current = pdf;
                 setNumPages(pdf.numPages);
                 setLoading(false);
                 await renderPage(pdf, 1, scale, canvasRef.current, renderTaskRef);
-            } catch {
-                if (!cancelled) setError('Impossibile caricare il PDF. Riprova più tardi.');
+            } catch (e: any) {
+                if (!cancelled) {
+                    console.error('[PdfViewer] load error:', e?.message ?? e);
+                    setError(e?.message?.includes('Timeout')
+                        ? 'Il PDF è troppo grande o la connessione è lenta. Riprova.'
+                        : 'Impossibile caricare il PDF. Riprova più tardi.');
+                }
                 setLoading(false);
             }
         })();
