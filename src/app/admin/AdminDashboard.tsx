@@ -1669,10 +1669,13 @@ function LibraryFormModal({ initial, onClose, onSaved }: {
             body: form,
         });
         if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            throw new Error(`Upload PDF fallito: ${err.error ?? res.statusText}`);
+            const text = await res.text().catch(() => '');
+            let msg = `HTTP ${res.status}`;
+            try { const j = JSON.parse(text); msg = j.error ?? msg; } catch {}
+            throw new Error(`Upload PDF fallito: ${msg}`);
         }
         const { url } = await res.json();
+        if (!url) throw new Error('Upload PDF fallito: risposta senza URL');
         return url;
     };
 

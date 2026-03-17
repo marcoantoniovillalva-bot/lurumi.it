@@ -31,10 +31,14 @@ export async function POST(req: NextRequest) {
     if (!file || !path) return NextResponse.json({ error: 'File o path mancante' }, { status: 400 });
 
     // Upload su Vercel Blob (nessun limite di dimensione)
-    const blob = await put(path, file, {
-        access: 'public',
-        contentType: file.type,
-    });
-
-    return NextResponse.json({ url: blob.url });
+    try {
+        const blob = await put(path, file, {
+            access: 'public',
+            contentType: file.type,
+        });
+        return NextResponse.json({ url: blob.url });
+    } catch (e: any) {
+        console.error('[upload-pdf] Vercel Blob error:', e?.message ?? e);
+        return NextResponse.json({ error: e?.message ?? 'Errore upload Vercel Blob' }, { status: 500 });
+    }
 }
