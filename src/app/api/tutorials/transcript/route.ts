@@ -313,13 +313,16 @@ export async function GET(req: NextRequest) {
             source = 'whisper'
         } catch (whisperErr: any) {
             console.error('[Transcript GET] Whisper fallback error:', whisperErr.message)
-            const isBot = (whisperErr.message ?? '').includes('Sign in')
-            const hasCookies = !!process.env.YOUTUBE_COOKIES
+            const msg = whisperErr.message ?? ''
+            const cookiesExpired = msg.includes('no longer valid') || msg.includes('rotated')
+            const isBot = msg.includes('Sign in')
             return NextResponse.json(
                 {
-                    error: isBot
-                        ? `YouTube blocca il download da server cloud (cookies: ${hasCookies ? 'presenti' : 'assenti'}). Messaggio: ${whisperErr.message?.slice(0, 200)}`
-                        : (whisperErr.message || 'Impossibile generare la trascrizione.'),
+                    error: cookiesExpired
+                        ? 'I cookies YouTube sono scaduti. L\'amministratore deve riesportarli dal browser e aggiornare la variabile YOUTUBE_COOKIES su Vercel.'
+                        : isBot
+                            ? 'Impossibile scaricare l\'audio: YouTube blocca i server cloud. Configura YOUTUBE_COOKIES su Vercel.'
+                            : (msg || 'Impossibile generare la trascrizione.'),
                 },
                 { status: 500 }
             )
