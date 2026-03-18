@@ -529,8 +529,9 @@ export async function POST(req: NextRequest) {
         }
 
         const db = createServiceClient()
-        await db.from(table).update({ transcript_data: transcriptData })
+        const { error: dbError } = await db.from(table).update({ transcript_data: transcriptData })
             .eq('id', tutorialId).eq('user_id', user.id)
+        if (dbError) throw new Error(`DB update failed: ${dbError.message}`)
 
         return NextResponse.json({ success: true, translated: translated ?? null })
     } catch (error: any) {

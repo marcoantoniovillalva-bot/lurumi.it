@@ -345,6 +345,9 @@ export default function ProjectDetail() {
                     updates.notesHtml = data.notes_html ?? '';
                     setNotes(data.notes_html ?? '');
                 }
+                if (data.transcript_data) {
+                    setTranscriptData(data.transcript_data);
+                }
                 updateProject(id as string, updates);
             });
     }, [id, user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
