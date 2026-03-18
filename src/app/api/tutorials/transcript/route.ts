@@ -156,15 +156,20 @@ async function transcribeViaWhisper(videoId: string): Promise<TranscriptSegment[
         const args = [
             `https://www.youtube.com/watch?v=${videoId}`,
             '--no-playlist',
-            // android_vr bypassa il blocco bot su server cloud
-            '--extractor-args', 'youtube:player_client=android_vr,ios,web',
-            // Node.js come runtime JS per decifrare URL (nome corretto: 'node')
             '--js-runtimes', `node:${process.execPath}`,
             '-f', 'bestaudio[filesize<25M]/worstaudio',
             '--max-filesize', '24M',
             '-o', path.join(tmpDir, `${tmpBase}.%(ext)s`),
         ]
-        if (cookiesFile) args.push('--cookies', cookiesFile)
+
+        if (cookiesFile) {
+            // Con cookies: usa web (supporta cookies + JS deciphering)
+            args.push('--extractor-args', 'youtube:player_client=web,mweb')
+            args.push('--cookies', cookiesFile)
+        } else {
+            // Senza cookies: android_vr bypassa il bot check su IP datacenter
+            args.push('--extractor-args', 'youtube:player_client=android_vr,ios,web')
+        }
 
         await new Promise<void>((resolve, reject) => {
             const stderrChunks: string[] = []
