@@ -166,8 +166,8 @@ async function transcribeViaWhisper(videoId: string): Promise<TranscriptSegment[
         ]
 
         if (cookiesFile) {
-            // tv_embedded supporta cookies e funziona su IP datacenter
-            args.push('--extractor-args', 'youtube:player_client=tv_embedded,web')
+            // tv e mediaconnect supportano cookies e funzionano su IP datacenter
+            args.push('--extractor-args', 'youtube:player_client=tv,mediaconnect')
             args.push('--cookies', cookiesFile)
         } else {
             // Senza cookies: android_vr bypassa il bot check su IP datacenter
