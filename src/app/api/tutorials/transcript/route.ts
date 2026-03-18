@@ -4,8 +4,8 @@ import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { computeTranscriptCost } from '@/app/api/transcript-config/route'
 import { pushToAdmins } from '@/lib/webpush'
 
-// Aumenta il timeout Vercel a 60s per supportare il download audio + Whisper
-export const maxDuration = 60
+// 300s: cold start (34MB yt-dlp binary) + audio download + Whisper transcription
+export const maxDuration = 300
 
 interface TranscriptSegment { text: string; start: number; duration: number }
 
@@ -106,11 +106,23 @@ async function getYtDlpPath(): Promise<string> {
         } catch {}
     }
 
-    // 4) Scarica da GitHub (Vercel cold start — ~1-2s su fibra)
-    console.log('[yt-dlp] Downloading binary...')
-    const YTDlpWrap = (await import('yt-dlp-wrap')).default
-    await YTDlpWrap.downloadFromGithub(tmpBin)
+    // 4) Scarica da GitHub il binario standalone corretto per la piattaforma
+    // yt-dlp-wrap scarica "yt-dlp" (3MB, script Python) — NON funziona su Vercel senza Python.
+    // Usiamo "yt-dlp_linux" (34MB, standalone PyInstaller) su Linux.
+    console.log('[yt-dlp] Downloading standalone binary...')
+    const releaseRes = await fetch('https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest')
+    const release = await releaseRes.json() as { tag_name: string; assets: { name: string; browser_download_url: string }[] }
+    const assetName = isWin ? 'yt-dlp.exe' : 'yt-dlp_linux'
+    const asset = release.assets.find(a => a.name === assetName)
+    if (!asset) throw new Error(`Asset ${assetName} non trovato nel release ${release.tag_name}`)
+
+    const dlRes = await fetch(asset.browser_download_url)
+    if (!dlRes.ok) throw new Error(`Download fallito: ${dlRes.status}`)
+    const buf = Buffer.from(await dlRes.arrayBuffer())
+    const { writeFile } = await import('fs/promises')
+    await writeFile(tmpBin, buf)
     if (!isWin) await chmod(tmpBin, 0o755)
+    console.log(`[yt-dlp] Binary ready: ${tmpBin} (${buf.length} bytes)`)
     _ytDlpPath = tmpBin
     return _ytDlpPath
 }

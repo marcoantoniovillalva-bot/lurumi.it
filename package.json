@@ -42,7 +42,6 @@
     "web-push": "^3.6.7",
     "youtube-transcript": "^1.2.1",
     "youtubei.js": "^17.0.1",
-    "yt-dlp-wrap": "^2.3.12",
     "yt-scraper": "^2.2.0",
     "ytdl-core": "^4.11.5",
     "zustand": "^5.0.9"
