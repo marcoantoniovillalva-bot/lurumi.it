@@ -147,10 +147,13 @@ async function transcribeViaWhisper(videoId: string): Promise<TranscriptSegment[
 
         // Scrivi cookies su file temporaneo se disponibili (YOUTUBE_COOKIES in formato Netscape)
         let cookiesFile: string | null = null
-        if (process.env.YOUTUBE_COOKIES) {
+        const cookiesEnv = process.env.YOUTUBE_COOKIES
+        console.log(`[yt-dlp] YOUTUBE_COOKIES: ${cookiesEnv ? `${cookiesEnv.length} chars` : 'NOT SET'}`)
+        if (cookiesEnv) {
             cookiesFile = path.join(tmpDir, 'yt-cookies.txt')
             const { writeFile } = await import('fs/promises')
-            await writeFile(cookiesFile, process.env.YOUTUBE_COOKIES)
+            await writeFile(cookiesFile, cookiesEnv)
+            console.log(`[yt-dlp] Cookies scritti in: ${cookiesFile}`)
         }
 
         const args = [
@@ -311,10 +314,11 @@ export async function GET(req: NextRequest) {
         } catch (whisperErr: any) {
             console.error('[Transcript GET] Whisper fallback error:', whisperErr.message)
             const isBot = (whisperErr.message ?? '').includes('Sign in')
+            const hasCookies = !!process.env.YOUTUBE_COOKIES
             return NextResponse.json(
                 {
                     error: isBot
-                        ? 'YouTube blocca il download da server cloud per questo video. Per abilitare la trascrizione automatica, configura la variabile YOUTUBE_COOKIES nelle impostazioni di Vercel (esporta i cookies da browser con estensione "Get cookies.txt").'
+                        ? `YouTube blocca il download da server cloud (cookies: ${hasCookies ? 'presenti' : 'assenti'}). Messaggio: ${whisperErr.message?.slice(0, 200)}`
                         : (whisperErr.message || 'Impossibile generare la trascrizione.'),
                 },
                 { status: 500 }
