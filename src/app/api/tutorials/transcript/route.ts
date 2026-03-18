@@ -145,15 +145,30 @@ async function transcribeViaWhisper(videoId: string): Promise<TranscriptSegment[
     try {
         const ytDlpPath = await getYtDlpPath()
 
+        // Scrivi cookies su file temporaneo se disponibili (YOUTUBE_COOKIES in formato Netscape)
+        let cookiesFile: string | null = null
+        if (process.env.YOUTUBE_COOKIES) {
+            cookiesFile = path.join(tmpDir, 'yt-cookies.txt')
+            const { writeFile } = await import('fs/promises')
+            await writeFile(cookiesFile, process.env.YOUTUBE_COOKIES)
+        }
+
+        const args = [
+            `https://www.youtube.com/watch?v=${videoId}`,
+            '--no-playlist',
+            // android_vr bypassa il blocco bot su server cloud
+            '--extractor-args', 'youtube:player_client=android_vr,ios,web',
+            // Node.js come runtime JS per decifrare URL (nome corretto: 'node')
+            '--js-runtimes', `node:${process.execPath}`,
+            '-f', 'bestaudio[filesize<25M]/worstaudio',
+            '--max-filesize', '24M',
+            '-o', path.join(tmpDir, `${tmpBase}.%(ext)s`),
+        ]
+        if (cookiesFile) args.push('--cookies', cookiesFile)
+
         await new Promise<void>((resolve, reject) => {
             const stderrChunks: string[] = []
-            const proc = execFile(ytDlpPath, [
-                `https://www.youtube.com/watch?v=${videoId}`,
-                '--no-playlist',
-                '-f', 'bestaudio[filesize<25M]/worstaudio',
-                '--max-filesize', '24M',
-                '-o', path.join(tmpDir, `${tmpBase}.%(ext)s`),
-            ])
+            const proc = execFile(ytDlpPath, args)
             proc.stderr?.on('data', (d: Buffer) => {
                 const line = d.toString().trim()
                 stderrChunks.push(line)
