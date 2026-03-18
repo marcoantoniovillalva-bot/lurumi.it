@@ -228,13 +228,9 @@ export async function GET(req: NextRequest) {
             source = 'whisper'
         } catch (whisperErr: any) {
             console.error('[Transcript GET] Whisper fallback error:', whisperErr.message)
-            // Messaggio user-friendly: "nessun client" = YouTube blocca l'accesso da server cloud
-            const isBlocked = (whisperErr.message ?? '').includes('nessun client')
             return NextResponse.json(
                 {
-                    error: isBlocked
-                        ? 'Questo video non ha sottotitoli disponibili su YouTube. La trascrizione automatica non è supportata per questo video.'
-                        : (whisperErr.message || 'Impossibile generare la trascrizione AI.'),
+                    error: 'YouTube non ha reso disponibili i sottotitoli per questo video dal server. Prova a caricare manualmente un file audio dalla pagina del tutorial.',
                 },
                 { status: 500 }
             )
