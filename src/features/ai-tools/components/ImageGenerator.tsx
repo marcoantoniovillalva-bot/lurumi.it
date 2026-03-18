@@ -74,14 +74,24 @@ export const ImageGenerator: React.FC = () => {
     const handleDownload = async () => {
         if (!generatedImage) return
         try {
+            // Determina estensione dal mime type (base64) o dall'URL
+            let extension = 'webp'
+            if (generatedImage.startsWith('data:')) {
+                const mimeMatch = generatedImage.match(/^data:image\/(\w+);base64,/)
+                const mime = mimeMatch?.[1] ?? 'webp'
+                extension = mime === 'jpeg' ? 'jpg' : mime === 'png' ? 'png' : 'webp'
+            }
+
             const res = await fetch(generatedImage)
             const blob = await res.blob()
-            const url = URL.createObjectURL(blob)
+            const blobUrl = URL.createObjectURL(blob)
             const a = document.createElement('a')
-            a.href = url
-            a.download = 'lurumi-ispirazione.webp'
+            a.href = blobUrl
+            a.download = `lurumi-ispirazione.${extension}`
+            document.body.appendChild(a)
             a.click()
-            URL.revokeObjectURL(url)
+            document.body.removeChild(a)
+            URL.revokeObjectURL(blobUrl)
         } catch {
             // fallback: apri in nuova tab
             window.open(generatedImage, '_blank')

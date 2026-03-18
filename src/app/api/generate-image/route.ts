@@ -119,9 +119,19 @@ export async function POST(req: NextRequest) {
                 quality: 'hd',
                 response_format: 'url',
             })
-            imageUrl = response.data?.[0]?.url ?? ''
+            const dalleUrl = response.data?.[0]?.url ?? ''
             provider = 'openai-dalle3'
             costUsd = 0.08
+
+            // Fetch server-side per evitare CORS sul client (URL OpenAI scade e non è CORS-safe)
+            try {
+                const imgRes = await fetch(dalleUrl)
+                const imgBuffer = Buffer.from(await imgRes.arrayBuffer())
+                const contentType = imgRes.headers.get('content-type') || 'image/png'
+                imageUrl = `data:${contentType};base64,${imgBuffer.toString('base64')}`
+            } catch {
+                imageUrl = dalleUrl // fallback: URL diretto
+            }
         } else if (referenceImageBase64) {
             // Usa GPT-4o Vision per analizzare l'immagine di riferimento
             // poi flux-dev per generare nel stile richiesto dall'utente
@@ -194,11 +204,26 @@ export async function POST(req: NextRequest) {
         } else {
             // flux-schnell fast (Replicate) — solo testo
             const replicate = getReplicateClient()
+
+            // Prompt migliorato: rilevamento amigurumi/uncinetto per prompt più fedele
+            const lowerPrompt = prompt.toLowerCase()
+            const isAmigurumi = /amigurumi|pupazzetto|peluche|stuffed/i.test(lowerPrompt)
+            const isCrochetItem = /uncinetto|crochet|granny|maglia|knit/i.test(lowerPrompt)
+
+            let enrichedPrompt: string
+            if (isAmigurumi) {
+                enrichedPrompt = `Single amigurumi crochet toy: ${prompt}. One individual handcrafted amigurumi doll centered in frame, kawaii style, clearly visible yarn crochet stitches, soft plush texture, clean white studio background, professional product photography, no duplicate objects, no multiple copies.`
+            } else if (isCrochetItem) {
+                enrichedPrompt = `Handcrafted crochet item: ${prompt}. Single item centered in frame, detailed yarn texture, professional studio lighting, clean white background, no duplicate objects.`
+            } else {
+                enrichedPrompt = `${prompt}. Single subject centered in frame, studio lighting, professional craft photography, no duplicate objects.`
+            }
+
             const output = await replicate.run(
                 'black-forest-labs/flux-schnell',
                 {
                     input: {
-                        prompt: `Beautiful high-quality crochet/knitting pattern visualization: ${prompt}. Studio lighting, professional craft photography.`,
+                        prompt: enrichedPrompt,
                         aspect_ratio: aspectRatio,
                         output_format: 'webp',
                         num_outputs: 1,
