@@ -44,7 +44,30 @@ async function fetchViaSupadata(videoId: string): Promise<TranscriptSegment[]> {
         .filter(s => s.text)
 }
 
-// ── Fallback 1: trascrizione AI via Groq Whisper ─────────────────────────────
+// ── Fallback 1: youtube-transcript (sottotitoli auto-generati YouTube) ────────
+async function fetchViaYoutubeTranscript(videoId: string): Promise<TranscriptSegment[]> {
+    const { YoutubeTranscript } = await import('youtube-transcript')
+    // Prova prima in italiano, poi in inglese, poi qualsiasi lingua
+    for (const lang of ['it', 'en', undefined]) {
+        try {
+            const items = await YoutubeTranscript.fetchTranscript(videoId, lang ? { lang } : {})
+            if (items?.length) {
+                return items.map((item: any) => ({
+                    text: (item.text as string).replace(/\n/g, ' ').trim(),
+                    start: item.offset ?? 0,     // già in secondi
+                    duration: item.duration ?? 0, // già in secondi
+                })).filter((s: TranscriptSegment) => s.text)
+            }
+        } catch {
+            // lingua non disponibile → prova la prossima
+        }
+    }
+    const err = new Error('NO_CAPTIONS') as any
+    err.noCaption = true
+    throw err
+}
+
+// ── Fallback 2: trascrizione AI via Groq Whisper ─────────────────────────────
 // Ultimo resort: scarica l'audio e lo trascrive con Whisper.
 // Solo per video senza sottotitoli di nessun tipo.
 async function transcribeViaWhisper(videoId: string): Promise<TranscriptSegment[]> {
@@ -180,14 +203,24 @@ export async function GET(req: NextRequest) {
     try {
         segments = await fetchViaSupadata(videoId)
     } catch (err: any) {
-        if (!err.noCaption) {
-            console.error('[Transcript GET] Supadata error:', err.message)
-            return NextResponse.json({ error: err.message || 'Errore interno' }, { status: 500 })
-        }
-        // noCaption → prova i fallback
+        // Qualsiasi errore Supadata (noCaption o generico) → prova i fallback
+        console.warn('[Transcript GET] Supadata fallback:', err.message)
     }
 
-    // ── Step 2: Groq Whisper (download audio + AI transcription) ───────────────
+    // ── Step 2: youtube-transcript (sottotitoli auto-generati YouTube) ──────────
+    if (!segments.length) {
+        console.log(`[Transcript GET] Supadata vuoto per ${videoId}, provo youtube-transcript`)
+        try {
+            segments = await fetchViaYoutubeTranscript(videoId)
+        } catch (ytErr: any) {
+            if (!ytErr.noCaption) {
+                console.error('[Transcript GET] youtube-transcript error:', ytErr.message)
+            }
+            // noCaption o errore generico → prova Whisper
+        }
+    }
+
+    // ── Step 3: Groq Whisper (download audio + AI transcription) ───────────────
     if (!segments.length) {
         console.log(`[Transcript GET] Nessun sottotitolo per ${videoId}, uso Whisper AI`)
         try {
