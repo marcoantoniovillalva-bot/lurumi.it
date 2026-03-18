@@ -305,8 +305,13 @@ export async function GET(req: NextRequest) {
             source = 'whisper'
         } catch (whisperErr: any) {
             console.error('[Transcript GET] Whisper fallback error:', whisperErr.message)
+            const isBot = (whisperErr.message ?? '').includes('Sign in')
             return NextResponse.json(
-                { error: whisperErr.message || 'Impossibile generare la trascrizione.' },
+                {
+                    error: isBot
+                        ? 'YouTube blocca il download da server cloud per questo video. Per abilitare la trascrizione automatica, configura la variabile YOUTUBE_COOKIES nelle impostazioni di Vercel (esporta i cookies da browser con estensione "Get cookies.txt").'
+                        : (whisperErr.message || 'Impossibile generare la trascrizione.'),
+                },
                 { status: 500 }
             )
         }
