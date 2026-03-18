@@ -146,15 +146,23 @@ async function transcribeViaWhisper(videoId: string): Promise<TranscriptSegment[
         const ytDlpPath = await getYtDlpPath()
 
         await new Promise<void>((resolve, reject) => {
+            const stderrChunks: string[] = []
             const proc = execFile(ytDlpPath, [
                 `https://www.youtube.com/watch?v=${videoId}`,
-                '--no-playlist', '--quiet', '--no-warnings',
+                '--no-playlist',
                 '-f', 'bestaudio[filesize<25M]/worstaudio',
                 '--max-filesize', '24M',
                 '-o', path.join(tmpDir, `${tmpBase}.%(ext)s`),
             ])
-            proc.stderr?.on('data', (d: Buffer) => console.warn('[yt-dlp]', d.toString().trim()))
-            proc.on('close', code => code === 0 ? resolve() : reject(new Error(`yt-dlp exit ${code}`)))
+            proc.stderr?.on('data', (d: Buffer) => {
+                const line = d.toString().trim()
+                stderrChunks.push(line)
+                console.warn('[yt-dlp]', line)
+            })
+            proc.on('close', code => {
+                if (code === 0) return resolve()
+                reject(new Error(`yt-dlp exit ${code}: ${stderrChunks.slice(-3).join(' | ')}`))
+            })
             proc.on('error', reject)
         })
 
