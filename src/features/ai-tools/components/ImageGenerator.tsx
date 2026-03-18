@@ -7,6 +7,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/hooks/useAuth'
 import { useUserProfile } from '@/hooks/useUserProfile'
 import { AiCreditsBar } from '@/components/AiCreditsBar'
+import { DesignerHistory } from './DesignerHistory'
 
 const SUGGESTIONS = [
     'Un coniglietto amigurumi con orecchie lunghe e fiocco rosa',
@@ -27,6 +28,7 @@ export const ImageGenerator: React.FC = () => {
     const [error, setError] = useState<string | null>(null)
     const [showSuggestions, setShowSuggestions] = useState(false)
     const [hdMode, setHdMode] = useState(false)
+    const [historyRefresh, setHistoryRefresh] = useState(0)
     const refImageInput = useRef<HTMLInputElement>(null)
 
     const handleReferenceImage = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -55,6 +57,7 @@ export const ImageGenerator: React.FC = () => {
             const result = await res.json()
             if (result.success && result.imageUrl) {
                 setGeneratedImage(result.imageUrl)
+                setHistoryRefresh(n => n + 1)
             } else {
                 setError(
                     res.status === 429
@@ -74,26 +77,18 @@ export const ImageGenerator: React.FC = () => {
     const handleDownload = async () => {
         if (!generatedImage) return
         try {
-            // Determina estensione dal mime type (base64) o dall'URL
-            let extension = 'webp'
-            if (generatedImage.startsWith('data:')) {
-                const mimeMatch = generatedImage.match(/^data:image\/(\w+);base64,/)
-                const mime = mimeMatch?.[1] ?? 'webp'
-                extension = mime === 'jpeg' ? 'jpg' : mime === 'png' ? 'png' : 'webp'
-            }
-
             const res = await fetch(generatedImage)
             const blob = await res.blob()
+            const ext = blob.type.includes('png') ? 'png' : blob.type.includes('webp') ? 'webp' : 'jpg'
             const blobUrl = URL.createObjectURL(blob)
             const a = document.createElement('a')
             a.href = blobUrl
-            a.download = `lurumi-ispirazione.${extension}`
+            a.download = `lurumi-ispirazione.${ext}`
             document.body.appendChild(a)
             a.click()
             document.body.removeChild(a)
             URL.revokeObjectURL(blobUrl)
         } catch {
-            // fallback: apri in nuova tab
             window.open(generatedImage, '_blank')
         }
     }
@@ -280,6 +275,9 @@ export const ImageGenerator: React.FC = () => {
                         </p>
                     )}
                 </section>
+
+                {/* Storico generazioni */}
+                {user && <DesignerHistory refreshTrigger={historyRefresh} />}
 
                 {/* Formato immagine */}
                 <section className="space-y-3">

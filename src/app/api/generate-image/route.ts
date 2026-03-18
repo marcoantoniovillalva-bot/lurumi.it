@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import OpenAI from 'openai'
 import Replicate from 'replicate'
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { checkAndDeductCredits } from '@/lib/ai-credits'
 import { checkRateLimit } from '@/lib/rate-limit'
 import { isAiEnabled, autoDisableIfOverBudget } from '@/lib/ai-status'
@@ -14,6 +14,11 @@ function getOpenAIClient() {
 function getReplicateClient() {
     if (!process.env.REPLICATE_API_TOKEN) throw new Error('REPLICATE_API_TOKEN non configurato')
     return new Replicate({ auth: process.env.REPLICATE_API_TOKEN })
+}
+
+function getKieApiToken() {
+    if (!process.env.KIE_AI_API_TOKEN) throw new Error('KIE_AI_API_TOKEN non configurato')
+    return process.env.KIE_AI_API_TOKEN
 }
 
 async function extractReplicateUrl(output: unknown): Promise<string> {
@@ -35,12 +40,99 @@ async function extractReplicateUrl(output: unknown): Promise<string> {
     throw new Error('Formato output non riconosciuto. Riprova.')
 }
 
-// DALL-E 3 accetta solo 1024x1024, 1792x1024, 1024x1792
-// Mappiamo i ratio usati dall'UI al più vicino supportato
-function toDalleSize(aspectRatio: string): '1024x1024' | '1792x1024' | '1024x1792' {
-    if (aspectRatio === '16:9' || aspectRatio === '3:2') return '1792x1024'  // orizzontale
-    if (aspectRatio === '9:16' || aspectRatio === '2:3') return '1024x1792'  // verticale
-    return '1024x1024'  // quadrato (1:1)
+// Polling helper per endpoint jobs (Ideogram V3)
+async function pollKieJob(taskId: string, token: string, maxAttempts = 40, intervalMs = 3000): Promise<string> {
+    for (let i = 0; i < maxAttempts; i++) {
+        await new Promise(r => setTimeout(r, intervalMs))
+        const res = await fetch(`https://api.kie.ai/api/v1/jobs/recordInfo?taskId=${taskId}`, {
+            headers: { 'Authorization': `Bearer ${token}` },
+        })
+        const json = await res.json()
+        const data = json?.data
+        if (!data) throw new Error('Risposta API kie.ai non valida')
+        if (data.state === 'success') {
+            const resultUrls = JSON.parse(data.resultJson)?.resultUrls
+            if (!resultUrls?.[0]) throw new Error('Nessun URL immagine nella risposta')
+            return resultUrls[0] as string
+        }
+        if (data.state === 'fail') throw new Error(data.failMsg || 'Generazione fallita su kie.ai')
+    }
+    throw new Error('Timeout: la generazione ha impiegato troppo tempo')
+}
+
+// Polling helper per endpoint gpt4o-image (gpt-image-1)
+async function pollKieGpt4oImage(taskId: string, token: string, maxAttempts = 40, intervalMs = 3000): Promise<string> {
+    for (let i = 0; i < maxAttempts; i++) {
+        await new Promise(r => setTimeout(r, intervalMs))
+        const res = await fetch(`https://api.kie.ai/api/v1/gpt4o-image/record-info?taskId=${taskId}`, {
+            headers: { 'Authorization': `Bearer ${token}` },
+        })
+        const json = await res.json()
+        const data = json?.data
+        if (!data) throw new Error('Risposta API kie.ai non valida')
+        if (data.successFlag === 1) {
+            const url = data.response?.resultUrls?.[0]
+            if (!url) throw new Error('Nessun URL immagine nella risposta')
+            return url as string
+        }
+        if (data.successFlag === 2) throw new Error(data.errorMessage || 'Generazione fallita su kie.ai')
+    }
+    throw new Error('Timeout: la generazione ha impiegato troppo tempo')
+}
+
+// Mappa aspect ratio UI → image_size Ideogram
+function toIdeogramSize(aspectRatio: string): string {
+    if (aspectRatio === '3:2') return 'landscape_4_3'
+    if (aspectRatio === '2:3') return 'portrait_4_3'
+    return 'square_hd' // 1:1
+}
+
+// Scarica immagine remota e la carica su Supabase Storage → restituisce URL pubblico permanente
+async function fetchAndUploadToStorage(remoteUrl: string, userId: string): Promise<string> {
+    const res = await fetch(remoteUrl)
+    if (!res.ok) throw new Error(`Fetch immagine fallito: ${res.status}`)
+    const buffer = Buffer.from(await res.arrayBuffer())
+    const contentType = res.headers.get('content-type') || 'image/jpeg'
+    const ext = contentType.includes('webp') ? 'webp' : contentType.includes('png') ? 'png' : 'jpg'
+    const path = `${userId}/${Date.now()}.${ext}`
+
+    const serviceClient = createServiceClient()
+    const { error } = await serviceClient.storage
+        .from('designer-images')
+        .upload(path, buffer, { contentType, upsert: false })
+
+    if (error) throw new Error('Errore salvataggio immagine: ' + error.message)
+
+    const { data } = serviceClient.storage.from('designer-images').getPublicUrl(path)
+    return data.publicUrl
+}
+
+// Elimina le generazioni più vecchie quando l'utente supera il limite (20 free / 100 premium)
+async function enforceUserImageLimit(userId: string, tier: string): Promise<void> {
+    const limit = tier === 'premium' ? 100 : 20
+    const serviceClient = createServiceClient()
+
+    const { data: rows } = await serviceClient
+        .from('ai_generations')
+        .select('id, output_data, created_at')
+        .eq('user_id', userId)
+        .eq('tool_type', 'designer')
+        .order('created_at', { ascending: true })
+
+    const withImages = (rows ?? []).filter((r: any) => r.output_data?.imageUrl)
+    if (withImages.length < limit) return
+
+    const toDelete = withImages.slice(0, withImages.length - limit + 1)
+    for (const row of toDelete) {
+        const imageUrl: string = (row.output_data as any)?.imageUrl ?? ''
+        if (imageUrl) {
+            const match = imageUrl.match(/designer-images\/(.+?)(\?|$)/)
+            if (match?.[1]) {
+                await serviceClient.storage.from('designer-images').remove([decodeURIComponent(match[1])])
+            }
+        }
+        await serviceClient.from('ai_generations').delete().eq('id', row.id)
+    }
 }
 
 const MAX_PROMPT_LENGTH = 1000
@@ -108,30 +200,27 @@ export async function POST(req: NextRequest) {
         let costUsd: number
 
         if (hd && !referenceImageBase64) {
-            // DALL-E 3 HD — solo testo, nessuna immagine di riferimento
-            const openai = getOpenAIClient()
+            // gpt-image-1 via kie.ai — qualità HD senza immagine di riferimento
+            const token = getKieApiToken()
             const enrichedPrompt = `High quality crochet and amigurumi art: ${prompt}. Handcrafted look, detailed yarn texture, studio lighting, soft background.`
-            const response = await openai.images.generate({
-                model: 'dall-e-3',
-                prompt: enrichedPrompt,
-                n: 1,
-                size: toDalleSize(aspectRatio),
-                quality: 'hd',
-                response_format: 'url',
-            })
-            const dalleUrl = response.data?.[0]?.url ?? ''
-            provider = 'openai-dalle3'
-            costUsd = 0.08
 
-            // Fetch server-side per evitare CORS sul client (URL OpenAI scade e non è CORS-safe)
-            try {
-                const imgRes = await fetch(dalleUrl)
-                const imgBuffer = Buffer.from(await imgRes.arrayBuffer())
-                const contentType = imgRes.headers.get('content-type') || 'image/png'
-                imageUrl = `data:${contentType};base64,${imgBuffer.toString('base64')}`
-            } catch {
-                imageUrl = dalleUrl // fallback: URL diretto
-            }
+            const createRes = await fetch('https://api.kie.ai/api/v1/gpt4o-image/generate', {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    prompt: enrichedPrompt,
+                    size: aspectRatio, // kie.ai accetta "1:1", "3:2", "2:3" direttamente
+                    nVariants: 1,
+                    isEnhance: false,
+                }),
+            })
+            const createJson = await createRes.json()
+            if (!createJson?.data?.taskId) throw new Error('Errore avvio generazione HD: ' + (createJson?.msg ?? 'risposta non valida'))
+
+            const remoteUrl = await pollKieGpt4oImage(createJson.data.taskId, token)
+            imageUrl = await fetchAndUploadToStorage(remoteUrl, user.id)
+            provider = 'kie-gpt-image-1'
+            costUsd = 0.030
         } else if (referenceImageBase64) {
             // Usa GPT-4o Vision per analizzare l'immagine di riferimento
             // poi flux-dev per generare nel stile richiesto dall'utente
@@ -202,49 +291,73 @@ export async function POST(req: NextRequest) {
             provider = hd ? 'replicate-flux-dev-hd' : 'replicate-flux-dev'
             costUsd = hd ? 0.040 : 0.030
         } else {
-            // flux-schnell fast (Replicate) — solo testo
-            const replicate = getReplicateClient()
+            // Ideogram V3 Turbo via kie.ai — fast, preciso per amigurumi/illustrazione
+            const token = getKieApiToken()
 
-            // Prompt migliorato: rilevamento amigurumi/uncinetto per prompt più fedele
+            // Prompt ottimizzato per tipo di soggetto
             const lowerPrompt = prompt.toLowerCase()
             const isAmigurumi = /amigurumi|pupazzetto|peluche|stuffed/i.test(lowerPrompt)
             const isCrochetItem = /uncinetto|crochet|granny|maglia|knit/i.test(lowerPrompt)
 
             let enrichedPrompt: string
+            let negativePrompt: string
             if (isAmigurumi) {
-                enrichedPrompt = `Single amigurumi crochet toy: ${prompt}. One individual handcrafted amigurumi doll centered in frame, kawaii style, clearly visible yarn crochet stitches, soft plush texture, clean white studio background, professional product photography, no duplicate objects, no multiple copies.`
+                enrichedPrompt = `Single amigurumi crochet toy: ${prompt}. One individual handcrafted amigurumi doll, kawaii style, visible yarn crochet stitches, soft plush texture, clean white studio background.`
+                negativePrompt = 'multiple subjects, duplicate, collage, ugly, distorted, blurry, realistic photo, human hands'
             } else if (isCrochetItem) {
-                enrichedPrompt = `Handcrafted crochet item: ${prompt}. Single item centered in frame, detailed yarn texture, professional studio lighting, clean white background, no duplicate objects.`
+                enrichedPrompt = `Handcrafted crochet creation: ${prompt}. Single item centered, detailed yarn texture, studio lighting, clean background.`
+                negativePrompt = 'multiple subjects, duplicate, ugly, distorted, blurry, realistic photo'
             } else {
-                enrichedPrompt = `${prompt}. Single subject centered in frame, studio lighting, professional craft photography, no duplicate objects.`
+                enrichedPrompt = `${prompt}. Single subject centered, studio lighting, clean background.`
+                negativePrompt = 'multiple subjects, duplicate, ugly, distorted, blurry'
             }
 
-            const output = await replicate.run(
-                'black-forest-labs/flux-schnell',
-                {
+            const createRes = await fetch('https://api.kie.ai/api/v1/jobs/createTask', {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    model: 'ideogram/v3-text-to-image',
                     input: {
                         prompt: enrichedPrompt,
-                        aspect_ratio: aspectRatio,
-                        output_format: 'webp',
-                        num_outputs: 1,
-                    }
-                }
-            )
-            imageUrl = await extractReplicateUrl(output)
-            provider = 'replicate-flux-schnell'
-            costUsd = 0.003
+                        rendering_speed: 'TURBO',
+                        style: 'GENERAL',
+                        expand_prompt: true,
+                        image_size: toIdeogramSize(aspectRatio),
+                        num_images: '1',
+                        negative_prompt: negativePrompt,
+                    },
+                }),
+            })
+            const createJson = await createRes.json()
+            if (!createJson?.data?.taskId) throw new Error('Errore avvio generazione fast: ' + (createJson?.msg ?? 'risposta non valida'))
+
+            const remoteUrl = await pollKieJob(createJson.data.taskId, token)
+            imageUrl = await fetchAndUploadToStorage(remoteUrl, user.id)
+            provider = 'kie-ideogram-v3-turbo'
+            costUsd = 0.0175
         }
 
-        // Log + auto-disable check — non bloccanti
+        // Log + limite per utente + auto-disable check — non bloccanti
         void (async () => {
             try {
+                // Recupera tier utente per il limite storage
+                const { data: profile } = await supabase
+                    .from('profiles')
+                    .select('tier')
+                    .eq('id', user.id)
+                    .single()
+                const tier = (profile as any)?.tier ?? 'free'
+
                 await supabase.from('ai_generations').insert({
                     user_id: user.id,
                     tool_type: 'designer',
                     provider,
                     cost_usd: costUsd,
-                    output_data: { prompt, imageUrl, aspectRatio, hd: !!hd },
+                    output_data: { prompt, aspectRatio, hd: !!hd, imageUrl },
                 })
+
+                // Elimina le più vecchie se supera il limite (20 free / 100 premium)
+                await enforceUserImageLimit(user.id, tier)
             } catch {}
             autoDisableIfOverBudget().catch(() => {})
         })()
