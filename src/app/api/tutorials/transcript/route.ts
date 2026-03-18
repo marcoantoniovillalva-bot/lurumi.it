@@ -67,55 +67,96 @@ async function fetchViaYoutubeTranscript(videoId: string): Promise<TranscriptSeg
     throw err
 }
 
+// ── Helper: percorso binario yt-dlp ──────────────────────────────────────────
+let _ytDlpPath: string | null = null
+async function getYtDlpPath(): Promise<string> {
+    if (_ytDlpPath) return _ytDlpPath
+
+    const { execSync } = await import('child_process')
+    const { access, constants, copyFile, chmod } = await import('fs/promises')
+    const path = await import('path')
+    const os = await import('os')
+
+    const tmpDir = os.tmpdir()
+    const isWin = process.platform === 'win32'
+    const tmpBin = path.join(tmpDir, isWin ? 'yt-dlp.exe' : 'yt-dlp')
+
+    // 1) yt-dlp in PATH (dev con yt-dlp installato globalmente)
+    try {
+        execSync('yt-dlp --version', { stdio: 'ignore' })
+        _ytDlpPath = 'yt-dlp'
+        return _ytDlpPath
+    } catch {}
+
+    // 2) Già presente in tmpDir
+    try {
+        await access(tmpBin, constants.F_OK)
+        _ytDlpPath = tmpBin
+        return _ytDlpPath
+    } catch {}
+
+    // 3) Binario locale nella root del progetto → copiato in tmpDir (evita path con spazi)
+    for (const name of ['yt-dlp-bin' + (isWin ? '.exe' : ''), 'yt-dlp-bin']) {
+        const localBin = path.join(process.cwd(), name)
+        try {
+            await access(localBin, constants.F_OK)
+            await copyFile(localBin, tmpBin)
+            _ytDlpPath = tmpBin
+            return _ytDlpPath
+        } catch {}
+    }
+
+    // 4) Scarica da GitHub (Vercel cold start — ~1-2s su fibra)
+    console.log('[yt-dlp] Downloading binary...')
+    const YTDlpWrap = (await import('yt-dlp-wrap')).default
+    await YTDlpWrap.downloadFromGithub(tmpBin)
+    if (!isWin) await chmod(tmpBin, 0o755)
+    _ytDlpPath = tmpBin
+    return _ytDlpPath
+}
+
 // ── Fallback 2: trascrizione AI via Groq Whisper ─────────────────────────────
-// Ultimo resort: scarica l'audio e lo trascrive con Whisper.
-// Solo per video senza sottotitoli di nessun tipo.
+// Scarica l'audio con yt-dlp (bypassa PoToken) e trascrive con Whisper.
 async function transcribeViaWhisper(videoId: string): Promise<TranscriptSegment[]> {
     if (!process.env.GROQ_API_KEY) throw new Error('GROQ_API_KEY non configurato')
 
-    const { Innertube } = await import('youtubei.js')
-    const MAX_BYTES = 24 * 1024 * 1024 // 24 MB ≈ 20-30 min a bassa qualità
+    const { execFile } = await import('child_process')
+    const { readdir, readFile, unlink } = await import('fs/promises')
+    const path = await import('path')
+    const os = await import('os')
 
+    const tmpDir = os.tmpdir()
     let audioBuffer: Buffer
-    const mimeType = 'audio/webm'
+    let mimeType = 'audio/webm'
+    const tmpBase = `yt-audio-${videoId}-${Date.now()}`
 
     try {
-        const yt = await Innertube.create({ retrieve_player: true, generate_session_locally: true })
+        const ytDlpPath = await getYtDlpPath()
 
-        // TV_EMBEDDED bypassa il requisito di login per video age-restricted su IP server
-        // Fallback: IOS → ANDROID per massima compatibilità
-        let stream: ReadableStream<Uint8Array> | undefined
-        for (const client of ['TV_EMBEDDED', 'IOS', 'ANDROID'] as const) {
-            try {
-                stream = await yt.download(videoId, {
-                    type: 'audio',
-                    quality: 'bestefficiency',
-                    format: 'any',
-                    client,
-                })
-                break
-            } catch (clientErr: any) {
-                const msg = (clientErr?.message ?? '').toLowerCase()
-                if (msg.includes('login') || msg.includes('not available') || msg.includes('unavailable') || msg.includes('400')) {
-                    console.warn(`[Whisper] client ${client} fallito (${clientErr.message}), provo il prossimo…`)
-                    continue
-                }
-                throw clientErr
-            }
-        }
-        if (!stream) throw new Error('nessun client disponibile')
+        await new Promise<void>((resolve, reject) => {
+            const proc = execFile(ytDlpPath, [
+                `https://www.youtube.com/watch?v=${videoId}`,
+                '--no-playlist', '--quiet', '--no-warnings',
+                '-f', 'bestaudio[filesize<25M]/worstaudio',
+                '--max-filesize', '24M',
+                '-o', path.join(tmpDir, `${tmpBase}.%(ext)s`),
+            ])
+            proc.stderr?.on('data', (d: Buffer) => console.warn('[yt-dlp]', d.toString().trim()))
+            proc.on('close', code => code === 0 ? resolve() : reject(new Error(`yt-dlp exit ${code}`)))
+            proc.on('error', reject)
+        })
 
-        const chunks: Uint8Array[] = []
-        let totalBytes = 0
-        const reader = stream.getReader()
-        while (true) {
-            const { done, value } = await reader.read()
-            if (done) break
-            chunks.push(value)
-            totalBytes += value.length
-            if (totalBytes >= MAX_BYTES) { await reader.cancel(); break }
-        }
-        audioBuffer = Buffer.concat(chunks.map(c => Buffer.from(c)))
+        // Trova il file scaricato (estensione variabile: webm, m4a, opus…)
+        const files = await readdir(tmpDir)
+        const audioFile = files.find(f => f.startsWith(tmpBase) && !f.endsWith('.part'))
+        if (!audioFile) throw new Error('File audio non trovato dopo il download')
+
+        const ext = path.extname(audioFile).slice(1)
+        const mimeMap: Record<string, string> = { webm: 'audio/webm', m4a: 'audio/mp4', mp4: 'audio/mp4', ogg: 'audio/ogg', opus: 'audio/ogg' }
+        mimeType = mimeMap[ext] ?? 'audio/webm'
+
+        audioBuffer = await readFile(path.join(tmpDir, audioFile))
+        await unlink(path.join(tmpDir, audioFile)).catch(() => {})
     } catch (e: any) {
         throw new Error(`Impossibile scaricare l'audio del video: ${e.message}`)
     }
@@ -123,7 +164,8 @@ async function transcribeViaWhisper(videoId: string): Promise<TranscriptSegment[
     // Invia a Groq Whisper tramite multipart form
     const formData = new FormData()
     const blob = new Blob([audioBuffer.buffer as ArrayBuffer], { type: mimeType })
-    formData.append('file', blob, 'audio.webm')
+    const ext = mimeType.includes('mp4') ? 'm4a' : mimeType.includes('ogg') ? 'ogg' : 'webm'
+    formData.append('file', blob, `audio.${ext}`)
     formData.append('model', 'whisper-large-v3')
     formData.append('response_format', 'verbose_json')
     formData.append('timestamp_granularities[]', 'segment')
@@ -229,9 +271,7 @@ export async function GET(req: NextRequest) {
         } catch (whisperErr: any) {
             console.error('[Transcript GET] Whisper fallback error:', whisperErr.message)
             return NextResponse.json(
-                {
-                    error: 'YouTube non ha reso disponibili i sottotitoli per questo video dal server. Prova a caricare manualmente un file audio dalla pagina del tutorial.',
-                },
+                { error: whisperErr.message || 'Impossibile generare la trascrizione.' },
                 { status: 500 }
             )
         }
