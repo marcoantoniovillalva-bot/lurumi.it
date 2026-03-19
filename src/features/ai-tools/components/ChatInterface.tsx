@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useRef, useEffect } from 'react'
-import { Send, Camera, ArrowLeft, X, History, MessageSquare, MoreVertical, Pencil, Trash2, Check, Copy } from 'lucide-react'
+import { Send, Camera, ArrowLeft, X, History, MessageSquare, MoreVertical, Pencil, Trash2, Check, Copy, ExternalLink, Sparkles, BookOpen } from 'lucide-react'
 import Image from 'next/image'
 import Link from 'next/link'
 import ReactMarkdown from 'react-markdown'
@@ -9,19 +9,42 @@ import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/hooks/useAuth'
 import { useUserProfile } from '@/hooks/useUserProfile'
 import { AiCreditsBar } from '@/components/AiCreditsBar'
+import { useProjectStore, type RoundCounter as RoundCounterType, type Section as SectionType, type ProjectImage } from '@/features/projects/store/useProjectStore'
+
+// ── Tipi ─────────────────────────────────────────────────────────────────────
+
+interface ToolResult {
+    type:
+    | 'project_created'
+    | 'project_cloned'
+    | 'sections_added'
+    | 'counters_added'
+    | 'youtube_updated'
+    | 'notes_updated'
+    | 'project_from_youtube'
+    | 'profile_cleared'
+    projectId: string
+    projectTitle: string
+    summary?: string
+}
 
 interface Message {
     id: string
     text: string
     sender: 'user' | 'ai'
     image?: string
+    toolResult?: ToolResult
+    ragSources?: string[]
 }
 
 interface ChatInterfaceProps {
     title: string
     placeholder?: string
     suggestions?: string[]
+    projectId?: string  // opzionale: contesto progetto attivo
 }
+
+// ── CopyButton ────────────────────────────────────────────────────────────────
 
 function CopyButton({ text }: { text: string }) {
     const [copied, setCopied] = useState(false)
@@ -30,7 +53,7 @@ function CopyButton({ text }: { text: string }) {
             await navigator.clipboard.writeText(text)
             setCopied(true)
             setTimeout(() => setCopied(false), 2000)
-        } catch {}
+        } catch { /* clipboard non disponibile */ }
     }
     return (
         <button onClick={handleCopy}
@@ -41,10 +64,113 @@ function CopyButton({ text }: { text: string }) {
     )
 }
 
+// ── ToolResultCard — mostra l'azione completata ───────────────────────────────
+
+const TOOL_LABELS: Record<string, string> = {
+    project_created: '✓ Progetto creato',
+    project_cloned: '✓ Progetto clonato',
+    sections_added: '✓ Sezioni aggiunte',
+    counters_added: '✓ Contatori aggiunti',
+    youtube_updated: '✓ Video aggiornato',
+    notes_updated: '✓ Note aggiornate',
+    project_from_youtube: '✓ Progetto da YouTube',
+    profile_cleared: '✓ Memoria AI cancellata',
+}
+
+function ToolResultCard({ result }: { result: ToolResult }) {
+    const label = TOOL_LABELS[result.type] ?? '✓ Operazione completata'
+    const hasProject = result.projectId && result.type !== 'profile_cleared'
+    return (
+        <div className="mt-2 rounded-2xl border border-[#D9B9F9] bg-[#F9F5FF] p-3 flex items-center justify-between gap-3">
+            <div className="flex items-start gap-2 min-w-0">
+                <Sparkles size={14} className="text-[#7B5CF6] mt-0.5 flex-shrink-0" />
+                <div className="min-w-0">
+                    <p className="text-[#7B5CF6] text-[12px] font-black">{label}</p>
+                    {result.projectTitle && (
+                        <p className="text-[#1C1C1E] text-[13px] font-semibold truncate">{result.projectTitle}</p>
+                    )}
+                    {result.summary && (
+                        <p className="text-[#9AA2B1] text-[11px] mt-0.5 leading-tight">{result.summary}</p>
+                    )}
+                </div>
+            </div>
+            {hasProject && (
+                <Link
+                    href={`/projects/${result.projectId}`}
+                    className="flex-shrink-0 flex items-center gap-1 text-[12px] font-black text-[#7B5CF6] bg-white border border-[#D9B9F9] rounded-xl px-3 py-1.5 hover:bg-[#F4EEFF] transition-colors whitespace-nowrap"
+                >
+                    Apri <ExternalLink size={11} />
+                </Link>
+            )}
+        </div>
+    )
+}
+
+// ── RagSourcesBadge — mostra le fonti usate per la risposta ──────────────────
+
+function RagSourcesBadge({ sources }: { sources: string[] }) {
+    if (!sources.length) return null
+    return (
+        <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+            <BookOpen size={10} className="text-[#9AA2B1]" />
+            {sources.map(s => (
+                <span key={s} className="text-[10px] text-[#9AA2B1] bg-[#F4F4F8] rounded-full px-2 py-0.5 font-medium">
+                    {s}
+                </span>
+            ))}
+        </div>
+    )
+}
+
+// ── ToolLoadingMessage — messaggio contestuale durante l'elaborazione ─────────
+
+function getLoadingMessage(input: string, hasImage: boolean): string {
+    if (hasImage) return 'Analizzo l\'immagine...'
+    const lower = input.toLowerCase()
+    if (lower.includes('crea') && lower.includes('progetto')) return 'Creo il progetto...'
+    if (lower.includes('clona') || lower.includes('copia')) return 'Clono il progetto...'
+    if (lower.includes('youtube') || lower.includes('youtu.be')) return 'Carico il tutorial...'
+    if (lower.includes('aggiungi') || lower.includes('aggiungi sezione')) return 'Aggiorno il progetto...'
+    if (lower.includes('cerca') || lower.includes('trova') || lower.includes('ho già')) return 'Cerco tra i tuoi progetti...'
+    return ''
+}
+
+// ── Helper: mappa row Supabase → Project store ────────────────────────────────
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function supabaseRowToProject(p: Record<string, any>) {
+    const pType = (p.type ?? 'blank') as 'pdf' | 'images' | 'tutorial' | 'blank'
+    return {
+        id: p.id as string,
+        title: p.title as string,
+        type: pType,
+        kind: (pType === 'pdf' ? 'pdf' : pType === 'tutorial' ? 'tutorial' : pType === 'blank' ? 'blank' : 'image') as 'pdf' | 'image' | 'tutorial' | 'blank',
+        createdAt: p.created_at ? new Date(p.created_at as string).getTime() : Date.now(),
+        size: (p.size as number) ?? 0,
+        counter: (p.counter as number) ?? 0,
+        timer: (p.timer_seconds as number) ?? 0,
+        secs: (p.secs as RoundCounterType[]) ?? [],
+        sections: (p.sections as SectionType[]) ?? [],
+        notesHtml: (p.notes_html as string) ?? '',
+        images: ((p.images as Array<{ id?: string } | string>) ?? []).map((img): ProjectImage =>
+            ({ id: typeof img === 'string' ? img : (img.id ?? '') })
+        ),
+        thumbDataURL: (p.thumb_url as string) ?? undefined,
+        thumbUrl: (p.thumb_url as string) ?? undefined,
+        videoId: (p.video_id as string) ?? undefined,
+        playlistId: (p.playlist_id as string) ?? undefined,
+        transcriptData: p.transcript_data ?? undefined,
+        coverImageId: (p.cover_image_id as string) ?? undefined,
+    }
+}
+
+// ── ChatInterface ─────────────────────────────────────────────────────────────
+
 export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     title,
     placeholder = "Chiedi a Lurumi...",
-    suggestions = []
+    suggestions = [],
+    projectId,
 }) => {
     const { user } = useAuth()
     const { aiCredits } = useUserProfile()
@@ -52,6 +178,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     const [messages, setMessages] = useState<Message[]>([])
     const [input, setInput] = useState('')
     const [loading, setLoading] = useState(false)
+    const [loadingHint, setLoadingHint] = useState('')
     const [selectedImage, setSelectedImage] = useState<string | null>(null)
     const fileInputRef = useRef<HTMLInputElement>(null)
     const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -60,8 +187,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     const [showHistory, setShowHistory] = useState(false)
     const [historySessions, setHistorySessions] = useState<{ id: string; firstMsg: string; created_at: string; count: number }[]>([])
     const [historyLoading, setHistoryLoading] = useState(false)
-
-    // Session rename/delete
     const [sessionTitles, setSessionTitles] = useState<Record<string, string>>({})
     const [sessionMenuId, setSessionMenuId] = useState<string | null>(null)
     const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null)
@@ -70,12 +195,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     const handleSaveRename = async (sid: string) => {
         if (!renameValue.trim() || !user) return
         const supabase = createClient()
-        await supabase.from('chat_sessions').upsert({
-            id: sid,
-            user_id: user.id,
-            title: renameValue.trim(),
-            tool_type: title,
-        })
+        await supabase.from('chat_sessions').upsert({ id: sid, user_id: user.id, title: renameValue.trim(), tool_type: title })
         setSessionTitles(prev => ({ ...prev, [sid]: renameValue.trim() }))
         setRenamingSessionId(null)
     }
@@ -96,46 +216,29 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         if (!user) return
         setHistoryLoading(true)
         const supabase = createClient()
-
         try {
-            // Carica messaggi e titoli in parallelo
             const [{ data }, { data: titlesData }] = await Promise.all([
-                supabase
-                    .from('chat_messages')
-                    .select('session_id, created_at, message, sender')
-                    .eq('user_id', user.id)
-                    .eq('tool_type', title)
-                    .order('created_at', { ascending: false }),
-                supabase
-                    .from('chat_sessions')
-                    .select('id, title')
-                    .eq('user_id', user.id)
-                    .eq('tool_type', title),
+                supabase.from('chat_messages').select('session_id, created_at, message, sender')
+                    .eq('user_id', user.id).eq('tool_type', title).order('created_at', { ascending: false }),
+                supabase.from('chat_sessions').select('id, title').eq('user_id', user.id).eq('tool_type', title),
             ])
             setHistoryLoading(false)
             if (!data) return
-
-            // Mappa titoli personalizzati
             const titlesMap: Record<string, string> = {}
             titlesData?.forEach(s => { titlesMap[s.id] = s.title })
             setSessionTitles(titlesMap)
-
-            // Raggruppa per session_id
             const map: Record<string, { firstMsg: string; created_at: string; count: number }> = {}
             data.forEach(m => {
-                if (!map[m.session_id]) {
-                    map[m.session_id] = { firstMsg: m.message || '', created_at: m.created_at, count: 0 }
-                }
+                if (!map[m.session_id]) map[m.session_id] = { firstMsg: m.message || '', created_at: m.created_at, count: 0 }
                 map[m.session_id].count++
             })
             setHistorySessions(
-                Object.entries(map)
-                    .map(([id, d]) => ({ id, ...d }))
+                Object.entries(map).map(([id, d]) => ({ id, ...d }))
                     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
                     .slice(0, 20)
             )
         } catch (err) {
-            console.error('[loadHistory] failed:', err)
+            console.error('[loadHistory]', err)
             setHistoryLoading(false)
         }
     }
@@ -143,17 +246,11 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     const loadConversation = async (sid: string) => {
         if (!user) return
         const supabase = createClient()
-        const { data } = await supabase
-            .from('chat_messages')
-            .select('*')
-            .eq('session_id', sid)
-            .eq('user_id', user.id)
-            .order('created_at')
+        const { data } = await supabase.from('chat_messages').select('*')
+            .eq('session_id', sid).eq('user_id', user.id).order('created_at')
         if (data) {
             setMessages(data.map(m => ({
-                id: m.id,
-                text: m.message || '',
-                sender: m.sender as 'user' | 'ai',
+                id: m.id, text: m.message || '', sender: m.sender as 'user' | 'ai',
                 image: m.image_url || undefined,
             })))
         }
@@ -161,7 +258,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         setShowHistory(false)
     }
 
-    // Auto-scroll to bottom on new messages / loading change
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
     }, [messages, loading])
@@ -183,18 +279,16 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         const textToSend = input
 
         const userMsg: Message = {
-            id: Date.now().toString(),
-            text: textToSend,
-            sender: 'user',
-            image: imageToSend || undefined
+            id: Date.now().toString(), text: textToSend, sender: 'user',
+            image: imageToSend || undefined,
         }
         setMessages(prev => [...prev, userMsg])
         setInput('')
         setSelectedImage(null)
         setLoading(true)
+        setLoadingHint(getLoadingMessage(textToSend, !!imageToSend))
 
         try {
-            // Use API route to avoid Server Action turbo-stream serialization limits
             const res = await fetch('/api/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -202,7 +296,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                     message: textToSend || 'Analizza questa immagine',
                     imageBase64: imageToSend ?? undefined,
                     toolType: title,
-                    // Passa la cronologia testo dei messaggi precedenti (escludi immagini per non gonfiare il payload)
+                    projectId: projectId ?? undefined,
                     history: messages.map(m => ({
                         role: m.sender === 'user' ? 'user' : 'assistant',
                         content: m.text || '',
@@ -215,16 +309,35 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 const aiMsg: Message = {
                     id: (Date.now() + 1).toString(),
                     text: result.text,
-                    sender: 'ai'
+                    sender: 'ai',
+                    toolResult: result.toolResult,
+                    ragSources: result.ragSources,
                 }
                 setMessages(prev => [...prev, aiMsg])
 
-                // Save to Supabase if logged in
+                // Sync progetto nello store Zustand (per navigazione immediata)
+                if (result.toolResult && user && result.toolResult.type !== 'profile_cleared') {
+                    const tr = result.toolResult as ToolResult
+                    const supabase = createClient()
+                    if (['project_created', 'project_cloned', 'project_from_youtube'].includes(tr.type)) {
+                        supabase.from('projects').select('*').eq('id', tr.projectId).single()
+                            .then(({ data }) => {
+                                if (data) useProjectStore.getState().addProject(supabaseRowToProject(data))
+                            })
+                    } else if (['sections_added', 'counters_added', 'youtube_updated', 'notes_updated'].includes(tr.type)) {
+                        supabase.from('projects').select('*').eq('id', tr.projectId).single()
+                            .then(({ data }) => {
+                                if (data) useProjectStore.getState().updateProject(tr.projectId, supabaseRowToProject(data))
+                            })
+                    }
+                }
+
+                // Salva su Supabase (solo testo, senza toolResult/ragSources)
                 if (user) {
                     const supabase = createClient()
                     supabase.from('chat_messages').insert([
                         { user_id: user.id, session_id: sessionId.current, sender: 'user', message: textToSend || 'Analizza questa immagine', image_url: imageToSend, tool_type: title },
-                        { user_id: user.id, session_id: sessionId.current, sender: 'ai', message: result.text, tool_type: title }
+                        { user_id: user.id, session_id: sessionId.current, sender: 'ai', message: result.text, tool_type: title },
                     ]).then(({ error }) => { if (error) console.warn('Chat save failed:', error.message) })
                 }
             } else {
@@ -238,24 +351,22 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                             ? `Crediti AI esauriti. ${result.error}`
                             : `Spiacente, si è verificato un errore: ${result.error || 'Riprova più tardi.'}`
                 setMessages(prev => [...prev, {
-                    id: (Date.now() + 1).toString(),
-                    text: errorText,
-                    sender: 'ai'
+                    id: (Date.now() + 1).toString(), text: errorText, sender: 'ai',
                 }])
             }
-        } catch (err: any) {
+        } catch {
             setMessages(prev => [...prev, {
-                id: (Date.now() + 1).toString(),
-                text: 'Errore di connessione. Riprova più tardi.',
-                sender: 'ai'
+                id: (Date.now() + 1).toString(), text: 'Errore di connessione. Riprova più tardi.', sender: 'ai',
             }])
         } finally {
             setLoading(false)
+            setLoadingHint('')
         }
     }
 
     return (
-        <div className="relative flex flex-col h-[calc(100dvh-var(--header-h,64px)-env(safe-area-inset-bottom,0px))] max-w-2xl mx-auto bg-[#FAFAFC]" style={{ '--header-h': '64px' } as React.CSSProperties}>
+        <div className="relative flex flex-col h-[calc(100dvh-var(--header-h,64px)-64px-env(safe-area-inset-bottom,0px))] max-w-2xl mx-auto bg-[#FAFAFC]" style={{ '--header-h': '64px' } as React.CSSProperties}>
+            {/* Header */}
             <div className="border-b border-[#EEF0F4] bg-white">
                 <div className="px-4 pt-4 pb-3 flex items-center justify-between">
                     <Link href="/tools" className="text-[#9AA2B1] hover:text-[#7B5CF6] transition-colors">
@@ -263,23 +374,18 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                     </Link>
                     <h2 className="text-lg font-bold text-[#1C1C1E]">{title}</h2>
                     {user ? (
-                        <button
-                            onClick={() => { setShowHistory(true); loadHistory(); }}
+                        <button onClick={() => { setShowHistory(true); loadHistory() }}
                             className="w-8 h-8 flex items-center justify-center text-[#9AA2B1] hover:text-[#7B5CF6] transition-colors"
-                            title="Storico conversazioni"
-                        >
+                            title="Storico conversazioni">
                             <History size={20} />
                         </button>
-                    ) : (
-                        <div className="w-8" />
-                    )}
+                    ) : <div className="w-8" />}
                 </div>
                 {user && (
                     <div className="px-4 pb-3">
                         {aiCredits
                             ? <AiCreditsBar credits={aiCredits} compact />
-                            : <div className="h-4 w-20 bg-[#F4F4F8] rounded-full animate-pulse" />
-                        }
+                            : <div className="h-4 w-20 bg-[#F4F4F8] rounded-full animate-pulse" />}
                     </div>
                 )}
             </div>
@@ -295,46 +401,28 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                         <div className="w-8" />
                     </div>
                     <div className="flex-1 overflow-y-auto p-4 space-y-2.5">
-                        {historyLoading && (
-                            <div className="text-center py-10 text-[#9AA2B1] text-sm font-medium">Caricamento...</div>
-                        )}
+                        {historyLoading && <div className="text-center py-10 text-[#9AA2B1] text-sm font-medium">Caricamento...</div>}
                         {!historyLoading && historySessions.length === 0 && (
                             <div className="text-center py-10 text-[#9AA2B1] text-sm font-medium">Nessuna conversazione salvata.</div>
                         )}
                         {historySessions.map(s => (
                             <div key={s.id}>
                                 {renamingSessionId === s.id ? (
-                                    /* ── Rinomina inline ── */
                                     <div className="bg-[#FAFAFC] border border-[#7B5CF6] rounded-2xl p-4">
                                         <div className="flex items-center gap-2">
                                             <div className="w-8 h-8 bg-[#F4EEFF] rounded-full flex items-center justify-center flex-shrink-0">
                                                 <MessageSquare size={14} className="text-[#7B5CF6]" />
                                             </div>
-                                            <input
-                                                autoFocus
-                                                value={renameValue}
-                                                onChange={e => setRenameValue(e.target.value)}
-                                                onKeyDown={e => {
-                                                    if (e.key === 'Enter') handleSaveRename(s.id)
-                                                    if (e.key === 'Escape') setRenamingSessionId(null)
-                                                }}
-                                                className="flex-1 h-9 px-3 border border-[#E6DAFF] rounded-xl text-sm font-bold outline-none focus:border-[#7B5CF6]"
-                                            />
-                                            <button onClick={() => handleSaveRename(s.id)} className="text-green-500 p-1 flex-shrink-0">
-                                                <Check size={16} />
-                                            </button>
-                                            <button onClick={() => setRenamingSessionId(null)} className="text-[#9AA2B1] p-1 flex-shrink-0">
-                                                <X size={16} />
-                                            </button>
+                                            <input autoFocus value={renameValue} onChange={e => setRenameValue(e.target.value)}
+                                                onKeyDown={e => { if (e.key === 'Enter') handleSaveRename(s.id); if (e.key === 'Escape') setRenamingSessionId(null) }}
+                                                className="flex-1 h-9 px-3 border border-[#E6DAFF] rounded-xl text-sm font-bold outline-none focus:border-[#7B5CF6]" />
+                                            <button onClick={() => handleSaveRename(s.id)} className="text-green-500 p-1 flex-shrink-0"><Check size={16} /></button>
+                                            <button onClick={() => setRenamingSessionId(null)} className="text-[#9AA2B1] p-1 flex-shrink-0"><X size={16} /></button>
                                         </div>
                                     </div>
                                 ) : (
-                                    /* ── Riga normale ── */
                                     <div className="flex items-center gap-2 bg-[#FAFAFC] border border-[#EEF0F4] rounded-2xl p-4 hover:border-[#D9B9F9] transition-colors">
-                                        <button
-                                            onClick={() => loadConversation(s.id)}
-                                            className="flex items-start gap-3 flex-1 min-w-0 text-left"
-                                        >
+                                        <button onClick={() => loadConversation(s.id)} className="flex items-start gap-3 flex-1 min-w-0 text-left">
                                             <div className="w-8 h-8 bg-[#F4EEFF] rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
                                                 <MessageSquare size={14} className="text-[#7B5CF6]" />
                                             </div>
@@ -347,36 +435,22 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                                                 </p>
                                             </div>
                                         </button>
-
-                                        {/* Three-dots menu */}
                                         <div className="relative flex-shrink-0">
-                                            <button
-                                                onClick={() => setSessionMenuId(sessionMenuId === s.id ? null : s.id)}
-                                                className="w-8 h-8 flex items-center justify-center rounded-lg text-[#9AA2B1] hover:bg-[#F4F4F8] transition-colors"
-                                            >
+                                            <button onClick={() => setSessionMenuId(sessionMenuId === s.id ? null : s.id)}
+                                                className="w-8 h-8 flex items-center justify-center rounded-lg text-[#9AA2B1] hover:bg-[#F4F4F8] transition-colors">
                                                 <MoreVertical size={16} />
                                             </button>
                                             {sessionMenuId === s.id && (
                                                 <>
                                                     <div className="fixed inset-0 z-10" onClick={() => setSessionMenuId(null)} />
                                                     <div className="absolute right-0 top-9 z-20 bg-white rounded-2xl shadow-xl border border-[#EEF0F4] p-1.5 w-40 animate-in fade-in zoom-in duration-150">
-                                                        <button
-                                                            onClick={() => {
-                                                                setRenamingSessionId(s.id)
-                                                                setRenameValue(sessionTitles[s.id] ?? s.firstMsg ?? '')
-                                                                setSessionMenuId(null)
-                                                            }}
-                                                            className="w-full flex items-center gap-2.5 px-3 py-2 text-sm font-bold text-[#1C1C1E] hover:bg-[#F4F4F8] rounded-xl"
-                                                        >
-                                                            <Pencil size={14} className="text-[#7B5CF6]" />
-                                                            Rinomina
+                                                        <button onClick={() => { setRenamingSessionId(s.id); setRenameValue(sessionTitles[s.id] ?? s.firstMsg ?? ''); setSessionMenuId(null) }}
+                                                            className="w-full flex items-center gap-2.5 px-3 py-2 text-sm font-bold text-[#1C1C1E] hover:bg-[#F4F4F8] rounded-xl">
+                                                            <Pencil size={14} className="text-[#7B5CF6]" /> Rinomina
                                                         </button>
-                                                        <button
-                                                            onClick={() => handleDeleteSession(s.id)}
-                                                            className="w-full flex items-center gap-2.5 px-3 py-2 text-sm font-bold text-red-500 hover:bg-red-50 rounded-xl"
-                                                        >
-                                                            <Trash2 size={14} />
-                                                            Elimina
+                                                        <button onClick={() => handleDeleteSession(s.id)}
+                                                            className="w-full flex items-center gap-2.5 px-3 py-2 text-sm font-bold text-red-500 hover:bg-red-50 rounded-xl">
+                                                            <Trash2 size={14} /> Elimina
                                                         </button>
                                                     </div>
                                                 </>
@@ -390,6 +464,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 </div>
             )}
 
+            {/* Messages */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4 no-scrollbar">
                 {messages.length === 0 && !loading && suggestions.length > 0 && (
                     <div className="pt-8 text-center">
@@ -399,11 +474,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                         <p className="text-[#9AA2B1] text-sm mb-6 max-w-[200px] mx-auto italic">Inizia una conversazione con l'assistente Lurumi.</p>
                         <div className="grid grid-cols-1 gap-2">
                             {suggestions.map((s, i) => (
-                                <button
-                                    key={i}
-                                    onClick={() => setInput(s)}
-                                    className="text-left p-3.5 rounded-2xl bg-white border border-[#EEF0F4] text-[#1C1C1E] text-sm font-medium hover:border-[#D9B9F9] transition-all shadow-sm"
-                                >
+                                <button key={i} onClick={() => setInput(s)}
+                                    className="text-left p-3.5 rounded-2xl bg-white border border-[#EEF0F4] text-[#1C1C1E] text-sm font-medium hover:border-[#D9B9F9] transition-all shadow-sm">
                                     {s}
                                 </button>
                             ))}
@@ -415,8 +487,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                     <div key={m.id} className={`flex ${m.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
                         <div className={`max-w-[85%] p-4 rounded-2xl shadow-sm space-y-2 ${m.sender === 'user'
                             ? 'bg-[#7B5CF6] text-white rounded-tr-none'
-                            : 'bg-white text-[#1C1C1E] border border-[#EEF0F4] rounded-tl-none'
-                            }`}>
+                            : 'bg-white text-[#1C1C1E] border border-[#EEF0F4] rounded-tl-none'}`}>
                             {m.image && (
                                 <img src={m.image} alt="Upload" className="w-full h-auto rounded-lg mb-1 shadow-sm border border-white/20" />
                             )}
@@ -431,6 +502,12 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                                             prose-a:text-[#7B5CF6] prose-a:no-underline">
                                             <ReactMarkdown>{m.text}</ReactMarkdown>
                                         </div>
+                                        {/* Action card tool use */}
+                                        {m.toolResult && <ToolResultCard result={m.toolResult} />}
+                                        {/* Badge fonti RAG */}
+                                        {m.ragSources && m.ragSources.length > 0 && (
+                                            <RagSourcesBadge sources={m.ragSources} />
+                                        )}
                                         <CopyButton text={m.text} />
                                     </>
                                 ) : (
@@ -441,13 +518,18 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                     </div>
                 ))}
 
-                {/* Typing indicator */}
+                {/* Typing indicator con hint contestuale */}
                 {loading && (
                     <div className="flex justify-start">
-                        <div className="bg-white border border-[#EEF0F4] rounded-2xl rounded-tl-none px-5 py-4 shadow-sm flex items-center gap-1.5">
-                            <span className="w-2.5 h-2.5 bg-[#7B5CF6] rounded-full animate-bounce" style={{ animationDelay: '0ms', animationDuration: '0.9s' }} />
-                            <span className="w-2.5 h-2.5 bg-[#B39DDB] rounded-full animate-bounce" style={{ animationDelay: '180ms', animationDuration: '0.9s' }} />
-                            <span className="w-2.5 h-2.5 bg-[#D9B9F9] rounded-full animate-bounce" style={{ animationDelay: '360ms', animationDuration: '0.9s' }} />
+                        <div className="bg-white border border-[#EEF0F4] rounded-2xl rounded-tl-none px-5 py-4 shadow-sm flex items-center gap-2">
+                            <div className="flex items-center gap-1.5">
+                                <span className="w-2.5 h-2.5 bg-[#7B5CF6] rounded-full animate-bounce" style={{ animationDelay: '0ms', animationDuration: '0.9s' }} />
+                                <span className="w-2.5 h-2.5 bg-[#B39DDB] rounded-full animate-bounce" style={{ animationDelay: '180ms', animationDuration: '0.9s' }} />
+                                <span className="w-2.5 h-2.5 bg-[#D9B9F9] rounded-full animate-bounce" style={{ animationDelay: '360ms', animationDuration: '0.9s' }} />
+                            </div>
+                            {loadingHint && (
+                                <span className="text-[#9AA2B1] text-[12px] font-medium ml-1">{loadingHint}</span>
+                            )}
                         </div>
                     </div>
                 )}
@@ -455,14 +537,12 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 <div ref={messagesEndRef} />
             </div>
 
+            {/* Image preview */}
             {selectedImage && (
                 <div className="px-4 py-2 bg-white border-t border-[#EEF0F4] flex items-center gap-3">
                     <div className="relative w-14 h-14 rounded-xl overflow-hidden border-2 border-[#7B5CF6] flex-shrink-0">
                         <img src={selectedImage} alt="Preview" className="w-full h-full object-cover" />
-                        <button
-                            onClick={() => setSelectedImage(null)}
-                            className="absolute top-0 right-0 bg-black/60 text-white rounded-bl-lg p-0.5"
-                        >
+                        <button onClick={() => setSelectedImage(null)} className="absolute top-0 right-0 bg-black/60 text-white rounded-bl-lg p-0.5">
                             <X size={12} />
                         </button>
                     </div>
@@ -470,36 +550,23 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 </div>
             )}
 
+            {/* Input */}
             <div className="p-4 bg-white border-t border-[#EEF0F4]">
                 <div className="flex items-center gap-2.5">
-                    <input
-                        type="file"
-                        ref={fileInputRef}
-                        onChange={handleImageSelect}
-                        accept="image/*"
-                        className="hidden"
-                    />
-                    <button
-                        onClick={() => fileInputRef.current?.click()}
-                        className="w-11 h-11 flex items-center justify-center bg-[#FAFAFC] text-[#9AA2B1] rounded-full border border-[#EEF0F4] hover:text-[#7B5CF6] transition-colors active:scale-90"
-                    >
+                    <input type="file" ref={fileInputRef} onChange={handleImageSelect} accept="image/*" className="hidden" />
+                    <button onClick={() => fileInputRef.current?.click()}
+                        className="w-11 h-11 flex items-center justify-center bg-[#FAFAFC] text-[#9AA2B1] rounded-full border border-[#EEF0F4] hover:text-[#7B5CF6] transition-colors active:scale-90">
                         <Camera size={20} />
                     </button>
                     <div className="flex-1 relative">
-                        <input
-                            type="text"
-                            value={input}
-                            onChange={(e) => setInput(e.target.value)}
+                        <input type="text" value={input} onChange={(e) => setInput(e.target.value)}
                             onKeyDown={(e) => e.key === 'Enter' && handleSend()}
                             placeholder={placeholder}
-                            className="w-full h-11 pl-4 pr-12 bg-[#FAFAFC] border border-[#EEF0F4] rounded-full text-[#1C1C1E] text-[15px] focus:outline-none focus:border-[#7B5CF6] transition-colors"
-                        />
-                        <button
-                            onClick={handleSend}
+                            className="w-full h-11 pl-4 pr-12 bg-[#FAFAFC] border border-[#EEF0F4] rounded-full text-[#1C1C1E] text-[15px] focus:outline-none focus:border-[#7B5CF6] transition-colors" />
+                        <button onClick={handleSend}
                             disabled={(!input.trim() && !selectedImage) || loading}
                             title={user ? (selectedImage ? '5 crediti AI' : '2 crediti AI') : 'Accedi per usare l\'AI'}
-                            className={`absolute right-1 top-1 w-9 h-9 flex items-center justify-center rounded-full transition-all ${(input.trim() || selectedImage) && !loading ? 'bg-[#7B5CF6] text-white shadow-lg active:scale-90' : 'bg-transparent text-[#9AA2B1]'}`}
-                        >
+                            className={`absolute right-1 top-1 w-9 h-9 flex items-center justify-center rounded-full transition-all ${(input.trim() || selectedImage) && !loading ? 'bg-[#7B5CF6] text-white shadow-lg active:scale-90' : 'bg-transparent text-[#9AA2B1]'}`}>
                             <Send size={18} />
                         </button>
                     </div>

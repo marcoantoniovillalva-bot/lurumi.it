@@ -705,6 +705,83 @@ END $$;
 -- Inserisci riga transcript se non esiste
 INSERT INTO system_usage (key, count, reset_at) VALUES ('transcript', 0, NOW())
   ON CONFLICT (key) DO NOTHING;
+
+-- ── RAG — profilo AI utente ───────────────────────────────────────────────────
+-- Profilo estratto dalle conversazioni (livello, filato preferito, ecc.)
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS ai_profile JSONB DEFAULT NULL;
+
+-- ── RAG — vettori knowledge_chunks ───────────────────────────────────────────
+-- Richiede l'estensione pgvector (pre-installata su Supabase)
+CREATE EXTENSION IF NOT EXISTS vector;
+
+CREATE TABLE IF NOT EXISTS knowledge_chunks (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id      UUID REFERENCES auth.users(id) ON DELETE CASCADE,  -- NULL = condiviso (libro)
+  source_type  TEXT NOT NULL CHECK (source_type IN ('project', 'libro', 'fatti_chat')),
+  source_id    TEXT,           -- project.id, 'libro_lurumi/abbreviazioni', ecc.
+  content      TEXT NOT NULL,
+  embedding    vector(1536),   -- text-embedding-3-small
+  metadata     JSONB DEFAULT '{}',
+  created_at   TIMESTAMPTZ DEFAULT NOW(),
+  updated_at   TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Indice per ricerca veloce (IVFFlat — buono fino a ~100k vettori)
+CREATE INDEX IF NOT EXISTS knowledge_chunks_embedding_idx
+  ON knowledge_chunks USING ivfflat (embedding vector_cosine_ops)
+  WITH (lists = 50);
+
+-- Unique per evitare duplicati su upsert
+CREATE UNIQUE INDEX IF NOT EXISTS knowledge_chunks_unique_user_source
+  ON knowledge_chunks (user_id, source_type, source_id)
+  WHERE user_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS knowledge_chunks_unique_shared_source
+  ON knowledge_chunks (source_type, source_id)
+  WHERE user_id IS NULL;
+
+-- RLS
+ALTER TABLE knowledge_chunks ENABLE ROW LEVEL SECURITY;
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='knowledge_chunks' AND policyname='chunks_user_own') THEN
+    CREATE POLICY "chunks_user_own" ON knowledge_chunks FOR ALL USING (auth.uid() = user_id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='knowledge_chunks' AND policyname='chunks_shared_read') THEN
+    CREATE POLICY "chunks_shared_read" ON knowledge_chunks FOR SELECT USING (user_id IS NULL);
+  END IF;
+END $$;
+
+-- Funzione per ricerca semantica (usata da rag.ts)
+CREATE OR REPLACE FUNCTION match_knowledge(
+  query_embedding  vector(1536),
+  match_user_id    uuid,
+  match_count      int DEFAULT 3,
+  source_filter    text DEFAULT NULL
+)
+RETURNS TABLE (
+  id          uuid,
+  content     text,
+  source_type text,
+  source_id   text,
+  metadata    jsonb,
+  similarity  float
+)
+LANGUAGE sql STABLE AS $$
+  SELECT
+    id, content, source_type, source_id, metadata,
+    1 - (embedding <=> query_embedding) AS similarity
+  FROM knowledge_chunks
+  WHERE
+    (user_id = match_user_id OR user_id IS NULL)
+    AND (source_filter IS NULL OR source_type = source_filter)
+    AND embedding IS NOT NULL
+  ORDER BY embedding <=> query_embedding
+  LIMIT match_count;
+$$;
 `
 
 async function run() {
