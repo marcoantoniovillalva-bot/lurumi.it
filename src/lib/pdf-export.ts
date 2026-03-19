@@ -8,17 +8,50 @@ export interface PdfProjectInput {
     url?: string          // link YouTube (tutorial) o altro link esterno
     coverImageId?: string
     images?: { id: string }[]
-    secs: { id: string; name: string; value: number; imageId?: string }[]
+    secs: { id: string; name: string; value: number; imageId?: string; sectionId?: string }[]
+    sections?: { id: string; title: string; description?: string; order: number }[]
     notesHtml?: string
 }
 
-const PURPLE = rgb(0.482, 0.361, 0.965)  // #7B5CF6
-const DARK   = rgb(0.11, 0.11, 0.118)    // #1C1C1E
-const MUTED  = rgb(0.604, 0.635, 0.694)  // #9AA2B1
-const LIGHT  = rgb(0.933, 0.941, 0.957)  // #EEF0F4
+const PURPLE       = rgb(0.482, 0.361, 0.965)  // #7B5CF6
+const PURPLE_LIGHT = rgb(0.961, 0.941, 1.0)    // #F5EEFF lavanda chiara
+const PURPLE_MID   = rgb(0.82,  0.76,  1.0)    // bordi sezione
+const DARK         = rgb(0.11,  0.11,  0.118)  // #1C1C1E
+const MUTED        = rgb(0.604, 0.635, 0.694)  // #9AA2B1
+const LIGHT        = rgb(0.933, 0.941, 0.957)  // #EEF0F4
 
 function stripHtml(html: string): string {
     return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
+/** Word-wrap che rispetta i newline dell'utente */
+function wrapText(text: string, font: any, fontSize: number, maxWidth: number): string[] {
+    const lines: string[] = []
+    for (const para of text.split('\n')) {
+        if (!para.trim()) { lines.push(''); continue }
+        const words = para.split(' ')
+        let cur = ''
+        for (const word of words) {
+            const test = cur ? cur + ' ' + word : word
+            if (font.widthOfTextAtSize(test, fontSize) <= maxWidth) {
+                cur = test
+            } else {
+                if (cur) lines.push(cur)
+                cur = word
+            }
+        }
+        if (cur) lines.push(cur)
+    }
+    return lines
+}
+
+/** Fetch raw PNG bytes (preserva trasparenza — non usa canvas) */
+async function fetchPngRaw(url: string): Promise<Uint8Array | null> {
+    try {
+        const res = await fetch(url)
+        if (!res.ok) return null
+        return new Uint8Array(await res.arrayBuffer())
+    } catch { return null }
 }
 
 function formatTime(seconds: number): string {
@@ -92,30 +125,32 @@ export async function generatePatternPdf(
     const coverPage = addPage()
     let coverY = H - MARGIN
 
-    // Header bar viola
+    // Header bar viola con titolo progetto (auto-size per titoli lunghi)
     coverPage.drawRectangle({ x: 0, y: H - 80, width: W, height: 80, color: PURPLE })
-    coverPage.drawText('lurumi.it', { x: MARGIN, y: H - 52, size: 18, font: fontBold, color: rgb(1, 1, 1) })
-
-    coverY = H - 80 - 40
-
-    // Titolo
-    const titleSize = project.title.length > 30 ? 24 : 30
-    coverPage.drawText(project.title, {
-        x: MARGIN, y: coverY, size: titleSize, font: fontBold, color: DARK,
-        maxWidth: CONTENT_W,
+    const maxHeaderW = W - MARGIN * 2 - 8
+    let headerTitleSize = 22
+    while (headerTitleSize > 11 && fontBold.widthOfTextAtSize(project.title, headerTitleSize) > maxHeaderW) {
+        headerTitleSize -= 1
+    }
+    const headerTitleLines = wrapText(project.title, fontBold, headerTitleSize, maxHeaderW)
+    const headerLineH = headerTitleSize + 3
+    const headerBlockH = headerTitleLines.length * headerLineH
+    const headerStartY = H - 40 - (headerBlockH - headerTitleSize) / 2
+    headerTitleLines.forEach((line, i) => {
+        coverPage.drawText(line, { x: MARGIN, y: headerStartY - i * headerLineH, size: headerTitleSize, font: fontBold, color: rgb(1, 1, 1) })
     })
-    coverY -= 30
 
-    // Tipo
-    const typeLabel = project.type === 'pdf' ? 'Pattern PDF' : project.type === 'tutorial' ? 'Tutorial' : 'Galleria Immagini'
-    coverPage.drawText(typeLabel.toUpperCase(), {
+    coverY = H - 80 - 24
+
+    // Tipo — sempre "SCHEMA PDF"
+    coverPage.drawText('SCHEMA PDF', {
         x: MARGIN, y: coverY, size: 10, font: fontBold, color: MUTED,
     })
     coverY -= 8
 
     // Linea separatore
     coverPage.drawLine({ start: { x: MARGIN, y: coverY }, end: { x: W - MARGIN, y: coverY }, thickness: 1, color: LIGHT })
-    coverY -= 30
+    coverY -= 24
 
     // Timer
     if (project.timer && project.timer > 0) {
@@ -154,13 +189,18 @@ export async function generatePatternPdf(
                 const embedded = imgData.isPng
                     ? await pdfDoc.embedPng(imgData.bytes)
                     : await pdfDoc.embedJpg(imgData.bytes)
+                // Occupa quasi tutto lo spazio rimasto sul foglio
+                // coverY = posizione Y dopo le scritte; 72 = footer(52) + buffer(20)
                 const maxW = CONTENT_W
-                const maxH = Math.min(coverY - 80, 320)
-                const scale = Math.min(maxW / embedded.width, maxH / embedded.height, 1)
+                const maxH = coverY - 72
+                // Scala per riempire lo spazio (no limite a 1: permette upscaling per immagini piccole)
+                const scale = Math.min(maxW / embedded.width, maxH / embedded.height)
                 const iW = embedded.width * scale
                 const iH = embedded.height * scale
                 const iX = MARGIN + (CONTENT_W - iW) / 2
-                coverPage.drawImage(embedded, { x: iX, y: coverY - iH, width: iW, height: iH })
+                // Allinea l'immagine in basso nello spazio disponibile (gap visivo sopra)
+                const iY = 72  // inizia dal margine footer e sale
+                coverPage.drawImage(embedded, { x: iX, y: iY, width: iW, height: iH })
             } catch {}
         }
     }
@@ -175,6 +215,10 @@ export async function generatePatternPdf(
         ? (project.images ?? []).findIndex(i => i.id === project.coverImageId)
         : 0
     const coverImgRealId = (project.images ?? [])[coverImgRealIdx >= 0 ? coverImgRealIdx : 0]?.id
+
+    // Traccia la pagina e la posizione Y corrente per ottimizzare il riempimento pagine
+    let activePage: ReturnType<typeof addPage> = coverPage
+    let activeY: number = coverY
 
     // ── Pagina 2: Immagini non associate ────────────────────────────────────
     // Tutte le immagini che non sono né la copertina né associate a un contatore
@@ -214,6 +258,7 @@ export async function generatePatternPdf(
                 y -= iH + 20
             } catch {}
         }
+        activePage = galPage; activeY = y
     }
 
     // ── Pagina 3: Contatori secondari (secs) ────────────────────────────────
@@ -228,14 +273,16 @@ export async function generatePatternPdf(
         secsPage.drawLine({ start: { x: MARGIN, y }, end: { x: W - MARGIN, y }, thickness: 1, color: LIGHT })
         y -= 28
 
-        for (const sec of project.secs) {
+        // Helper: disegna un singolo contatore nella pagina corrente
+        const drawCounter = async (
+            sec: { id: string; name: string; value: number; imageId?: string; sectionId?: string },
+            page: ReturnType<typeof addPage>,
+            yPos: number
+        ): Promise<{ page: ReturnType<typeof addPage>; y: number }> => {
             const secImgIdx = sec.imageId
                 ? (project.images ?? []).findIndex(i => i.id === sec.imageId)
                 : -1
             const secImgUrl = secImgIdx >= 0 ? (imageUrls[secImgIdx] ?? null) : null
-
-            // Se l'immagine associata è anche la copertina → mostrala piccola (100px),
-            // altrimenti mostrarla normale (200px)
             const isCoverDuplicate = sec.imageId === coverImgRealId
             const maxImgH = isCoverDuplicate ? 100 : 200
 
@@ -257,42 +304,143 @@ export async function generatePatternPdf(
                 }
             }
 
-            const blockH = (secImgH > 0 ? secImgH + 12 : 0) + 18 + 18 + 10 + 24
-            if (y < blockH + 60) {
-                secsPage = addPage()
-                y = H - MARGIN
+            // Calcola altezza blocco: immagine + riga "nome [valore]" + divider
+            const blockH = (secImgH > 0 ? secImgH + 12 : 0) + 20 + 10 + 20
+            let curPage = page
+            let curY = yPos
+            if (curY < blockH + 60) {
+                curPage = addPage()
+                curY = H - MARGIN
             }
 
-            // Immagine sopra i dati del contatore
             if (secImgEmbedded && secImgH > 0) {
-                secsPage.drawImage(secImgEmbedded, {
+                curPage.drawImage(secImgEmbedded, {
                     x: MARGIN + (CONTENT_W - secImgW) / 2,
-                    y: y - secImgH,
+                    y: curY - secImgH,
                     width: secImgW,
                     height: secImgH,
                 })
-                y -= secImgH + 12
+                curY -= secImgH + 12
             }
 
-            secsPage.drawText(sec.name || 'Parte', {
-                x: MARGIN, y, size: 13, font: fontBold, color: DARK,
+            // Nome e [valore] sulla stessa riga
+            const nameText = sec.name || 'Parte'
+            const valueText = ` [${sec.value}]`
+            curPage.drawText(nameText, {
+                x: MARGIN, y: curY, size: 13, font: fontBold, color: DARK,
             })
-            y -= 18
-
-            secsPage.drawText(`${sec.value} giri`, {
-                x: MARGIN, y, size: 11, font: fontNormal, color: PURPLE,
+            const nameWidth = fontBold.widthOfTextAtSize(nameText, 13)
+            curPage.drawText(valueText, {
+                x: MARGIN + nameWidth, y: curY, size: 13, font: fontBold, color: PURPLE,
             })
-            y -= 10
+            curY -= 10
 
-            secsPage.drawLine({ start: { x: MARGIN, y }, end: { x: W - MARGIN, y }, thickness: 0.4, color: LIGHT })
-            y -= 24
+            curPage.drawLine({ start: { x: MARGIN, y: curY }, end: { x: W - MARGIN, y: curY }, thickness: 0.4, color: LIGHT })
+            curY -= 20
+
+            return { page: curPage, y: curY }
         }
+
+        const sectionsList = (project.sections ?? []).sort((a, b) => a.order - b.order)
+
+        /** Disegna l'intestazione di una sezione con sfondo lavanda + barra sinistra viola */
+        const drawSectionHeader = async (
+            page: ReturnType<typeof addPage>,
+            yPos: number,
+            section: { title: string; description?: string }
+        ): Promise<{ page: ReturnType<typeof addPage>; y: number }> => {
+            const SECT_FS = 13
+            const DESC_FS = 9
+            const descLines = section.description ? wrapText(section.description, fontNormal, DESC_FS, CONTENT_W - 16) : []
+            const headerH = 38 + (descLines.length > 0 ? descLines.length * (DESC_FS + 3) + 10 : 0)
+
+            let curPage = page
+            let curY = yPos
+            // Assicura spazio sufficiente
+            if (curY < headerH + 80) { curPage = addPage(); curY = H - MARGIN }
+
+            // Background lavanda
+            curPage.drawRectangle({ x: MARGIN, y: curY - headerH + 6, width: CONTENT_W, height: headerH, color: PURPLE_LIGHT })
+            // Barra sinistra viola
+            curPage.drawRectangle({ x: MARGIN, y: curY - headerH + 6, width: 4, height: headerH, color: PURPLE })
+            // Titolo sezione
+            curPage.drawText(section.title, { x: MARGIN + 12, y: curY - 14, size: SECT_FS, font: fontBold, color: PURPLE, maxWidth: CONTENT_W - 16 })
+            curY -= 32  // più spazio tra titolo e descrizione (era 22)
+
+            // Descrizione (wrapped, rispetta i newline)
+            for (const line of descLines) {
+                curPage.drawText(line, { x: MARGIN + 12, y: curY, size: DESC_FS, font: fontNormal, color: MUTED })
+                curY -= DESC_FS + 4
+            }
+            if (descLines.length > 0) curY -= 6
+
+            curY -= 18  // più spazio tra intestazione e primo contatore (era 10)
+            return { page: curPage, y: curY }
+        }
+
+        if (sectionsList.length > 0) {
+            // Render grouped by section
+            for (const section of sectionsList) {
+                const sectionCounters = project.secs.filter(s => s.sectionId === section.id)
+                if (sectionCounters.length === 0) continue
+
+                const hdrResult = await drawSectionHeader(secsPage, y, section)
+                secsPage = hdrResult.page
+                y = hdrResult.y
+
+                for (const sec of sectionCounters) {
+                    const result = await drawCounter(sec, secsPage, y)
+                    secsPage = result.page
+                    y = result.y
+                }
+
+                // Fine sezione: bordo viola chiaro + spazio
+                secsPage.drawLine({ start: { x: MARGIN, y }, end: { x: W - MARGIN, y }, thickness: 1.2, color: PURPLE_MID })
+                y -= 24
+            }
+
+            // Ungrouped counters
+            const ungrouped = project.secs.filter(s => !s.sectionId)
+            if (ungrouped.length > 0) {
+                const hdrResult = await drawSectionHeader(secsPage, y, { title: 'Senza sezione' })
+                secsPage = hdrResult.page
+                y = hdrResult.y
+                for (const sec of ungrouped) {
+                    const result = await drawCounter(sec, secsPage, y)
+                    secsPage = result.page
+                    y = result.y
+                }
+            }
+        } else {
+            // No sections — render flat list
+            for (const sec of project.secs) {
+                const result = await drawCounter(sec, secsPage, y)
+                secsPage = result.page
+                y = result.y
+            }
+        }
+        activePage = secsPage; activeY = y
     }
 
-    // ── Pagina 3: Note ───────────────────────────────────────────────────────
+    // ── Note: sulla stessa pagina se c'è spazio, altrimenti nuova pagina ────
     if (project.notesHtml && stripHtml(project.notesHtml).length > 0) {
-        const notesPage = addPage()
-        let y = H - MARGIN
+        const FOOTER_CLEARANCE = 52 + 20  // FOOTER_H + buffer
+        const NOTES_HEADER_H = 62         // titolo 20pt + linea + spacing
+        const MIN_LINES = 3               // minimo righe di testo da mostrare
+        const LINE_H = 16
+        const MIN_NOTES_SPACE = NOTES_HEADER_H + MIN_LINES * LINE_H + FOOTER_CLEARANCE  // ~154pt
+
+        // Riusa la pagina corrente se c'è abbastanza spazio, altrimenti nuova pagina
+        let notesPage: ReturnType<typeof addPage>
+        let y: number
+        if (activeY > MIN_NOTES_SPACE + 32) {
+            // Spazio sufficiente: aggiungi sezione nella stessa pagina con gap
+            notesPage = activePage
+            y = activeY - 32
+        } else {
+            notesPage = addPage()
+            y = H - MARGIN
+        }
 
         notesPage.drawText('Note', {
             x: MARGIN, y, size: 20, font: fontBold, color: DARK,
@@ -302,26 +450,52 @@ export async function generatePatternPdf(
         y -= 28
 
         const noteText = stripHtml(project.notesHtml)
-        const words = noteText.split(' ')
-        const lineH = 16
-        const fontSize = 11
-        let line = ''
+        const noteLines = wrapText(noteText, fontNormal, 11, CONTENT_W)
+        const bottomLimit = FOOTER_CLEARANCE + 8
 
-        for (const word of words) {
-            const candidate = line ? `${line} ${word}` : word
-            if (fontNormal.widthOfTextAtSize(candidate, fontSize) > CONTENT_W) {
-                notesPage.drawText(line, { x: MARGIN, y, size: fontSize, font: fontNormal, color: DARK })
-                y -= lineH
-                line = word
-                if (y < 60) break
-            } else {
-                line = candidate
-            }
-        }
-        if (line && y >= 60) {
-            notesPage.drawText(line, { x: MARGIN, y, size: fontSize, font: fontNormal, color: DARK })
+        for (const line of noteLines) {
+            if (y < bottomLimit) break
+            notesPage.drawText(line, { x: MARGIN, y, size: 11, font: fontNormal, color: DARK })
+            y -= LINE_H
         }
     }
+
+    // ── Footer viola sull'ultima pagina ─────────────────────────────────────
+    const FOOTER_H = 52
+    const lastPage = pdfDoc.getPage(pdfDoc.getPageCount() - 1)
+    // Copre il footer-line esistente con il rettangolo viola
+    lastPage.drawRectangle({ x: 0, y: 0, width: W, height: FOOTER_H, color: PURPLE })
+
+    // Logo (PNG raw, trasparenza preservata)
+    let logoEndX = MARGIN
+    try {
+        const logoPngBytes = await fetchPngRaw('/images/logo/isotipo.png')
+        if (logoPngBytes) {
+            const logoImg = await pdfDoc.embedPng(logoPngBytes)
+            const logoH = 32
+            const logoScale = logoH / logoImg.height
+            const logoW = logoImg.width * logoScale
+            lastPage.drawImage(logoImg, {
+                x: MARGIN,
+                y: (FOOTER_H - logoH) / 2,
+                width: logoW,
+                height: logoH,
+            })
+            logoEndX = MARGIN + logoW + 10
+        }
+    } catch {}
+
+    // "fatto con www.lurumi.it" — usa il carattere obliquo tramite shear sulla matrice di trasformazione
+    // non disponendo di un font italic, utilizziamo il font normal con testo semplice
+    const footerText = 'fatto con www.lurumi.it'
+    const footerFontSize = 11
+    lastPage.drawText(footerText, {
+        x: logoEndX,
+        y: (FOOTER_H - footerFontSize) / 2,
+        size: footerFontSize,
+        font: fontNormal,
+        color: rgb(1, 1, 1),
+    })
 
     return pdfDoc.save()
 }

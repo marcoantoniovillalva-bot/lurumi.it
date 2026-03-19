@@ -1,13 +1,14 @@
 "use client";
 
 import React, { useState, useRef } from "react";
-import { Minus, Plus, MoreVertical, Pencil, Trash2, Check, X, Image, X as XIcon } from "lucide-react";
+import { Minus, Plus, MoreVertical, Pencil, Trash2, Check, X, Image, X as XIcon, FolderPlus } from "lucide-react";
 
 interface RoundCounterProps {
     id: string;
     name: string;
     value: number;
     imageId?: string;
+    sectionId?: string;
     imageUrl?: string;      // URL/objectURL dell'immagine associata (caricata dal parent)
     onIncrement: (id: string) => void;
     onDecrement: (id: string) => void;
@@ -15,6 +16,8 @@ interface RoundCounterProps {
     onDelete: (id: string) => void;
     onAssociateImage: (id: string) => void;   // apre il picker
     onRemoveImage: (id: string) => void;
+    onAssignToSection?: (id: string) => void; // apre il picker sezione
+    hasSections?: boolean;   // true se ci sono sezioni disponibili
     hideImageOption?: boolean;
 }
 
@@ -23,6 +26,7 @@ export const RoundCounter: React.FC<RoundCounterProps> = ({
     name,
     value,
     imageId,
+    sectionId,
     imageUrl,
     onIncrement,
     onDecrement,
@@ -30,13 +34,17 @@ export const RoundCounter: React.FC<RoundCounterProps> = ({
     onDelete,
     onAssociateImage,
     onRemoveImage,
+    onAssignToSection,
+    hasSections,
     hideImageOption,
 }) => {
     const [showMenu, setShowMenu] = useState(false);
+    const [menuUp, setMenuUp] = useState(false);
     const [isRenaming, setIsRenaming] = useState(false);
     const [renameValue, setRenameValue] = useState(name);
     const [showFullscreen, setShowFullscreen] = useState(false);
     const lastTapRef = useRef(0);
+    const menuBtnRef = useRef<HTMLButtonElement>(null);
 
     const handleSaveRename = () => {
         if (!renameValue.trim()) return;
@@ -98,7 +106,12 @@ export const RoundCounter: React.FC<RoundCounterProps> = ({
                     {!isRenaming && (
                         <div className="relative flex-shrink-0">
                             <button
-                                onClick={() => setShowMenu(m => !m)}
+                                ref={menuBtnRef}
+                                onClick={() => {
+                                    const rect = menuBtnRef.current?.getBoundingClientRect();
+                                    if (rect) setMenuUp(rect.bottom + 220 > window.innerHeight);
+                                    setShowMenu(m => !m);
+                                }}
                                 className="w-8 h-8 flex items-center justify-center rounded-lg border border-[#EEF0F4] bg-white text-[#9599AA] active:bg-[#F4EEFF]"
                             >
                                 <MoreVertical size={16} />
@@ -106,7 +119,7 @@ export const RoundCounter: React.FC<RoundCounterProps> = ({
                             {showMenu && (
                                 <>
                                     <div className="fixed inset-0 z-10" onClick={() => setShowMenu(false)} />
-                                    <div className="absolute right-0 top-9 z-20 bg-white rounded-2xl shadow-xl border border-[#EEF0F4] p-1.5 w-48 animate-in fade-in zoom-in duration-150">
+                                    <div className={`absolute right-0 z-20 bg-white rounded-2xl shadow-xl border border-[#EEF0F4] p-1.5 w-48 animate-in fade-in zoom-in duration-150 ${menuUp ? 'bottom-9' : 'top-9'}`}>
                                         <button
                                             onClick={() => { setRenameValue(name); setIsRenaming(true); setShowMenu(false); }}
                                             className="w-full flex items-center gap-2.5 px-3 py-2 text-sm font-bold text-[#1C1C1E] hover:bg-[#F4F4F8] rounded-xl"
@@ -133,6 +146,15 @@ export const RoundCounter: React.FC<RoundCounterProps> = ({
                                                     </button>
                                                 )}
                                             </>
+                                        )}
+                                        {hasSections && !sectionId && onAssignToSection && (
+                                            <button
+                                                onClick={() => { onAssignToSection(id); setShowMenu(false); }}
+                                                className="w-full flex items-center gap-2.5 px-3 py-2 text-sm font-bold text-[#1C1C1E] hover:bg-[#F4F4F8] rounded-xl"
+                                            >
+                                                <FolderPlus size={14} className="text-[#7B5CF6]" />
+                                                Associa a sezione
+                                            </button>
                                         )}
                                         <button
                                             onClick={() => { onDelete(id); setShowMenu(false); }}

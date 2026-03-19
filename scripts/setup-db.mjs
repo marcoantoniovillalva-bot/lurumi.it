@@ -119,6 +119,7 @@ ALTER TABLE projects ADD COLUMN IF NOT EXISTS cover_image_id TEXT;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS video_id TEXT;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS playlist_id TEXT;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS transcript_data JSONB;
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS sections JSONB DEFAULT '[]';
 
 -- Canva OAuth token (aggiunto alla tabella profiles)
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS canva_token TEXT;

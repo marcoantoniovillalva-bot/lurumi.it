@@ -1,11 +1,19 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 
+export interface Section {
+    id: string
+    title: string
+    description?: string
+    order: number
+}
+
 export interface RoundCounter {
     id: string
     name: string
     value: number
     imageId?: string
+    sectionId?: string
 }
 
 export interface ProjectImage {
@@ -29,6 +37,7 @@ export interface Project {
     counter: number
     timer: number
     secs: RoundCounter[]
+    sections?: Section[]
     notesHtml: string
     images: ProjectImage[]
     coverImageId?: string

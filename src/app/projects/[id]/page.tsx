@@ -6,9 +6,10 @@ import {
     ChevronLeft, ChevronRight, StickyNote, Trash2,
     Plus as PlusIcon, Camera, Save, Maximize2, Archive, Pencil,
     GripVertical, ChevronUp, ChevronDown, FileDown, X, Sparkles, CheckCircle2,
-    Youtube, Languages, Loader2, Copy, Check, FileText, ExternalLink
+    Youtube, Languages, Loader2, Copy, Check, FileText, ExternalLink,
+    MoreVertical, FolderPlus, AlertTriangle
 } from "lucide-react";
-import { useProjectStore, Project, RoundCounter as RoundCounterType, ProjectImage, TranscriptData, TranscriptSegment } from "@/features/projects/store/useProjectStore";
+import { useProjectStore, Project, RoundCounter as RoundCounterType, ProjectImage, TranscriptData, TranscriptSegment, Section } from "@/features/projects/store/useProjectStore";
 import { luDB } from "@/lib/db";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
@@ -56,6 +57,7 @@ export default function ProjectDetail() {
                 timer_seconds: currentProject.timer,
                 notes_html: currentProject.notesHtml,
                 secs: currentProject.secs,
+                sections: currentProject.sections ?? [],
                 images: (currentProject.images ?? []).map(img => ({ id: img.id })),
                 ...fields, // sovrascrive i campi aggiornati
             })
@@ -63,6 +65,11 @@ export default function ProjectDetail() {
     };
 
     const syncSecs = (newSecs: RoundCounterType[]) => syncProject({ secs: newSecs });
+    const syncSections = (newSections: Section[], newSecs?: RoundCounterType[]) => {
+        const update: Record<string, unknown> = { sections: newSections };
+        if (newSecs !== undefined) update.secs = newSecs;
+        syncProject(update);
+    };
 
     const [pdfDoc, setPdfDoc] = useState<any>(null);
     const [currentPage, setCurrentPage] = useState(1);
@@ -81,10 +88,22 @@ export default function ProjectDetail() {
     // Image data URLs loaded from IndexedDB (NOT stored in Zustand/localStorage)
     const [imageUrls, setImageUrls] = useState<string[]>([]);
 
-    // Reorder states (counters)
+    // Reorder states (counters — ungrouped backward compat)
     const [reorderMode, setReorderMode] = useState(false);
     const [dragIdx, setDragIdx] = useState<number | null>(null);
     const [overIdx, setOverIdx] = useState<number | null>(null);
+    // Section management
+    const [showNewSectionModal, setShowNewSectionModal] = useState(false);
+    const [newSectionTitle, setNewSectionTitle] = useState("");
+    const [newSectionDescription, setNewSectionDescription] = useState("");
+    const [reorderSectionsMode, setReorderSectionsMode] = useState(false);
+    const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
+    const [reorderInSectionId, setReorderInSectionId] = useState<string | null>(null);
+    const [sectionMenuId, setSectionMenuId] = useState<string | null>(null);
+    const [editSectionModal, setEditSectionModal] = useState<{ id: string; title: string; description: string } | null>(null);
+    const [deleteSectionId, setDeleteSectionId] = useState<string | null>(null);
+    const [newCounterSectionId, setNewCounterSectionId] = useState<string | null>(null);
+    const [assignCounterToSectionId, setAssignCounterToSectionId] = useState<string | null>(null);
     // Image manager states
     const [showImageManager, setShowImageManager] = useState(false);
     const [imgDragIdx, setImgDragIdx] = useState<number | null>(null);
@@ -287,6 +306,7 @@ export default function ProjectDetail() {
                 const updates: Partial<Project> = {
                     counter: remote.counter ?? 0,
                     secs: remote.secs ?? [],
+                    sections: remote.sections ?? [],
                     images: (remote.images ?? []).map((img: any) =>
                         typeof img === 'string' ? { id: img } : { id: img.id ?? '' }
                     ),
@@ -317,7 +337,7 @@ export default function ProjectDetail() {
         if (!user || !id) return;
         const supabase = createClient();
         supabase.from('projects')
-            .select('counter, timer_seconds, secs, notes_html, images, cover_image_id, transcript_data, video_id, playlist_id, title, file_url, thumb_url')
+            .select('counter, timer_seconds, secs, sections, notes_html, images, cover_image_id, transcript_data, video_id, playlist_id, title, file_url, thumb_url')
             .eq('id', id as string)
             .single()
             .then(({ data, error }) => {
@@ -325,6 +345,7 @@ export default function ProjectDetail() {
                 const updates: Partial<Project> = {
                     counter: data.counter ?? 0,
                     secs: data.secs ?? [],
+                    sections: data.sections ?? [],
                     images: (data.images ?? []).map((img: any) =>
                         typeof img === 'string' ? { id: img } : { id: img.id ?? '' }
                     ),
@@ -760,6 +781,31 @@ export default function ProjectDetail() {
         syncSecs(newSecs);
     };
 
+    const sections = project.sections ?? [];
+
+    const moveSection = (fromIdx: number, toIdx: number) => {
+        const sorted = [...sections].sort((a, b) => a.order - b.order);
+        const [removed] = sorted.splice(fromIdx, 1);
+        sorted.splice(toIdx, 0, removed);
+        const newSections = sorted.map((s, i) => ({ ...s, order: i }));
+        updateProject(project.id, { sections: newSections });
+        syncSections(newSections);
+    };
+
+    const moveCounterInSection = (sectionId: string, fromRelIdx: number, toRelIdx: number) => {
+        // Replace section counters in their original positions, just reordered
+        const sectionIndices = project.secs
+            .map((s, i) => s.sectionId === sectionId ? i : -1)
+            .filter(i => i >= 0);
+        const sectionCounters = sectionIndices.map(i => project.secs[i]);
+        const [removed] = sectionCounters.splice(fromRelIdx, 1);
+        sectionCounters.splice(toRelIdx, 0, removed);
+        const newSecs = [...project.secs];
+        sectionIndices.forEach((absIdx, relIdx) => { newSecs[absIdx] = sectionCounters[relIdx]; });
+        updateProject(project.id, { secs: newSecs });
+        syncSecs(newSecs);
+    };
+
     const startLongPress = (e: React.PointerEvent) => {
         lpStartPos.current = { x: e.clientX, y: e.clientY };
         longPressRef.current = setTimeout(() => {
@@ -785,6 +831,7 @@ export default function ProjectDetail() {
             const { generatePatternPdf } = await import('@/lib/pdf-export');
             const pdfBytes = await generatePatternPdf({
                 ...project,
+                sections: project.sections ?? [],
                 // Passa il link YouTube come campo url — pdf-export.ts lo mostra in copertina
                 url: project.videoId ? `https://www.youtube.com/watch?v=${project.videoId}` : undefined,
             }, imageUrls);
@@ -810,9 +857,29 @@ export default function ProjectDetail() {
             `Creato: ${new Date(project.createdAt).toLocaleDateString('it-IT')}`,
             `Tempo totale: ${formatTime(elapsedRef.current)}`,
             project.videoId ? `Video tutorial: https://www.youtube.com/watch?v=${project.videoId}` : '',
-            project.secs.length > 0
-                ? `Giri secondari: ${project.secs.map(s => `${s.name}: ${s.value}`).join(', ')}`
-                : '',
+            ...(project.secs.length > 0 ? (() => {
+                const secs = project.secs;
+                const sectionsList = project.sections ?? [];
+                const lines: string[] = [];
+                // Counters grouped by section
+                if (sectionsList.length > 0) {
+                    const sorted = [...sectionsList].sort((a, b) => a.order - b.order);
+                    for (const section of sorted) {
+                        lines.push(`\n[${section.title}]${section.description ? ' — ' + section.description : ''}`);
+                        const secCounters = secs.filter(s => s.sectionId === section.id);
+                        for (const s of secCounters) lines.push(`  ${s.name} [${s.value}]`);
+                    }
+                    const ungrouped = secs.filter(s => !s.sectionId);
+                    if (ungrouped.length > 0) {
+                        lines.push('\n[Senza sezione]');
+                        for (const s of ungrouped) lines.push(`  ${s.name} [${s.value}]`);
+                    }
+                } else {
+                    lines.push('Giri secondari:');
+                    for (const s of secs) lines.push(`  ${s.name} [${s.value}]`);
+                }
+                return lines;
+            })() : []),
             project.notesHtml ? `Note: ${project.notesHtml}` : '',
             '',
             'Made with lurumi.it',
@@ -1264,23 +1331,24 @@ export default function ProjectDetail() {
                 </div>
             </div>
 
-            {/* Secondary Counters */}
+            {/* Sezioni */}
             <div className="mb-8">
+                {/* Header */}
                 <div className="flex items-center justify-between mb-4 px-2">
-                    <h2 className="text-xl font-black text-[#1C1C1E]">Contatori Giri</h2>
+                    <h2 className="text-xl font-black text-[#1C1C1E]">Sezioni</h2>
                     <div className="flex items-center gap-2">
-                        {project.secs.length > 1 && (
+                        {sections.length > 1 && (
                             <button
-                                onClick={() => setReorderMode(r => !r)}
-                                className={`px-3 py-1.5 rounded-xl font-black text-xs flex items-center gap-1.5 transition-colors ${reorderMode ? 'bg-green-500/10 text-green-600 border border-green-200' : 'bg-[#F4EEFF] text-[#7B5CF6]'}`}
+                                onClick={() => { setReorderSectionsMode(r => !r); setReorderInSectionId(null); setSectionMenuId(null); }}
+                                className={`px-3 py-1.5 rounded-xl font-black text-xs flex items-center gap-1.5 transition-colors ${reorderSectionsMode ? 'bg-green-500/10 text-green-600 border border-green-200' : 'bg-[#F4EEFF] text-[#7B5CF6]'}`}
                             >
                                 <GripVertical size={13} strokeWidth={3} />
-                                {reorderMode ? 'FINE' : 'ORDINA'}
+                                {reorderSectionsMode ? 'FINE' : 'ORDINA'}
                             </button>
                         )}
-                        {!reorderMode && (
+                        {!reorderSectionsMode && (
                             <button
-                                onClick={() => { setNewCounterName(""); setShowNewCounterModal(true); }}
+                                onClick={() => { setNewSectionTitle(""); setNewSectionDescription(""); setShowNewSectionModal(true); }}
                                 className="bg-[#7B5CF6]/10 text-[#7B5CF6] px-3 py-1.5 rounded-xl font-black text-xs flex items-center gap-2"
                             >
                                 <PlusIcon size={14} strokeWidth={3} />
@@ -1289,94 +1357,302 @@ export default function ProjectDetail() {
                         )}
                     </div>
                 </div>
-                {reorderMode && (
-                    <p className="text-xs text-[#9AA2B1] font-medium px-2 mb-3">
-                        <span className="hidden md:inline">Trascina le card per riordinare • </span>
-                        Usa ↑↓ per spostare
-                    </p>
-                )}
+
                 <div className="flex flex-col gap-3">
-                    {project.secs.map((sec, index) => {
-                        const imgIndex = sec.imageId
-                            ? (project.images ?? []).findIndex(img => img.id === sec.imageId)
-                            : -1;
-                        const secImageUrl = imgIndex >= 0 ? imageUrls[imgIndex] : undefined;
+                    {/* Section cards */}
+                    {[...sections].sort((a, b) => a.order - b.order).map((section, sectionIndex) => {
+                        const sectionCounters = project.secs.filter(s => s.sectionId === section.id);
+                        const isExpanded = expandedSections[section.id] !== false; // default expanded
+                        const isReorderingThisSection = reorderInSectionId === section.id;
+                        const isMenuOpen = sectionMenuId === section.id;
 
                         return (
-                            <div
-                                key={sec.id}
-                                draggable={reorderMode}
-                                onPointerDown={reorderMode ? undefined : startLongPress}
-                                onPointerUp={reorderMode ? undefined : cancelLongPress}
-                                onPointerCancel={reorderMode ? undefined : cancelLongPress}
-                                onPointerMove={reorderMode ? undefined : checkLongPressMove}
-                                onDragStart={() => setDragIdx(index)}
-                                onDragEnd={() => { setDragIdx(null); setOverIdx(null); }}
-                                onDragOver={(e) => { e.preventDefault(); setOverIdx(index); }}
-                                onDrop={() => {
-                                    if (dragIdx !== null && dragIdx !== index) moveCounter(dragIdx, index);
-                                    setDragIdx(null); setOverIdx(null);
-                                }}
-                                className={`relative flex items-stretch gap-2 transition-all ${reorderMode ? 'cursor-grab active:cursor-grabbing' : ''} ${overIdx === index && dragIdx !== index ? 'ring-2 ring-[#7B5CF6] rounded-[28px]' : ''} ${dragIdx === index ? 'opacity-50' : ''}`}
-                            >
-                                {/* Reorder controls — visible only in reorder mode */}
-                                {reorderMode && (
+                            <div key={section.id} className={`flex items-stretch gap-2 transition-all ${reorderSectionsMode ? 'cursor-default' : ''}`}>
+                                {/* Section reorder controls */}
+                                {reorderSectionsMode && (
                                     <div className="flex flex-col items-center justify-center gap-1 bg-[#F4EEFF] rounded-2xl px-1 py-2 shrink-0">
                                         <button
-                                            onClick={() => index > 0 && moveCounter(index, index - 1)}
-                                            disabled={index === 0}
+                                            onClick={() => sectionIndex > 0 && moveSection(sectionIndex, sectionIndex - 1)}
+                                            disabled={sectionIndex === 0}
                                             className="w-7 h-7 flex items-center justify-center rounded-lg text-[#7B5CF6] disabled:opacity-25 hover:bg-[#7B5CF6]/10 active:scale-90 transition-all"
                                         >
                                             <ChevronUp size={16} strokeWidth={3} />
                                         </button>
-                                        <GripVertical size={14} className="text-[#9AA2B1] md:block hidden" />
+                                        <GripVertical size={14} className="text-[#9AA2B1]" />
                                         <button
-                                            onClick={() => index < project.secs.length - 1 && moveCounter(index, index + 1)}
-                                            disabled={index === project.secs.length - 1}
+                                            onClick={() => sectionIndex < sections.length - 1 && moveSection(sectionIndex, sectionIndex + 1)}
+                                            disabled={sectionIndex === sections.length - 1}
                                             className="w-7 h-7 flex items-center justify-center rounded-lg text-[#7B5CF6] disabled:opacity-25 hover:bg-[#7B5CF6]/10 active:scale-90 transition-all"
                                         >
                                             <ChevronDown size={16} strokeWidth={3} />
                                         </button>
                                     </div>
                                 )}
-                                <div className="flex-1 min-w-0">
-                                    <RoundCounter
-                                        {...sec}
-                                        imageUrl={secImageUrl}
-                                        onIncrement={(sid) => {
-                                            const updated = project.secs.map(s => s.id === sid ? { ...s, value: s.value + 1 } : s);
-                                            updateProject(project.id, { secs: updated });
-                                            syncSecs(updated);
-                                        }}
-                                        onDecrement={(sid) => {
-                                            const updated = project.secs.map(s => s.id === sid ? { ...s, value: Math.max(1, s.value - 1) } : s);
-                                            updateProject(project.id, { secs: updated });
-                                            syncSecs(updated);
-                                        }}
-                                        onRename={(sid, newName) => {
-                                            const updated = project.secs.map(s => s.id === sid ? { ...s, name: newName } : s);
-                                            updateProject(project.id, { secs: updated });
-                                            syncSecs(updated);
-                                        }}
-                                        onDelete={(sid) => {
-                                            const updated = project.secs.filter(s => s.id !== sid);
-                                            updateProject(project.id, { secs: updated });
-                                            syncSecs(updated);
-                                        }}
-                                        onAssociateImage={(sid) => setPickerCounterId(sid)}
-                                        onRemoveImage={(sid) => {
-                                            const updated = project.secs.map(s => s.id === sid ? { ...s, imageId: undefined } : s);
-                                            updateProject(project.id, { secs: updated });
-                                            syncSecs(updated);
-                                        }}
-                                    />
+                                {/* Section card */}
+                                <div className="flex-1 min-w-0 bg-white border border-[#EEF0F4] rounded-2xl shadow-sm">
+                                    {/* Section header */}
+                                    <div className="flex items-center gap-2 px-4 py-3">
+                                        <button
+                                            onClick={() => setExpandedSections(e => ({ ...e, [section.id]: !isExpanded }))}
+                                            className="w-7 h-7 flex items-center justify-center rounded-lg text-[#9AA2B1] hover:bg-[#F4F4F8] transition-colors flex-shrink-0"
+                                        >
+                                            {isExpanded ? <ChevronDown size={16} strokeWidth={3} /> : <ChevronRight size={16} strokeWidth={3} />}
+                                        </button>
+                                        <span className="flex-1 font-black text-[#1C1C1E] text-base truncate">{section.title}</span>
+                                        <span className="text-xs text-[#9AA2B1] font-bold shrink-0">{sectionCounters.length}</span>
+                                        {!reorderSectionsMode && (
+                                            <>
+                                                <button
+                                                    onClick={() => { setNewCounterSectionId(section.id); setNewCounterName(""); setShowNewCounterModal(true); }}
+                                                    className="w-7 h-7 flex items-center justify-center rounded-lg text-[#7B5CF6] bg-[#F4EEFF] hover:bg-[#E6DAFF] active:scale-90 transition-all shrink-0"
+                                                >
+                                                    <PlusIcon size={15} strokeWidth={3} />
+                                                </button>
+                                                <div className="relative shrink-0">
+                                                    <button
+                                                        onClick={() => setSectionMenuId(isMenuOpen ? null : section.id)}
+                                                        className="w-7 h-7 flex items-center justify-center rounded-lg border border-[#EEF0F4] bg-white text-[#9599AA] active:bg-[#F4EEFF]"
+                                                    >
+                                                        <MoreVertical size={15} />
+                                                    </button>
+                                                    {isMenuOpen && (
+                                                        <>
+                                                            <div className="fixed inset-0 z-10" onClick={() => setSectionMenuId(null)} />
+                                                            <div className="absolute right-0 top-9 z-20 bg-white rounded-2xl shadow-xl border border-[#EEF0F4] p-1.5 w-52 animate-in fade-in zoom-in duration-150">
+                                                                <button
+                                                                    onClick={() => { setEditSectionModal({ id: section.id, title: section.title, description: section.description ?? '' }); setSectionMenuId(null); }}
+                                                                    className="w-full flex items-center gap-2.5 px-3 py-2 text-sm font-bold text-[#1C1C1E] hover:bg-[#F4F4F8] rounded-xl"
+                                                                >
+                                                                    <Pencil size={14} className="text-[#7B5CF6]" />
+                                                                    Modifica sezione
+                                                                </button>
+                                                                {sectionCounters.length > 1 && (
+                                                                    <button
+                                                                        onClick={() => { setReorderInSectionId(isReorderingThisSection ? null : section.id); setSectionMenuId(null); setExpandedSections(e => ({ ...e, [section.id]: true })); }}
+                                                                        className="w-full flex items-center gap-2.5 px-3 py-2 text-sm font-bold text-[#1C1C1E] hover:bg-[#F4F4F8] rounded-xl"
+                                                                    >
+                                                                        <GripVertical size={14} className="text-[#7B5CF6]" />
+                                                                        Riordina contatori
+                                                                    </button>
+                                                                )}
+                                                                <button
+                                                                    onClick={() => { setDeleteSectionId(section.id); setSectionMenuId(null); }}
+                                                                    className="w-full flex items-center gap-2.5 px-3 py-2 text-sm font-bold text-red-500 hover:bg-red-50 rounded-xl"
+                                                                >
+                                                                    <Trash2 size={14} />
+                                                                    Elimina sezione
+                                                                </button>
+                                                            </div>
+                                                        </>
+                                                    )}
+                                                </div>
+                                            </>
+                                        )}
+                                    </div>
+                                    {/* Expanded content */}
+                                    {isExpanded && (
+                                        <div className="px-4 pb-4">
+                                            {section.description && (
+                                                <p className="text-xs text-[#9AA2B1] font-medium mb-3 leading-relaxed">{section.description}</p>
+                                            )}
+                                            {isReorderingThisSection && (
+                                                <div className="flex items-center justify-between mb-2">
+                                                    <p className="text-xs text-[#9AA2B1] font-medium">Usa ↑↓ per spostare</p>
+                                                    <button onClick={() => setReorderInSectionId(null)} className="text-xs text-green-600 font-black px-2 py-1 bg-green-50 rounded-lg">FINE</button>
+                                                </div>
+                                            )}
+                                            <div className="flex flex-col gap-2">
+                                                {sectionCounters.map((sec, relIdx) => {
+                                                    const imgIndex = sec.imageId
+                                                        ? (project.images ?? []).findIndex(img => img.id === sec.imageId)
+                                                        : -1;
+                                                    const secImageUrl = imgIndex >= 0 ? imageUrls[imgIndex] : undefined;
+                                                    return (
+                                                        <div key={sec.id} className="flex items-stretch gap-2">
+                                                            {isReorderingThisSection && (
+                                                                <div className="flex flex-col items-center justify-center gap-1 bg-[#F4EEFF] rounded-xl px-1 py-1 shrink-0">
+                                                                    <button
+                                                                        onClick={() => relIdx > 0 && moveCounterInSection(section.id, relIdx, relIdx - 1)}
+                                                                        disabled={relIdx === 0}
+                                                                        className="w-6 h-6 flex items-center justify-center rounded-lg text-[#7B5CF6] disabled:opacity-25 active:scale-90"
+                                                                    >
+                                                                        <ChevronUp size={14} strokeWidth={3} />
+                                                                    </button>
+                                                                    <button
+                                                                        onClick={() => relIdx < sectionCounters.length - 1 && moveCounterInSection(section.id, relIdx, relIdx + 1)}
+                                                                        disabled={relIdx === sectionCounters.length - 1}
+                                                                        className="w-6 h-6 flex items-center justify-center rounded-lg text-[#7B5CF6] disabled:opacity-25 active:scale-90"
+                                                                    >
+                                                                        <ChevronDown size={14} strokeWidth={3} />
+                                                                    </button>
+                                                                </div>
+                                                            )}
+                                                            <div className="flex-1 min-w-0">
+                                                                <RoundCounter
+                                                                    {...sec}
+                                                                    imageUrl={secImageUrl}
+                                                                    hasSections={sections.length > 0}
+                                                                    onIncrement={(sid) => {
+                                                                        const updated = project.secs.map(s => s.id === sid ? { ...s, value: s.value + 1 } : s);
+                                                                        updateProject(project.id, { secs: updated });
+                                                                        syncSecs(updated);
+                                                                    }}
+                                                                    onDecrement={(sid) => {
+                                                                        const updated = project.secs.map(s => s.id === sid ? { ...s, value: Math.max(1, s.value - 1) } : s);
+                                                                        updateProject(project.id, { secs: updated });
+                                                                        syncSecs(updated);
+                                                                    }}
+                                                                    onRename={(sid, newName) => {
+                                                                        const updated = project.secs.map(s => s.id === sid ? { ...s, name: newName } : s);
+                                                                        updateProject(project.id, { secs: updated });
+                                                                        syncSecs(updated);
+                                                                    }}
+                                                                    onDelete={(sid) => {
+                                                                        const updated = project.secs.filter(s => s.id !== sid);
+                                                                        updateProject(project.id, { secs: updated });
+                                                                        syncSecs(updated);
+                                                                    }}
+                                                                    onAssociateImage={(sid) => setPickerCounterId(sid)}
+                                                                    onRemoveImage={(sid) => {
+                                                                        const updated = project.secs.map(s => s.id === sid ? { ...s, imageId: undefined } : s);
+                                                                        updateProject(project.id, { secs: updated });
+                                                                        syncSecs(updated);
+                                                                    }}
+                                                                />
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
+                                                {sectionCounters.length === 0 && (
+                                                    <div className="text-center py-4 text-xs text-[#9AA2B1] font-medium border border-dashed border-[#EEF0F4] rounded-xl">
+                                                        Nessun contatore — premi + per aggiungere
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         );
                     })}
-                    {project.secs.length === 0 && (
+
+                    {/* Ungrouped counters (existing counters without sectionId) */}
+                    {(() => {
+                        const ungrouped = project.secs.filter(s => !s.sectionId);
+                        if (ungrouped.length === 0) return null;
+                        return (
+                            <div>
+                                {sections.length > 0 && (
+                                    <div className="flex items-center justify-between px-2 mb-2">
+                                        <p className="text-xs font-black text-[#9AA2B1] uppercase tracking-widest">Senza sezione</p>
+                                        {ungrouped.length > 1 && (
+                                            <button
+                                                onClick={() => setReorderMode(r => !r)}
+                                                className={`px-2 py-1 rounded-lg font-black text-xs flex items-center gap-1 ${reorderMode ? 'text-green-600' : 'text-[#9AA2B1]'}`}
+                                            >
+                                                <GripVertical size={11} strokeWidth={3} />
+                                                {reorderMode ? 'FINE' : 'ORDINA'}
+                                            </button>
+                                        )}
+                                    </div>
+                                )}
+                                {sections.length === 0 && ungrouped.length > 1 && (
+                                    <div className="flex items-center justify-end px-2 mb-2">
+                                        <button
+                                            onClick={() => setReorderMode(r => !r)}
+                                            className={`px-3 py-1.5 rounded-xl font-black text-xs flex items-center gap-1.5 transition-colors ${reorderMode ? 'bg-green-500/10 text-green-600 border border-green-200' : 'bg-[#F4EEFF] text-[#7B5CF6]'}`}
+                                        >
+                                            <GripVertical size={13} strokeWidth={3} />
+                                            {reorderMode ? 'FINE' : 'ORDINA'}
+                                        </button>
+                                    </div>
+                                )}
+                                <div className="flex flex-col gap-3">
+                                    {ungrouped.map((sec) => {
+                                        const ungroupedIndex = project.secs.indexOf(sec);
+                                        const imgIndex = sec.imageId
+                                            ? (project.images ?? []).findIndex(img => img.id === sec.imageId)
+                                            : -1;
+                                        const secImageUrl = imgIndex >= 0 ? imageUrls[imgIndex] : undefined;
+                                        const relIdx = ungrouped.indexOf(sec);
+                                        return (
+                                            <div
+                                                key={sec.id}
+                                                draggable={reorderMode}
+                                                onDragStart={() => setDragIdx(ungroupedIndex)}
+                                                onDragEnd={() => { setDragIdx(null); setOverIdx(null); }}
+                                                onDragOver={(e) => { e.preventDefault(); setOverIdx(ungroupedIndex); }}
+                                                onDrop={() => {
+                                                    if (dragIdx !== null && dragIdx !== ungroupedIndex) moveCounter(dragIdx, ungroupedIndex);
+                                                    setDragIdx(null); setOverIdx(null);
+                                                }}
+                                                className={`relative flex items-stretch gap-2 transition-all ${reorderMode ? 'cursor-grab' : ''} ${overIdx === ungroupedIndex && dragIdx !== ungroupedIndex ? 'ring-2 ring-[#7B5CF6] rounded-[28px]' : ''} ${dragIdx === ungroupedIndex ? 'opacity-50' : ''}`}
+                                            >
+                                                {reorderMode && (
+                                                    <div className="flex flex-col items-center justify-center gap-1 bg-[#F4EEFF] rounded-2xl px-1 py-2 shrink-0">
+                                                        <button
+                                                            onClick={() => relIdx > 0 && moveCounter(ungroupedIndex, project.secs.indexOf(ungrouped[relIdx - 1]))}
+                                                            disabled={relIdx === 0}
+                                                            className="w-7 h-7 flex items-center justify-center rounded-lg text-[#7B5CF6] disabled:opacity-25 active:scale-90"
+                                                        >
+                                                            <ChevronUp size={16} strokeWidth={3} />
+                                                        </button>
+                                                        <GripVertical size={14} className="text-[#9AA2B1] md:block hidden" />
+                                                        <button
+                                                            onClick={() => relIdx < ungrouped.length - 1 && moveCounter(ungroupedIndex, project.secs.indexOf(ungrouped[relIdx + 1]))}
+                                                            disabled={relIdx === ungrouped.length - 1}
+                                                            className="w-7 h-7 flex items-center justify-center rounded-lg text-[#7B5CF6] disabled:opacity-25 active:scale-90"
+                                                        >
+                                                            <ChevronDown size={16} strokeWidth={3} />
+                                                        </button>
+                                                    </div>
+                                                )}
+                                                <div className="flex-1 min-w-0">
+                                                    <RoundCounter
+                                                        {...sec}
+                                                        imageUrl={secImageUrl}
+                                                        hasSections={sections.length > 0}
+                                                        onAssignToSection={(sid) => setAssignCounterToSectionId(sid)}
+                                                        onIncrement={(sid) => {
+                                                            const updated = project.secs.map(s => s.id === sid ? { ...s, value: s.value + 1 } : s);
+                                                            updateProject(project.id, { secs: updated });
+                                                            syncSecs(updated);
+                                                        }}
+                                                        onDecrement={(sid) => {
+                                                            const updated = project.secs.map(s => s.id === sid ? { ...s, value: Math.max(1, s.value - 1) } : s);
+                                                            updateProject(project.id, { secs: updated });
+                                                            syncSecs(updated);
+                                                        }}
+                                                        onRename={(sid, newName) => {
+                                                            const updated = project.secs.map(s => s.id === sid ? { ...s, name: newName } : s);
+                                                            updateProject(project.id, { secs: updated });
+                                                            syncSecs(updated);
+                                                        }}
+                                                        onDelete={(sid) => {
+                                                            const updated = project.secs.filter(s => s.id !== sid);
+                                                            updateProject(project.id, { secs: updated });
+                                                            syncSecs(updated);
+                                                        }}
+                                                        onAssociateImage={(sid) => setPickerCounterId(sid)}
+                                                        onRemoveImage={(sid) => {
+                                                            const updated = project.secs.map(s => s.id === sid ? { ...s, imageId: undefined } : s);
+                                                            updateProject(project.id, { secs: updated });
+                                                            syncSecs(updated);
+                                                        }}
+                                                    />
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        );
+                    })()}
+
+                    {/* Empty state */}
+                    {sections.length === 0 && project.secs.length === 0 && (
                         <div className="text-center p-6 bg-[#FAFAFC] rounded-2xl border border-dashed border-[#EEF0F4] text-[#9AA2B1] text-sm font-medium">
-                            Nessun contatore secondario aggiunto
+                            Nessuna sezione creata — premi + NUOVO per iniziare
                         </div>
                     )}
                 </div>
@@ -1517,10 +1793,16 @@ export default function ProjectDetail() {
 
             {/* Modal nuovo contatore */}
             {showNewCounterModal && (
-                <div className="fixed inset-0 z-[10000] flex items-end justify-center bg-black/40" onClick={() => setShowNewCounterModal(false)}>
+                <div className="fixed inset-0 z-[10000] flex items-end justify-center bg-black/40" onClick={() => { setShowNewCounterModal(false); setNewCounterSectionId(null); }}>
                     <div className="w-full max-w-2xl bg-white rounded-t-[32px] p-6 pb-10 shadow-2xl animate-in slide-in-from-bottom duration-300" onClick={e => e.stopPropagation()}>
                         <div className="w-12 h-1.5 bg-[#EEF0F4] rounded-full mx-auto mb-6" />
-                        <h3 className="text-2xl font-black mb-4">Nuovo Contatore</h3>
+                        <h3 className="text-2xl font-black mb-1">Nuovo Contatore</h3>
+                        {newCounterSectionId && (
+                            <p className="text-xs text-[#7B5CF6] font-bold mb-4">
+                                Sezione: {sections.find(s => s.id === newCounterSectionId)?.title}
+                            </p>
+                        )}
+                        {!newCounterSectionId && <div className="mb-4" />}
                         <input
                             autoFocus
                             type="text"
@@ -1529,29 +1811,180 @@ export default function ProjectDetail() {
                             onChange={e => setNewCounterName(e.target.value)}
                             onKeyDown={e => {
                                 if (e.key === 'Enter' && newCounterName.trim()) {
-                                    const updated = [...project.secs, { id: Date.now().toString(), name: newCounterName.trim(), value: 1 }];
+                                    const newCounter: RoundCounterType = { id: Date.now().toString(), name: newCounterName.trim(), value: 1, ...(newCounterSectionId ? { sectionId: newCounterSectionId } : {}) };
+                                    const updated = [...project.secs, newCounter];
                                     updateProject(project.id, { secs: updated });
                                     syncSecs(updated);
                                     setShowNewCounterModal(false);
+                                    setNewCounterSectionId(null);
                                 }
                             }}
                             className="w-full h-12 px-4 bg-[#FAFAFC] border border-[#E6DAFF] rounded-xl outline-none focus:border-[#7B5CF6] font-medium mb-4"
                         />
                         <div className="flex gap-3">
-                            <button onClick={() => setShowNewCounterModal(false)} className="flex-1 h-12 bg-white border border-[#EEF0F4] rounded-2xl font-bold text-[#9AA2B1]">Annulla</button>
+                            <button onClick={() => { setShowNewCounterModal(false); setNewCounterSectionId(null); }} className="flex-1 h-12 bg-white border border-[#EEF0F4] rounded-2xl font-bold text-[#9AA2B1]">Annulla</button>
                             <button
                                 onClick={() => {
                                     if (!newCounterName.trim()) return;
-                                    const updated = [...project.secs, { id: Date.now().toString(), name: newCounterName.trim(), value: 1 }];
+                                    const newCounter: RoundCounterType = { id: Date.now().toString(), name: newCounterName.trim(), value: 1, ...(newCounterSectionId ? { sectionId: newCounterSectionId } : {}) };
+                                    const updated = [...project.secs, newCounter];
                                     updateProject(project.id, { secs: updated });
                                     syncSecs(updated);
                                     setShowNewCounterModal(false);
+                                    setNewCounterSectionId(null);
                                 }}
                                 className="flex-[2] h-12 bg-[#7B5CF6] text-white rounded-2xl font-bold shadow-lg"
                             >
                                 Crea
                             </button>
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Modal nuova sezione */}
+            {showNewSectionModal && (
+                <div className="fixed inset-0 z-[10000] flex items-end justify-center bg-black/40" onClick={() => setShowNewSectionModal(false)}>
+                    <div className="w-full max-w-2xl bg-white rounded-t-[32px] p-6 pb-10 shadow-2xl animate-in slide-in-from-bottom duration-300" onClick={e => e.stopPropagation()}>
+                        <div className="w-12 h-1.5 bg-[#EEF0F4] rounded-full mx-auto mb-6" />
+                        <h3 className="text-2xl font-black mb-4">Nuova Sezione</h3>
+                        <input
+                            autoFocus
+                            type="text"
+                            placeholder="Titolo sezione (es. Testa, Corpo, Zampe)..."
+                            value={newSectionTitle}
+                            onChange={e => setNewSectionTitle(e.target.value)}
+                            className="w-full h-12 px-4 bg-[#FAFAFC] border border-[#E6DAFF] rounded-xl outline-none focus:border-[#7B5CF6] font-medium mb-3"
+                        />
+                        <textarea
+                            placeholder="Descrizione (opzionale)..."
+                            value={newSectionDescription}
+                            onChange={e => setNewSectionDescription(e.target.value)}
+                            rows={2}
+                            className="w-full px-4 py-3 bg-[#FAFAFC] border border-[#EEF0F4] rounded-xl text-sm font-medium focus:outline-none focus:border-[#7B5CF6] resize-none mb-4"
+                        />
+                        <div className="flex gap-3">
+                            <button onClick={() => setShowNewSectionModal(false)} className="flex-1 h-12 bg-white border border-[#EEF0F4] rounded-2xl font-bold text-[#9AA2B1]">Annulla</button>
+                            <button
+                                disabled={!newSectionTitle.trim()}
+                                onClick={() => {
+                                    if (!newSectionTitle.trim()) return;
+                                    const newSection: Section = { id: Date.now().toString(), title: newSectionTitle.trim(), description: newSectionDescription.trim() || undefined, order: sections.length };
+                                    const newSections = [...sections, newSection];
+                                    updateProject(project.id, { sections: newSections });
+                                    syncSections(newSections);
+                                    setShowNewSectionModal(false);
+                                    setExpandedSections(e => ({ ...e, [newSection.id]: true }));
+                                }}
+                                className="flex-[2] h-12 bg-[#7B5CF6] text-white rounded-2xl font-bold shadow-lg disabled:opacity-50"
+                            >
+                                Crea
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Modal modifica sezione */}
+            {editSectionModal && (
+                <div className="fixed inset-0 z-[10000] flex items-end justify-center bg-black/40" onClick={() => setEditSectionModal(null)}>
+                    <div className="w-full max-w-2xl bg-white rounded-t-[32px] p-6 pb-10 shadow-2xl animate-in slide-in-from-bottom duration-300" onClick={e => e.stopPropagation()}>
+                        <div className="w-12 h-1.5 bg-[#EEF0F4] rounded-full mx-auto mb-6" />
+                        <h3 className="text-2xl font-black mb-4">Modifica Sezione</h3>
+                        <label className="text-xs font-black text-[#1C1C1E] uppercase tracking-widest mb-1.5 block">Titolo *</label>
+                        <input
+                            autoFocus
+                            type="text"
+                            value={editSectionModal.title}
+                            onChange={e => setEditSectionModal(m => m ? { ...m, title: e.target.value } : m)}
+                            className="w-full h-12 px-4 bg-[#FAFAFC] border border-[#E6DAFF] rounded-xl outline-none focus:border-[#7B5CF6] font-medium mb-3"
+                        />
+                        <label className="text-xs font-black text-[#1C1C1E] uppercase tracking-widest mb-1.5 block">Descrizione (opzionale)</label>
+                        <textarea
+                            value={editSectionModal.description}
+                            onChange={e => setEditSectionModal(m => m ? { ...m, description: e.target.value } : m)}
+                            rows={2}
+                            className="w-full px-4 py-3 bg-[#FAFAFC] border border-[#EEF0F4] rounded-xl text-sm font-medium focus:outline-none focus:border-[#7B5CF6] resize-none mb-4"
+                        />
+                        <div className="flex gap-3">
+                            <button onClick={() => setEditSectionModal(null)} className="flex-1 h-12 bg-white border border-[#EEF0F4] rounded-2xl font-bold text-[#9AA2B1]">Annulla</button>
+                            <button
+                                disabled={!editSectionModal.title.trim()}
+                                onClick={() => {
+                                    if (!editSectionModal.title.trim()) return;
+                                    const newSections = sections.map(s => s.id === editSectionModal.id ? { ...s, title: editSectionModal.title.trim(), description: editSectionModal.description.trim() || undefined } : s);
+                                    updateProject(project.id, { sections: newSections });
+                                    syncSections(newSections);
+                                    setEditSectionModal(null);
+                                }}
+                                className="flex-[2] h-12 bg-[#7B5CF6] text-white rounded-2xl font-bold shadow-lg disabled:opacity-50"
+                            >
+                                Salva
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Modal conferma elimina sezione */}
+            {deleteSectionId && (
+                <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50 px-4" onClick={() => setDeleteSectionId(null)}>
+                    <div className="w-full max-w-sm bg-white rounded-[32px] p-6 shadow-2xl animate-in fade-in zoom-in duration-200" onClick={e => e.stopPropagation()}>
+                        <div className="w-12 h-12 bg-red-50 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                            <AlertTriangle size={24} className="text-red-500" />
+                        </div>
+                        <h3 className="text-xl font-black text-center mb-2">Elimina sezione</h3>
+                        <p className="text-sm text-[#6B7280] text-center leading-relaxed mb-6">
+                            Eliminando la sezione <strong className="text-[#1C1C1E]">&ldquo;{sections.find(s => s.id === deleteSectionId)?.title}&rdquo;</strong> verranno eliminati anche tutti i contatori al suo interno. Questa azione non può essere annullata.
+                        </p>
+                        <div className="flex gap-3">
+                            <button onClick={() => setDeleteSectionId(null)} className="flex-1 h-12 bg-white border border-[#EEF0F4] rounded-2xl font-bold text-[#9AA2B1]">Annulla</button>
+                            <button
+                                onClick={() => {
+                                    const newSecs = project.secs.filter(s => s.sectionId !== deleteSectionId);
+                                    const newSections = sections.filter(s => s.id !== deleteSectionId).map((s, i) => ({ ...s, order: i }));
+                                    updateProject(project.id, { secs: newSecs, sections: newSections });
+                                    syncSections(newSections, newSecs);
+                                    setDeleteSectionId(null);
+                                }}
+                                className="flex-[2] h-12 bg-red-500 text-white rounded-2xl font-bold shadow-lg"
+                            >
+                                Elimina tutto
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Modal assegna contatore a sezione */}
+            {assignCounterToSectionId && sections.length > 0 && (
+                <div className="fixed inset-0 z-[10000] flex items-end justify-center bg-black/40" onClick={() => setAssignCounterToSectionId(null)}>
+                    <div className="w-full max-w-2xl bg-white rounded-t-[32px] p-6 pb-10 shadow-2xl animate-in slide-in-from-bottom duration-300" onClick={e => e.stopPropagation()}>
+                        <div className="w-12 h-1.5 bg-[#EEF0F4] rounded-full mx-auto mb-6" />
+                        <h3 className="text-xl font-black mb-1">Associa a sezione</h3>
+                        <p className="text-sm text-[#9AA2B1] mb-4">Scegli la sezione per il contatore <strong className="text-[#1C1C1E]">&ldquo;{project.secs.find(s => s.id === assignCounterToSectionId)?.name}&rdquo;</strong></p>
+                        <div className="flex flex-col gap-2">
+                            {[...sections].sort((a, b) => a.order - b.order).map(section => (
+                                <button
+                                    key={section.id}
+                                    onClick={() => {
+                                        const updated = project.secs.map(s => s.id === assignCounterToSectionId ? { ...s, sectionId: section.id } : s);
+                                        updateProject(project.id, { secs: updated });
+                                        syncSecs(updated);
+                                        setAssignCounterToSectionId(null);
+                                        setExpandedSections(e => ({ ...e, [section.id]: true }));
+                                    }}
+                                    className="flex items-center gap-3 px-4 py-3 bg-[#FAFAFC] hover:bg-[#F4EEFF] border border-[#EEF0F4] hover:border-[#7B5CF6] rounded-2xl text-left transition-colors"
+                                >
+                                    <FolderPlus size={16} className="text-[#7B5CF6] shrink-0" />
+                                    <div>
+                                        <p className="font-bold text-sm text-[#1C1C1E]">{section.title}</p>
+                                        {section.description && <p className="text-xs text-[#9AA2B1]">{section.description}</p>}
+                                    </div>
+                                </button>
+                            ))}
+                        </div>
+                        <button onClick={() => setAssignCounterToSectionId(null)} className="w-full h-11 mt-4 bg-white border border-[#EEF0F4] rounded-2xl font-bold text-[#9AA2B1]">Annulla</button>
                     </div>
                 </div>
             )}
