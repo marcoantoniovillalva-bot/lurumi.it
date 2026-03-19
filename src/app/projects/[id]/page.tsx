@@ -1364,7 +1364,7 @@ export default function ProjectDetail() {
                     {/* Section cards */}
                     {[...sections].sort((a, b) => a.order - b.order).map((section, sectionIndex) => {
                         const sectionCounters = project.secs.filter(s => s.sectionId === section.id);
-                        const isExpanded = expandedSections[section.id] !== false; // default expanded
+                        const isExpanded = expandedSections[section.id] === true; // default collapsed
                         const isReorderingThisSection = reorderInSectionId === section.id;
                         const isMenuOpen = sectionMenuId === section.id;
 
