@@ -2148,17 +2148,65 @@ export default function ProjectDetail() {
 
                                 {/* Parti rilevate dai contatori */}
                                 <div>
-                                    <label className="text-xs font-black text-[#1C1C1E] uppercase tracking-widest mb-1.5 block">
-                                        Parti rilevate ({project.secs.length})
-                                    </label>
-                                    <div className="bg-[#FAFAFC] rounded-2xl border border-[#EEF0F4] divide-y divide-[#EEF0F4]">
-                                        {project.secs.map(sec => (
-                                            <div key={sec.id} className="flex items-center justify-between px-4 py-2.5">
-                                                <span className="text-sm font-bold text-[#1C1C1E]">{sec.name}</span>
-                                                <span className="text-sm font-black text-[#7B5CF6]">{sec.value} giri</span>
-                                            </div>
-                                        ))}
-                                    </div>
+                                    {(() => {
+                                        const secs = project.secs ?? [];
+                                        const projectSections = (project.sections ?? []).slice().sort((a, b) => a.order - b.order);
+                                        const sectionMap = new Map(projectSections.map(s => [s.id, s]));
+                                        const grouped: Record<string, typeof secs> = {};
+                                        const ungrouped: typeof secs = [];
+                                        for (const sec of secs) {
+                                            if (sec.sectionId && sectionMap.has(sec.sectionId)) {
+                                                if (!grouped[sec.sectionId]) grouped[sec.sectionId] = [];
+                                                grouped[sec.sectionId].push(sec);
+                                            } else {
+                                                ungrouped.push(sec);
+                                            }
+                                        }
+                                        const hasSections = projectSections.length > 0;
+                                        const labelCount = hasSections
+                                            ? `${projectSections.length} sezioni, ${secs.length} contatori`
+                                            : `${secs.length} contatori`;
+                                        return (
+                                            <>
+                                                <label className="text-xs font-black text-[#1C1C1E] uppercase tracking-widest mb-1.5 block">
+                                                    Parti rilevate ({labelCount})
+                                                </label>
+                                                <div className="bg-[#FAFAFC] rounded-2xl border border-[#EEF0F4] divide-y divide-[#EEF0F4]">
+                                                    {hasSections ? (
+                                                        <>
+                                                            {projectSections.map(section => (
+                                                                <div key={section.id}>
+                                                                    <div className="flex items-center gap-2 px-4 py-2 bg-[#F4EEFF]">
+                                                                        <span className="text-xs font-black text-[#7B5CF6] uppercase tracking-wider">{section.title}</span>
+                                                                        <span className="text-xs text-[#9AA2B1]">({(grouped[section.id] ?? []).length} contatori)</span>
+                                                                    </div>
+                                                                    {(grouped[section.id] ?? []).map(sec => (
+                                                                        <div key={sec.id} className="flex items-center justify-between px-4 pl-7 py-2">
+                                                                            <span className="text-sm font-medium text-[#1C1C1E]">{sec.name}</span>
+                                                                            <span className="text-sm font-black text-[#7B5CF6]">{sec.value} giri</span>
+                                                                        </div>
+                                                                    ))}
+                                                                </div>
+                                                            ))}
+                                                            {ungrouped.map(sec => (
+                                                                <div key={sec.id} className="flex items-center justify-between px-4 py-2.5">
+                                                                    <span className="text-sm font-bold text-[#1C1C1E]">{sec.name}</span>
+                                                                    <span className="text-sm font-black text-[#7B5CF6]">{sec.value} giri</span>
+                                                                </div>
+                                                            ))}
+                                                        </>
+                                                    ) : (
+                                                        secs.map(sec => (
+                                                            <div key={sec.id} className="flex items-center justify-between px-4 py-2.5">
+                                                                <span className="text-sm font-bold text-[#1C1C1E]">{sec.name}</span>
+                                                                <span className="text-sm font-black text-[#7B5CF6]">{sec.value} giri</span>
+                                                            </div>
+                                                        ))
+                                                    )}
+                                                </div>
+                                            </>
+                                        );
+                                    })()}
                                 </div>
 
                                 {/* Note opzionali */}
@@ -2187,12 +2235,38 @@ export default function ProjectDetail() {
                                         if (!contribTitle.trim() || contribSubmitting) return;
                                         setContribSubmitting(true);
                                         try {
-                                            const parts = project.secs.map(sec => ({
-                                                name: sec.name,
-                                                rounds: [],
-                                                final_count: sec.value,
-                                                source: 'sec_counter',
-                                            }));
+                                            const projectSections = (project.sections ?? []).slice().sort((a, b) => a.order - b.order);
+                                            const sectionMap = new Map(projectSections.map(s => [s.id, s]));
+                                            const grouped: Record<string, typeof project.secs> = {};
+                                            const ungrouped: typeof project.secs = [];
+                                            for (const sec of project.secs) {
+                                                if (sec.sectionId && sectionMap.has(sec.sectionId)) {
+                                                    if (!grouped[sec.sectionId]) grouped[sec.sectionId] = [];
+                                                    grouped[sec.sectionId].push(sec);
+                                                } else {
+                                                    ungrouped.push(sec);
+                                                }
+                                            }
+                                            const parts = [
+                                                ...projectSections
+                                                    .filter(s => (grouped[s.id] ?? []).length > 0)
+                                                    .map(s => ({
+                                                        name: s.title,
+                                                        description: s.description || null,
+                                                        rounds: (grouped[s.id] ?? []).map(sec => ({
+                                                            name: sec.name,
+                                                            final_count: sec.value,
+                                                            source: 'sec_counter',
+                                                        })),
+                                                        source: 'section',
+                                                    })),
+                                                ...ungrouped.map(sec => ({
+                                                    name: sec.name,
+                                                    rounds: [],
+                                                    final_count: sec.value,
+                                                    source: 'sec_counter',
+                                                })),
+                                            ];
                                             const res = await fetch('/api/training/submit-contribution', {
                                                 method: 'POST',
                                                 headers: { 'Content-Type': 'application/json' },
