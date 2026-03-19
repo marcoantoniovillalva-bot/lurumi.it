@@ -210,8 +210,9 @@ export default function ProjectDetail() {
     }, [id, user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Immagini — con fallback da Supabase Storage; si riattiva quando arrivano nuove immagini via Realtime
+    // Gira per TUTTI i tipi di progetto che hanno immagini (incluso 'pdf' — serve per copertina/export)
     useEffect(() => {
-        if (!project || (project.type !== 'images' && project.type !== 'tutorial' && project.type !== 'blank')) return;
+        if (!project || (project.images ?? []).length === 0) return;
         const loadImages = async () => {
             try {
                 const imgs = project.images ?? [];
@@ -238,7 +239,8 @@ export default function ProjectDetail() {
                 blobUrlsRef.current.forEach(u => URL.revokeObjectURL(u));
                 blobUrlsRef.current = urls.filter(u => u.startsWith('blob:'));
                 setImageUrls(urls);
-                setTotalPages(urls.length);
+                // Per progetti pdf il totalPages è gestito dal PDF viewer — non sovrascrivere
+                if (project.type !== 'pdf') setTotalPages(urls.length);
             } catch (err) {
                 console.error("Failed to load images", err);
             }

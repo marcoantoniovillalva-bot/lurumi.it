@@ -381,24 +381,9 @@ export async function generatePatternPdf(
 
         if (sectionsList.length > 0) {
             // Render grouped by section
-            const PAGE_USABLE_H = H - MARGIN - 52 - 20  // altezza utile di una pagina intera
-
             for (const section of sectionsList) {
                 const sectionCounters = project.secs.filter(s => s.sectionId === section.id)
                 if (sectionCounters.length === 0) continue
-
-                // Stima altezza totale della sezione per evitare che venga spezzata su più pagine.
-                // Heuristica: contatori senza immagine ≈ 50pt, con immagine ≈ 230pt.
-                const descLinesEst = section.description ? wrapText(section.description, fontNormal, 9, CONTENT_W - 16) : []
-                const estimatedHeaderH = 38 + (descLinesEst.length > 0 ? descLinesEst.length * 12 + 10 : 0) + 18
-                const estimatedCountersH = sectionCounters.reduce((acc, s) => acc + (s.imageId ? 230 : 50), 0)
-                const estimatedSectionH = estimatedHeaderH + estimatedCountersH + 24  // +24 divisore fine sezione
-
-                // Se la sezione entrerebbe in una pagina intera ma non nella pagina corrente → nuova pagina
-                if (estimatedSectionH <= PAGE_USABLE_H && y < estimatedSectionH + 80) {
-                    secsPage = addPage()
-                    y = H - MARGIN
-                }
 
                 const hdrResult = await drawSectionHeader(secsPage, y, section)
                 secsPage = hdrResult.page
