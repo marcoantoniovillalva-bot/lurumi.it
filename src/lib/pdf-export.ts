@@ -305,8 +305,22 @@ export async function generatePatternPdf(
                 }
             }
 
-            // Calcola altezza blocco: immagine + riga "nome [valore]" + divider
-            const blockH = (secImgH > 0 ? secImgH + 12 : 0) + 20 + 10 + 20
+            // Calcola righe del nome con word-wrap e posizionamento [valore]
+            const NAME_FS = 13
+            const LINE_H_CTR = NAME_FS + 4  // interlinea tra righe del nome
+            const nameText = sec.name || 'Parte'
+            const valueText = `[${sec.value}]`
+            const valueW = fontBold.widthOfTextAtSize(valueText, NAME_FS)
+
+            // Wrappa il nome per stare dentro i margini
+            const nameLines = wrapText(nameText, fontBold, NAME_FS, CONTENT_W)
+            const lastLine = nameLines[nameLines.length - 1]
+            const lastLineW = fontBold.widthOfTextAtSize(lastLine, NAME_FS)
+            // [valore] va sulla stessa riga dell'ultima riga del nome se c'è spazio (+ 8pt gap)
+            const valueOnSameLine = lastLineW + 8 + valueW <= CONTENT_W
+
+            const textRows = nameLines.length + (valueOnSameLine ? 0 : 1)
+            const blockH = (secImgH > 0 ? secImgH + 12 : 0) + textRows * LINE_H_CTR + 10 + 20
             let curPage = page
             let curY = yPos
             if (curY < blockH + 60) {
@@ -324,17 +338,22 @@ export async function generatePatternPdf(
                 curY -= secImgH + 12
             }
 
-            // Nome e [valore] sulla stessa riga
-            const nameText = sec.name || 'Parte'
-            const valueText = ` [${sec.value}]`
-            curPage.drawText(nameText, {
-                x: MARGIN, y: curY, size: 13, font: fontBold, color: DARK,
-            })
-            const nameWidth = fontBold.widthOfTextAtSize(nameText, 13)
-            curPage.drawText(valueText, {
-                x: MARGIN + nameWidth, y: curY, size: 13, font: fontBold, color: PURPLE,
-            })
-            curY -= 10
+            // Righe del nome (tutte tranne l'ultima)
+            for (let i = 0; i < nameLines.length - 1; i++) {
+                curPage.drawText(nameLines[i], { x: MARGIN, y: curY, size: NAME_FS, font: fontBold, color: DARK })
+                curY -= LINE_H_CTR
+            }
+            // Ultima riga del nome + [valore] sulla stessa riga se c'è spazio
+            curPage.drawText(lastLine, { x: MARGIN, y: curY, size: NAME_FS, font: fontBold, color: DARK })
+            if (valueOnSameLine) {
+                curPage.drawText(valueText, { x: MARGIN + lastLineW + 8, y: curY, size: NAME_FS, font: fontBold, color: PURPLE })
+                curY -= LINE_H_CTR
+            } else {
+                curY -= LINE_H_CTR
+                curPage.drawText(valueText, { x: MARGIN, y: curY, size: NAME_FS, font: fontBold, color: PURPLE })
+                curY -= LINE_H_CTR
+            }
+            curY -= 2
 
             curPage.drawLine({ start: { x: MARGIN, y: curY }, end: { x: W - MARGIN, y: curY }, thickness: 0.4, color: LIGHT })
             curY -= 20
