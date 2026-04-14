@@ -25,9 +25,15 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 
 // ── Credenziali ────────────────────────────────────────────
-const REPLICATE_TOKEN   = process.env.REPLICATE_API_TOKEN   || 'REPLICATE_TOKEN_REMOVED'
-const SUPABASE_URL      = process.env.NEXT_PUBLIC_SUPABASE_URL      || 'https://djatdyhqliotgnsljdja.supabase.co'
-const SUPABASE_SERVICE  = process.env.SUPABASE_SERVICE_ROLE_KEY || 'SUPABASE_SERVICE_ROLE_REMOVED'
+const REPLICATE_TOKEN   = process.env.REPLICATE_API_TOKEN
+const SUPABASE_URL      = process.env.NEXT_PUBLIC_SUPABASE_URL
+const SUPABASE_SERVICE  = process.env.SUPABASE_SERVICE_ROLE_KEY
+
+if (!REPLICATE_TOKEN || !SUPABASE_URL || !SUPABASE_SERVICE) {
+  console.error('Errore: variabili d\'ambiente mancanti. Assicurati che .env.local sia configurato correttamente.')
+  console.error('Richieste: REPLICATE_API_TOKEN, NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY')
+  process.exit(1)
+}
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE)
 const BUCKET   = 'character-themes'
